@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { BuilderScreen } from './src/components/builder/BuilderScreen';
+import { QuizScreen } from './src/components/quiz/QuizScreen';
 import { THEME } from './src/constants/theme';
 
 const MainNavigator: React.FC = () => {
@@ -12,6 +13,7 @@ const MainNavigator: React.FC = () => {
   return (
     <View style={styles.appContainer}>
       {view === 'build' && <BuilderScreen />}
+      {view === 'quiz' && <QuizScreen />}
     </View>
   );
 };
