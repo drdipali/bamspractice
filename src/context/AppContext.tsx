@@ -17,9 +17,11 @@ import {
   loadDraft,
   loadLanguage,
   loadSavedSets,
+  loadBookmarks,
   saveDraft,
   saveLanguage,
   savePracticeSets,
+  saveBookmarks,
 } from '../utils/storage';
 
 interface AppContextType {
@@ -53,6 +55,11 @@ interface AppContextType {
   backToBuilder: () => void;
   statusMessage: string;
   setStatusMessage: (msg: string) => void;
+  // Persistent revision bookmarks
+  bookmarkedIds: number[];
+  toggleBookmark: (questionId: number) => void;
+  isBookmarked: (questionId: number) => boolean;
+  clearAllBookmarks: () => Promise<void>;
 }
 
 const DEFAULT_CONFIG: PracticeConfig = {
@@ -73,6 +80,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [savedSets, setSavedSets] = useState<SavedPracticeSet[]>([]);
   const [session, setSession] = useState<QuizSession | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
 
   // Initial load from storage
   useEffect(() => {
@@ -92,6 +100,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const storedSets = await loadSavedSets();
       setSavedSets(storedSets);
+
+      const storedBookmarks = await loadBookmarks();
+      setBookmarkedIds(storedBookmarks);
     })();
   }, []);
 
@@ -357,6 +368,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setView('build');
   };
 
+  const toggleBookmark = (questionId: number) => {
+    setBookmarkedIds((prev) => {
+      const exists = prev.includes(questionId);
+      const updated = exists
+        ? prev.filter((id) => id !== questionId)
+        : [...prev, questionId];
+      saveBookmarks(updated);
+      return updated;
+    });
+  };
+
+  const isBookmarked = (questionId: number) => {
+    return bookmarkedIds.includes(questionId);
+  };
+
+  const clearAllBookmarks = async () => {
+    setBookmarkedIds([]);
+    await saveBookmarks([]);
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -390,6 +421,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         backToBuilder,
         statusMessage,
         setStatusMessage,
+        bookmarkedIds,
+        toggleBookmark,
+        isBookmarked,
+        clearAllBookmarks,
       }}
     >
       {children}

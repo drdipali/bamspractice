@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { AlertCircle, Check, CheckCircle2, Flag, HelpCircle, XCircle } from 'lucide-react-native';
+import { AlertCircle, Bookmark, Check, CheckCircle2, Flag, HelpCircle, XCircle } from 'lucide-react-native';
 import { THEME, OPTION_LABELS } from '../../constants/theme';
 import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 import { Language, Question, QuizSession } from '../../types';
+import { useApp } from '../../context/AppContext';
 
 interface IncorrectReviewListProps {
   wrongQuestions: Question[];
@@ -20,6 +21,7 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
   claimedQuestions,
   onClaimPress,
 }) => {
+  const { toggleBookmark, isBookmarked } = useApp();
   const [filterMode, setFilterMode] = useState<'incorrect' | 'all'>(
     wrongQuestions.length > 0 ? 'incorrect' : 'all'
   );
@@ -121,22 +123,52 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
                     )}
                   </View>
 
-                  {/* Report / Claim Error button */}
-                  {isClaimed ? (
-                    <View style={styles.claimSubmittedBadge}>
-                      <Check size={12} color={THEME.colors.ok} />
-                      <Text style={styles.claimSubmittedText}>Claim Submitted</Text>
-                    </View>
-                  ) : (
+                  <View style={styles.metaRightActions}>
+                    {/* Persistent Revision Bookmark Button */}
                     <TouchableOpacity
-                      style={styles.claimBtn}
-                      onPress={() => onClaimPress(q)}
+                      style={[
+                        styles.bookmarkReviewBtn,
+                        isBookmarked(q.id) && styles.bookmarkReviewBtnActive,
+                      ]}
+                      onPress={() => toggleBookmark(q.id)}
                       activeOpacity={0.7}
                     >
-                      <Flag size={12} color={THEME.colors.brand} />
-                      <Text style={styles.claimBtnText}>Report/Claim Error</Text>
+                      <Bookmark
+                        size={12}
+                        color={
+                          isBookmarked(q.id)
+                            ? '#16241F'
+                            : THEME.colors.accent
+                        }
+                        fill={isBookmarked(q.id) ? THEME.colors.accent : 'none'}
+                      />
+                      <Text
+                        style={[
+                          styles.bookmarkReviewBtnText,
+                          isBookmarked(q.id) && styles.bookmarkReviewBtnTextActive,
+                        ]}
+                      >
+                        {isBookmarked(q.id) ? 'Bookmarked 🔖' : 'Bookmark 🔖'}
+                      </Text>
                     </TouchableOpacity>
-                  )}
+
+                    {/* Report / Claim Error button */}
+                    {isClaimed ? (
+                      <View style={styles.claimSubmittedBadge}>
+                        <Check size={12} color={THEME.colors.ok} />
+                        <Text style={styles.claimSubmittedText}>Claim Submitted</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.claimBtn}
+                        onPress={() => onClaimPress(q)}
+                        activeOpacity={0.7}
+                      >
+                        <Flag size={12} color={THEME.colors.brand} />
+                        <Text style={styles.claimBtnText}>Report/Claim Error</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
 
                 <Text style={styles.stemText}>{stemText}</Text>
@@ -323,6 +355,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.colors.muted,
     flex: 1,
+  },
+  metaRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bookmarkReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.accent,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: THEME.radius.sm,
+  },
+  bookmarkReviewBtnActive: {
+    backgroundColor: THEME.colors.accent,
+    borderColor: THEME.colors.accent,
+  },
+  bookmarkReviewBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  bookmarkReviewBtnTextActive: {
+    color: '#16241F',
+    fontWeight: '800',
   },
   claimBtn: {
     flexDirection: 'row',

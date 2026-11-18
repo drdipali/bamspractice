@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
   LANG: 'bams_lang',
   DRAFT: 'bams_draft',
   SETS: 'bams_sets',
+  BOOKMARKS: 'bams_bookmarks',
 };
 
 export async function loadLanguage(defaultValue: Language = 'en'): Promise<Language> {
@@ -60,5 +61,22 @@ export async function savePracticeSets(sets: SavedPracticeSet[]): Promise<void> 
     await AsyncStorage.setItem(STORAGE_KEYS.SETS, JSON.stringify(sets));
   } catch (e) {
     console.warn('Failed to save sets', e);
+  }
+}
+
+export async function loadBookmarks(): Promise<number[]> {
+  try {
+    const val = await AsyncStorage.getItem(STORAGE_KEYS.BOOKMARKS);
+    return val ? JSON.parse(val) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBookmarks(ids: number[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.BOOKMARKS, JSON.stringify(ids));
+  } catch (e) {
+    console.warn('Failed to save bookmarks', e);
   }
 }

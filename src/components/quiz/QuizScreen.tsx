@@ -36,6 +36,8 @@ export const QuizScreen: React.FC = () => {
     nextQuestion,
     prevQuestion,
     finishQuiz,
+    toggleBookmark,
+    isBookmarked,
   } = useApp();
 
   const { width } = useWindowDimensions();
@@ -50,6 +52,7 @@ export const QuizScreen: React.FC = () => {
   const isLocked = !!session.sub[currentQ?.id];
   const selectedAnswer = session.ans[currentQ?.id];
   const isMarked = !!session.rev[currentQ?.id];
+  const isCurrentBookmarked = currentQ ? isBookmarked(currentQ.id) : false;
 
   const totalQuestions = session.qs.length;
   const answeredCount = Object.keys(session.ans).length;
@@ -219,6 +222,34 @@ export const QuizScreen: React.FC = () => {
                     <ChevronRight size={16} color={THEME.colors.brand} />
                   </TouchableOpacity>
 
+                  {/* Persistent Revision Bookmark Button */}
+                  <TouchableOpacity
+                    style={[
+                      styles.bookmarkBtn,
+                      isCurrentBookmarked && styles.bookmarkBtnActive,
+                    ]}
+                    onPress={() => currentQ && toggleBookmark(currentQ.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Bookmark
+                      size={15}
+                      color={
+                        isCurrentBookmarked
+                          ? '#16241F'
+                          : THEME.colors.accent
+                      }
+                      fill={isCurrentBookmarked ? THEME.colors.accent : 'none'}
+                    />
+                    <Text
+                      style={[
+                        styles.bookmarkBtnText,
+                        isCurrentBookmarked && styles.bookmarkBtnTextActive,
+                      ]}
+                    >
+                      {isCurrentBookmarked ? 'Bookmarked 🔖' : 'Bookmark 🔖'}
+                    </Text>
+                  </TouchableOpacity>
+
                   <TouchableOpacity
                     style={[
                       styles.reviewBtn,
@@ -227,7 +258,7 @@ export const QuizScreen: React.FC = () => {
                     onPress={toggleMarkReview}
                   >
                     <Bookmark
-                      size={15}
+                      size={14}
                       color={
                         isMarked
                           ? THEME.colors.accent
@@ -482,6 +513,30 @@ const styles = StyleSheet.create({
   },
   reviewBtnTextActive: {
     color: THEME.colors.accent,
+  },
+  bookmarkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: THEME.radius.md,
+    borderWidth: 1.5,
+    borderColor: THEME.colors.accent,
+    backgroundColor: THEME.colors.bg,
+  },
+  bookmarkBtnActive: {
+    backgroundColor: THEME.colors.accent,
+    borderColor: THEME.colors.accent,
+  },
+  bookmarkBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  bookmarkBtnTextActive: {
+    color: '#16241F',
+    fontWeight: '800',
   },
   btnDisabled: {
     opacity: 0.35,
