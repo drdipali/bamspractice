@@ -6,14 +6,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { ChevronDown, ChevronRight, Search, X } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Search, X, Bookmark } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
-import { GROUPS, RAW_TREE, ALL_CHAPTERS } from '../../constants/syllabusData';
+import { GROUPS, RAW_TREE, ALL_CHAPTERS, ALL_QUESTIONS } from '../../constants/syllabusData';
 import { Chapter } from '../../types';
 import { useApp } from '../../context/AppContext';
 
 export const ChapterTree: React.FC = () => {
-  const { selectedChapters, toggleChapter, toggleGroup } = useApp();
+  const { selectedChapters, toggleChapter, toggleGroup, bookmarkedIds } = useApp();
   const [query, setQuery] = useState('');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     s0: true, // Charaka Samhita open by default
@@ -45,6 +45,18 @@ export const ChapterTree: React.FC = () => {
     });
     return map;
   }, []);
+
+  // Pre-calculate bookmark count per chapter
+  const chapterBookmarksCount = useMemo(() => {
+    const map: Record<number, number> = {};
+    bookmarkedIds.forEach((id) => {
+      const q = ALL_QUESTIONS[id];
+      if (q) {
+        map[q.ch] = (map[q.ch] || 0) + 1;
+      }
+    });
+    return map;
+  }, [bookmarkedIds]);
 
   return (
     <View style={styles.card}>
@@ -253,6 +265,8 @@ export const ChapterTree: React.FC = () => {
                                 const isChSelected = selectedChapters.includes(
                                   chapter.id
                                 );
+                                const chBookmarkCount =
+                                  chapterBookmarksCount[chapter.id] || 0;
                                 return (
                                   <TouchableOpacity
                                     key={chapter.id}
@@ -294,10 +308,30 @@ export const ChapterTree: React.FC = () => {
                                         </Text>
                                       )}
                                     </Text>
-                                    <View style={styles.mcqPill}>
-                                      <Text style={styles.mcqPillText}>
-                                        {chapter.qs.length} MCQs
-                                      </Text>
+                                    <View style={styles.chapterRightRow}>
+                                      {chBookmarkCount > 0 && (
+                                        <View
+                                          style={styles.chapterBookmarkBadge}
+                                        >
+                                          <Bookmark
+                                            size={9}
+                                            color={THEME.colors.brandInk}
+                                            fill={THEME.colors.accent}
+                                          />
+                                          <Text
+                                            style={
+                                              styles.chapterBookmarkBadgeText
+                                            }
+                                          >
+                                            {chBookmarkCount}
+                                          </Text>
+                                        </View>
+                                      )}
+                                      <View style={styles.mcqPill}>
+                                        <Text style={styles.mcqPillText}>
+                                          {chapter.qs.length} MCQs
+                                        </Text>
+                                      </View>
                                     </View>
                                   </TouchableOpacity>
                                 );
@@ -505,6 +539,27 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: THEME.colors.brand,
     fontWeight: '600',
+  },
+  chapterRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  chapterBookmarkBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: THEME.colors.accentSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: THEME.radius.pill,
+    borderWidth: 1,
+    borderColor: THEME.colors.accent,
+  },
+  chapterBookmarkBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.brandInk,
   },
   mcqPill: {
     backgroundColor: THEME.colors.soft,

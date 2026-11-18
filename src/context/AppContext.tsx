@@ -61,6 +61,7 @@ interface AppContextType {
   toggleBookmark: (questionId: number) => void;
   isBookmarked: (questionId: number) => boolean;
   clearAllBookmarks: () => Promise<void>;
+  clearChapterBookmarks: (chapterId: number) => Promise<void>;
 }
 
 const DEFAULT_CONFIG: PracticeConfig = {
@@ -411,6 +412,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await saveBookmarks([]);
   };
 
+  const clearChapterBookmarks = async (chapterId: number) => {
+    setBookmarkedIds((prev) => {
+      const updated = prev.filter((id) => {
+        const q = ALL_QUESTIONS[id];
+        return q ? q.ch !== chapterId : true;
+      });
+      saveBookmarks(updated);
+      return updated;
+    });
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -449,6 +461,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleBookmark,
         isBookmarked,
         clearAllBookmarks,
+        clearChapterBookmarks,
       }}
     >
       {children}
