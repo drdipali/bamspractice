@@ -34,15 +34,22 @@ export const Scorecard: React.FC<ScorecardProps> = ({ results }) => {
             Score: {results.score}{' '}
             <Text style={styles.scoreMax}>/ {results.maxScore}</Text>
           </Text>
-          <View style={styles.percentageBadge}>
-            <Text style={styles.percentageText}>
-              {results.scorePercent}%
-            </Text>
+          <View style={styles.scoreBadgesCol}>
+            <View style={styles.percentageBadge}>
+              <Text style={styles.percentageText}>
+                {results.scorePercent}%
+              </Text>
+            </View>
+            <View style={styles.unattemptedTag}>
+              <Text style={styles.unattemptedTagText}>
+                {results.unattempted} Unattempted (0 pts)
+              </Text>
+            </View>
           </View>
         </View>
 
         <Text style={styles.markingSchemeSub}>
-          +4 for correct (+{results.correct * 4}) · -1 for incorrect (-{results.incorrect * 1}) · 0 for unattempted
+          +4 for correct (+{results.correct * 4}) · -1 for incorrect (-{results.incorrect * 1}) · 0 for unattempted (0 penalty)
         </Text>
       </View>
 
@@ -154,6 +161,25 @@ const styles = StyleSheet.create({
     color: '#16241F',
     fontSize: 12,
     fontWeight: '800',
+  },
+  scoreBadgesCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  unattemptedTag: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: THEME.radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  unattemptedTagText: {
+    color: THEME.colors.brandInk,
+    fontSize: 11,
+    fontWeight: '600',
   },
   markingSchemeSub: {
     fontSize: 11,

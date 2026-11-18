@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import {
   CheckCircle,
   LayoutGrid,
   Info,
+  AlertCircle,
 } from 'lucide-react-native';
 import { THEME, DIFFICULTY_LABELS, OPTION_LABELS } from '../../constants/theme';
 import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
@@ -43,6 +45,7 @@ export const QuizScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isTablet = width >= 860;
   const [showMobilePalette, setShowMobilePalette] = useState(false);
+  const [showWarningModal, setShowWarningModal] = useState(false);
 
   if (!session) return null;
 
@@ -56,27 +59,26 @@ export const QuizScreen: React.FC = () => {
 
   const totalQuestions = session.qs.length;
   const answeredCount = Object.keys(session.ans).length;
+  const unattemptedCount = totalQuestions - answeredCount;
   const progressPercent = Math.round((answeredCount / totalQuestions) * 100);
 
   const handleFinishPress = () => {
-    const unattempted = totalQuestions - answeredCount;
-    if (unattempted > 0) {
-      Alert.alert(
-        'Finish Practice Session?',
-        `You have ${unattempted} unattempted question${unattempted > 1 ? 's' : ''}. Unanswered questions will count as unattempted in your final score.`,
-        [
-          { text: 'Keep Practicing', style: 'cancel' },
-          { text: 'Finish Now', style: 'destructive', onPress: finishQuiz },
-        ]
-      );
+    // If all questions are answered, proceed directly to Results screen.
+    // If there are unanswered questions, show confirmation modal.
+    if (unattemptedCount > 0) {
+      setShowWarningModal(true);
     } else {
       finishQuiz();
     }
   };
 
   const finishButton = (
-    <TouchableOpacity style={styles.finishBtn} onPress={handleFinishPress}>
-      <Text style={styles.finishBtnText}>Finish &amp; Results</Text>
+    <TouchableOpacity
+      style={styles.finishBtn}
+      onPress={handleFinishPress}
+      activeOpacity={0.7}
+    >
+      <Text style={styles.finishBtnText}>Finish &amp; see results</Text>
     </TouchableOpacity>
   );
 
@@ -309,6 +311,69 @@ export const QuizScreen: React.FC = () => {
           )}
         </View>
       </ScrollView>
+
+      {/* Unattempted Questions Warning Modal */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={showWarningModal}
+        onRequestClose={() => setShowWarningModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.warningModalCard}>
+            <View style={styles.warningHeaderRow}>
+              <AlertCircle size={22} color={THEME.colors.bad} />
+              <Text style={styles.warningModalTitle}>Unattempted Questions</Text>
+            </View>
+
+            <Text style={styles.warningModalMessage}>
+              You still have{' '}
+              <Text style={styles.warningBoldHighlight}>
+                {unattemptedCount}
+              </Text>{' '}
+              unattempted questions. Unattempted questions will receive 0 marks. Are you sure you want to submit your exam?
+            </Text>
+
+            <View style={styles.warningMetricsRow}>
+              <View style={styles.warningMetricBox}>
+                <Text style={styles.warningMetricNum}>{answeredCount}</Text>
+                <Text style={styles.warningMetricLabel}>Answered</Text>
+              </View>
+              <View style={[styles.warningMetricBox, styles.warningMetricBoxBad]}>
+                <Text style={[styles.warningMetricNum, { color: THEME.colors.bad }]}>
+                  {unattemptedCount}
+                </Text>
+                <Text style={styles.warningMetricLabel}>Unattempted (0)</Text>
+              </View>
+              <View style={styles.warningMetricBox}>
+                <Text style={styles.warningMetricNum}>{totalQuestions}</Text>
+                <Text style={styles.warningMetricLabel}>Total Questions</Text>
+              </View>
+            </View>
+
+            <View style={styles.warningActionsRow}>
+              <TouchableOpacity
+                style={[styles.warningBtn, styles.warningCancelBtn]}
+                onPress={() => setShowWarningModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.warningCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.warningBtn, styles.warningSubmitBtn]}
+                onPress={() => {
+                  setShowWarningModal(false);
+                  finishQuiz();
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.warningSubmitBtnText}>Yes, Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -558,5 +623,103 @@ const styles = StyleSheet.create({
   },
   mobilePaletteWrapper: {
     marginTop: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  warningModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.radius.lg,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  warningHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  warningModalTitle: {
+    fontFamily: THEME.fonts.serif,
+    fontSize: 20,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  warningModalMessage: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: THEME.colors.ink,
+    marginBottom: 16,
+  },
+  warningBoldHighlight: {
+    fontWeight: '800',
+    color: THEME.colors.bad,
+  },
+  warningMetricsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 18,
+  },
+  warningMetricBox: {
+    flex: 1,
+    backgroundColor: THEME.colors.soft,
+    borderRadius: THEME.radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  warningMetricBoxBad: {
+    backgroundColor: THEME.colors.badSoft,
+  },
+  warningMetricNum: {
+    fontFamily: THEME.fonts.serif,
+    fontSize: 18,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  warningMetricLabel: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  warningActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  warningBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: THEME.radius.md,
+  },
+  warningCancelBtn: {
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+  },
+  warningCancelBtnText: {
+    fontSize: 13,
+    color: THEME.colors.muted,
+    fontWeight: '600',
+  },
+  warningSubmitBtn: {
+    backgroundColor: THEME.colors.bad,
+  },
+  warningSubmitBtnText: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });
