@@ -84,4 +84,8 @@ export interface QuizResults {
   timeSpentSecs: number;
   byChapter: Record<number, ChapterStat>;
   wrongQuestions: Question[];
+  // Competitive exam scoring: +4 correct, -1 incorrect, 0 unattempted
+  score: number;
+  maxScore: number;
+  scorePercent: number;
 }

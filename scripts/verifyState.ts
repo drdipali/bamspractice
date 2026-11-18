@@ -148,6 +148,11 @@ const attempted = correct + incorrect;
 const accuracy = attempted > 0 ? Math.round((correct / attempted) * 100) : 0;
 const timeSpentSecs = Math.round((session.t1 - session.t0) / 1000);
 
+// Competitive exam scoring: +4 for correct, -1 for incorrect, 0 for unattempted
+const score = correct * 4 - incorrect * 1;
+const maxScore = session.qs.length * 4;
+const scorePercent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+
 const results: QuizResults = {
   total: session.qs.length,
   attempted,
@@ -158,6 +163,9 @@ const results: QuizResults = {
   timeSpentSecs,
   byChapter,
   wrongQuestions,
+  score,
+  maxScore,
+  scorePercent,
 };
 
 assert(results.total === 10, 'Total questions tracked is 10');
@@ -165,6 +173,9 @@ assert(results.correct === 2, `Correct count is exactly 2 (found ${results.corre
 assert(results.incorrect === 1, `Incorrect count is exactly 1 (found ${results.incorrect})`);
 assert(results.unattempted === 7, `Unattempted count is exactly 7 (found ${results.unattempted})`);
 assert(results.accuracy === 67, `Accuracy is 67% (2 / 3 attempted) (found ${results.accuracy}%)`);
+assert(results.score === 7, `Competitive score correctly awarded: 2*4 - 1*1 = 7 (found ${results.score})`);
+assert(results.maxScore === 40, `Max competitive score correctly calculated: 10*4 = 40 (found ${results.maxScore})`);
+assert(results.scorePercent === 18, `Score percentage correctly calculated: (7/40)*100 = 18% (found ${results.scorePercent}%)`);
 assert(results.timeSpentSecs >= 120, `Time spent correctly calculated (${results.timeSpentSecs}s)`);
 assert(results.wrongQuestions.length === 1, 'Wrong questions list contains exactly the 1 failed question');
 assert(results.wrongQuestions[0].id === q1.id, 'Wrong question ID matches Question 1');

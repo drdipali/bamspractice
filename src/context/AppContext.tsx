@@ -326,6 +326,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const accuracy = attempted > 0 ? Math.round((correct / attempted) * 100) : 0;
     const timeSpentSecs = Math.round(((session.t1 || Date.now()) - session.t0) / 1000);
 
+    // Competitive Exam Scoring: +4 for correct, -1 for incorrect, 0 for unattempted
+    const score = correct * 4 - incorrect * 1;
+    const maxScore = total * 4;
+    const scorePercent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+
     return {
       total,
       attempted,
@@ -336,6 +341,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timeSpentSecs,
       byChapter,
       wrongQuestions,
+      score,
+      maxScore,
+      scorePercent,
     };
   }, [session, view]);
 
