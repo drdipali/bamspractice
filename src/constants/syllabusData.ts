@@ -166,9 +166,9 @@ const RAW_HI: Record<number, string> = {
   25: 'मूल के आधार पर द्रव्य 3 प्रकार का है।|वे जांगम, औद्भिद और पार्थिव हैं।',
 };
 
-export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<number, Question> } {
+export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<string | number, Question> } {
   const chapters: Chapter[] = [];
-  const questionMap: Record<number, Question> = {};
+  const questionMap: Record<string | number, Question> = {};
   let qid = 0;
 
   RAW_TREE.forEach((samhita, si) => {
@@ -180,6 +180,7 @@ export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<numb
         const chapterId = chapters.length;
         const chapter: Chapter = {
           id: chapterId,
+          name: `Chapter ${n}`,
           sam: samhita.name,
           sth: sthanaName,
           n: n,
@@ -201,6 +202,10 @@ export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<numb
               q = {
                 id: qRealId,
                 ch: chapterId,
+                chapterName: `${samhita.name} > ${sthanaName} > Chapter ${n}`,
+                questionType: 'assertion_reason',
+                assertionText: parts[1],
+                reasonText: parts[2],
                 d: diff,
                 c: 'abcd'.indexOf(correctKey),
                 stem: `Given below are two statements:\nStatement A: ${parts[1]}\nStatement R: ${parts[2]}`,
@@ -212,6 +217,8 @@ export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<numb
               q = {
                 id: qRealId,
                 ch: chapterId,
+                chapterName: `${samhita.name} > ${sthanaName} > Chapter ${n}`,
+                questionType: 'standard',
                 d: diff,
                 c: 'abcd'.indexOf(correctKey),
                 stem: parts[0],
@@ -249,6 +256,8 @@ export function buildSyllabus(): { chapters: Chapter[]; questionMap: Record<numb
             const q: Question = {
               id: currentQid,
               ch: chapterId,
+              chapterName: `${chapter.sam} > ${chapter.sth} > Chapter ${chapter.n}`,
+              questionType: 'standard',
               d: diff,
               c: correctOpt,
               stem: `Classical Question #${currentQid} from ${chapter.sam}, ${chapter.sth} Chapter ${chapter.n}. Identify the correct authoritative principle:`,

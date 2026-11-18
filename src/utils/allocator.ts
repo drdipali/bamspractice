@@ -89,13 +89,13 @@ export function allocateQuestions(
 export function generateQuestionIds(
   selectedChapters: Chapter[],
   config: PracticeConfig
-): number[] {
+): (string | number)[] {
   const alloc = allocateQuestions(selectedChapters, config);
-  let ids: number[] = [];
+  let ids: (string | number)[] = [];
   const validChapterSet = new Set(selectedChapters.map((c) => c.id));
 
   if (config.dist === 'pooled') {
-    const pool: number[] = [];
+    const pool: (string | number)[] = [];
     selectedChapters.forEach((c) => {
       getEligibleQuestions(c, config.diffs).forEach((q) => pool.push(q.id));
     });

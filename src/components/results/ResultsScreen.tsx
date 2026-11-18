@@ -21,7 +21,7 @@ export const ResultsScreen: React.FC = () => {
     useApp();
 
   const [activeClaimQuestion, setActiveClaimQuestion] = useState<Question | null>(null);
-  const [claimedQuestions, setClaimedQuestions] = useState<Record<number, boolean>>({});
+  const [claimedQuestions, setClaimedQuestions] = useState<Record<string | number, boolean>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Auto-dismiss toast after 4 seconds
@@ -43,7 +43,7 @@ export const ResultsScreen: React.FC = () => {
     setActiveClaimQuestion(question);
   };
 
-  const handleClaimSubmit = (questionId: number, comment: string, fileName?: string) => {
+  const handleClaimSubmit = (questionId: string | number, comment: string, fileName?: string) => {
     // Record claim
     setClaimedQuestions((prev) => ({ ...prev, [questionId]: true }));
     setActiveClaimQuestion(null);

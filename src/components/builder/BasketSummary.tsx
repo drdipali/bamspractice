@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { Trash2, Play, BookOpen, Layers, CheckCircle2, Plus, Minus } from 'lucide-react-native';
 import { THEME, DIFFICULTY_LABELS } from '../../constants/theme';
-import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
-import { Difficulty, DistributionType, QuizMode, SavedPracticeSet } from '../../types';
+import { getChapterPath } from '../../constants/syllabusData';
+import { Chapter, Difficulty, DistributionType, QuizMode, SavedPracticeSet } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { allocateQuestions } from '../../utils/allocator';
 import { SegmentedControl } from '../common/SegmentedControl';
@@ -18,6 +18,7 @@ import { SaveSetModal } from './SaveSetModal';
 
 export const BasketSummary: React.FC = () => {
   const {
+    chapters,
     selectedChapters,
     toggleChapter,
     clearSelection,
@@ -37,10 +38,9 @@ export const BasketSummary: React.FC = () => {
 
   const activeChapters = useMemo(() => {
     return selectedChapters
-      .map((id) => ALL_CHAPTERS[id])
-      .filter(Boolean)
-      .sort((a, b) => a.id - b.id);
-  }, [selectedChapters]);
+      .map((id) => chapters.find((c) => c.id === id || c.name === id))
+      .filter((c): c is Chapter => c !== undefined);
+  }, [selectedChapters, chapters]);
 
   // Unique sources
   const sourceCount = useMemo(() => {
@@ -109,7 +109,7 @@ export const BasketSummary: React.FC = () => {
     updateConfig({ total: next });
   };
 
-  const handleManualCountChange = (chapterId: number, text: string) => {
+  const handleManualCountChange = (chapterId: string | number, text: string) => {
     const clean = text.replace(/[^0-9]/g, '');
     const val = clean === '' ? 0 : parseInt(clean, 10);
     setManualCount(chapterId, isNaN(val) ? 0 : val);

@@ -1,11 +1,10 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { THEME } from '../../constants/theme';
-import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 import { ChapterStat } from '../../types';
 
 interface ChapterAccuracyListProps {
-  statsByChapter: Record<number, ChapterStat>;
+  statsByChapter: Record<string | number, ChapterStat>;
 }
 
 export const ChapterAccuracyList: React.FC<ChapterAccuracyListProps> = ({
@@ -19,14 +18,13 @@ export const ChapterAccuracyList: React.FC<ChapterAccuracyListProps> = ({
 
       <View style={styles.list}>
         {statsList.map((stat) => {
-          const chapter = ALL_CHAPTERS[stat.chapterId];
-          if (!chapter) return null;
+          const displayName = stat.chapterName || String(stat.chapterId);
 
           return (
             <View key={stat.chapterId} style={styles.row}>
               <View style={styles.chapterInfo}>
                 <Text style={styles.chapterPath} numberOfLines={1}>
-                  {getChapterPath(chapter)}
+                  {displayName}
                 </Text>
               </View>
 

@@ -12,13 +12,12 @@ import {
 import { AlertCircle, Camera, Check, Upload, X } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question } from '../../types';
-import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 
 interface ClaimQuestionModalProps {
   visible: boolean;
   question: Question | null;
   onClose: () => void;
-  onSubmit: (questionId: number, comment: string, fileName?: string) => void;
+  onSubmit: (questionId: string | number, comment: string, fileName?: string) => void;
 }
 
 export const ClaimQuestionModal: React.FC<ClaimQuestionModalProps> = ({
@@ -31,8 +30,6 @@ export const ClaimQuestionModal: React.FC<ClaimQuestionModalProps> = ({
   const [fileName, setFileName] = useState<string | null>(null);
 
   if (!question) return null;
-
-  const chapter = ALL_CHAPTERS[question.ch];
 
   const handleFileChange = (e: any) => {
     if (e?.target?.files && e.target.files.length > 0) {
@@ -84,7 +81,7 @@ export const ClaimQuestionModal: React.FC<ClaimQuestionModalProps> = ({
 
           <Text style={styles.questionRef}>
             Challenging Question #{question.id}
-            {chapter ? ` · ${getChapterPath(chapter)}` : ''}
+            {question.chapterName ? ` · ${question.chapterName}` : ` · Chapter ${question.ch}`}
           </Text>
 
           <ScrollView style={styles.bodyScroll}>

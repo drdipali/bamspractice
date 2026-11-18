@@ -21,7 +21,7 @@ import {
   HelpCircle,
 } from 'lucide-react-native';
 import { THEME, DIFFICULTY_LABELS, OPTION_LABELS } from '../../constants/theme';
-import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
+import { getChapterPath } from '../../constants/syllabusData';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { QuizTimer } from './QuizTimer';
@@ -32,6 +32,7 @@ import { QuestionPalette } from './QuestionPalette';
 export const QuizScreen: React.FC = () => {
   const {
     session,
+    chapters,
     language,
     answerQuestion,
     unattemptQuestion,
@@ -53,7 +54,9 @@ export const QuizScreen: React.FC = () => {
   if (!session) return null;
 
   const currentQ = session.qs[session.i];
-  const chapter = currentQ ? ALL_CHAPTERS[currentQ.ch] : null;
+  const chapter = currentQ
+    ? chapters.find((c) => c.id === currentQ.ch || c.name === currentQ.ch)
+    : null;
   const isLearning = session.mode === 'learning';
   const isLocked = !!session.sub[currentQ?.id];
   const selectedAnswer = session.ans[currentQ?.id];
@@ -109,11 +112,9 @@ export const QuizScreen: React.FC = () => {
                 <Text style={styles.qIndexText}>
                   Question {session.i + 1} of {totalQuestions}
                 </Text>
-                {chapter && (
-                  <Text style={styles.chapterBreadcrumb} numberOfLines={1}>
-                    {getChapterPath(chapter)}
-                  </Text>
-                )}
+                <Text style={styles.chapterBreadcrumb} numberOfLines={1}>
+                  {currentQ.chapterName || (chapter ? getChapterPath(chapter) : `Chapter ${currentQ.ch}`)}
+                </Text>
                 <View style={styles.metaRight}>
                   <View style={styles.diffPill}>
                     <Text style={styles.diffPillText}>

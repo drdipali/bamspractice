@@ -26,7 +26,7 @@ export async function saveLanguage(lang: Language): Promise<void> {
 }
 
 export interface DraftState {
-  sel: number[];
+  sel: (string | number)[];
   cfg: PracticeConfig;
 }
 
@@ -64,7 +64,7 @@ export async function savePracticeSets(sets: SavedPracticeSet[]): Promise<void> 
   }
 }
 
-export async function loadBookmarks(): Promise<number[]> {
+export async function loadBookmarks(): Promise<(string | number)[]> {
   try {
     const val = await AsyncStorage.getItem(STORAGE_KEYS.BOOKMARKS);
     return val ? JSON.parse(val) : [];
@@ -73,7 +73,7 @@ export async function loadBookmarks(): Promise<number[]> {
   }
 }
 
-export async function saveBookmarks(ids: number[]): Promise<void> {
+export async function saveBookmarks(ids: (string | number)[]): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEYS.BOOKMARKS, JSON.stringify(ids));
   } catch (e) {

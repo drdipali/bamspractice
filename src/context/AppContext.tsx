@@ -12,8 +12,7 @@ import {
   SavedPracticeSet,
   UserRecord,
 } from '../types';
-import { ALL_CHAPTERS, ALL_QUESTIONS } from '../constants/syllabusData';
-import { allocateQuestions, generateQuestionIds, shuffle } from '../utils/allocator';
+import { shuffle } from '../utils/allocator';
 import {
   loadDraft,
   loadLanguage,
@@ -26,7 +25,7 @@ import {
 } from '../utils/storage';
 import { backend } from '../services/backend';
 
-interface AppContextType {
+export interface AppContextType {
   currentUser: UserRecord | null;
   logIn: (email: string, pass: string) => Promise<void>;
   signUp: (email: string, pass: string) => Promise<void>;
@@ -36,20 +35,24 @@ interface AppContextType {
   setLanguage: (lang: Language) => void;
   view: ActiveView;
   setView: (view: ActiveView) => void;
-  selectedChapters: number[];
-  toggleChapter: (id: number) => void;
-  toggleGroup: (ids: number[], selectAll?: boolean) => void;
+  // Dynamic chapters & questions from cloud database
+  chapters: Chapter[];
+  allQuestions: Record<string | number, Question>;
+  refreshQuestions: () => Promise<void>;
+  selectedChapters: (string | number)[];
+  toggleChapter: (id: string | number) => void;
+  toggleGroup: (ids: (string | number)[], selectAll?: boolean) => void;
   clearSelection: () => void;
   config: PracticeConfig;
   updateConfig: (patch: Partial<PracticeConfig>) => void;
-  setManualCount: (chapterId: number, count: number) => void;
+  setManualCount: (chapterId: string | number, count: number) => void;
   toggleDifficulty: (diff: Difficulty) => void;
   savedSets: SavedPracticeSet[];
   saveCurrentSet: (name: string) => Promise<void>;
   loadSet: (set: SavedPracticeSet) => void;
   deleteSet: (setId: string) => Promise<void>;
   session: QuizSession | null;
-  startQuiz: (customIds?: number[], forcedMode?: QuizMode) => void;
+  startQuiz: (customIds?: (string | number)[], forcedMode?: QuizMode) => Promise<void> | void;
   answerQuestion: (optionIndex: number) => void;
   unattemptQuestion: () => void;
   submitQuestion: () => void;
@@ -64,11 +67,11 @@ interface AppContextType {
   statusMessage: string;
   setStatusMessage: (msg: string) => void;
   // Persistent revision bookmarks
-  bookmarkedIds: number[];
-  toggleBookmark: (questionId: number) => void;
-  isBookmarked: (questionId: number) => boolean;
+  bookmarkedIds: (string | number)[];
+  toggleBookmark: (questionId: string | number) => void;
+  isBookmarked: (questionId: string | number) => boolean;
   clearAllBookmarks: () => Promise<void>;
-  clearChapterBookmarks: (chapterId: number) => Promise<void>;
+  clearChapterBookmarks: (chapterId: string | number) => Promise<void>;
 }
 
 const DEFAULT_CONFIG: PracticeConfig = {
@@ -85,14 +88,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [language, setLangState] = useState<Language>('en');
   const [view, setView] = useState<ActiveView>('auth');
-  const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [allQuestions, setAllQuestions] = useState<Record<string | number, Question>>({});
+  const [selectedChapters, setSelectedChapters] = useState<(string | number)[]>([]);
   const [config, setConfig] = useState<PracticeConfig>(DEFAULT_CONFIG);
   const [savedSets, setSavedSets] = useState<SavedPracticeSet[]>([]);
   const [session, setSession] = useState<QuizSession | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
-  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
+  const [bookmarkedIds, setBookmarkedIds] = useState<(string | number)[]>([]);
 
-  // Initial load from storage & backend authentication
+  // Function to refresh questions and dynamic chapter syllabus from backend
+  const refreshQuestions = async () => {
+    try {
+      const qList = await backend.getQuestions();
+      const qMap: Record<string | number, Question> = {};
+      qList.forEach((q) => {
+        qMap[q.id] = q;
+      });
+      setAllQuestions(qMap);
+
+      const chList = await backend.getChapters();
+      setChapters(chList);
+    } catch (e) {
+      console.warn('Error refreshing cloud questions:', e);
+    }
+  };
+
+  // Initial load from storage & backend authentication & cloud questions
   useEffect(() => {
     (async () => {
       const storedLang = await loadLanguage('en');
@@ -107,11 +129,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setView('auth');
       }
 
+      // Load dynamic cloud questions & chapters
+      await refreshQuestions();
+
       const storedDraft = await loadDraft();
       if (storedDraft) {
-        setSelectedChapters(
-          (storedDraft.sel || []).filter((id) => ALL_CHAPTERS[id] !== undefined)
-        );
+        if (storedDraft.sel && Array.isArray(storedDraft.sel)) {
+          setSelectedChapters(storedDraft.sel);
+        }
         if (storedDraft.cfg) {
           setConfig((prev) => ({ ...prev, ...storedDraft.cfg }));
         }
@@ -159,13 +184,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveLanguage(lang);
   };
 
-  const toggleChapter = (id: number) => {
+  const toggleChapter = (id: string | number) => {
     setSelectedChapters((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
 
-  const toggleGroup = (ids: number[], selectAll?: boolean) => {
+  const toggleGroup = (ids: (string | number)[], selectAll?: boolean) => {
     setSelectedChapters((prev) => {
       const allSelected = ids.every((id) => prev.includes(id));
       const shouldSelect = selectAll !== undefined ? selectAll : !allSelected;
@@ -187,7 +212,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setConfig((prev) => ({ ...prev, ...patch }));
   };
 
-  const setManualCount = (chapterId: number, count: number) => {
+  const setManualCount = (chapterId: string | number, count: number) => {
     setConfig((prev) => ({
       ...prev,
       manual: {
@@ -224,7 +249,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const loadSet = (set: SavedPracticeSet) => {
-    setSelectedChapters(set.sel.filter((id) => ALL_CHAPTERS[id] !== undefined));
+    setSelectedChapters(set.sel);
     setConfig({
       ...set.cfg,
       manual: set.cfg.manual || {},
@@ -238,25 +263,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await savePracticeSets(updated);
   };
 
-  const startQuiz = (customIds?: number[], forcedMode?: QuizMode) => {
-    let targetIds: number[] = [];
+  // Dynamic Quiz Generation from Cloud Database
+  const startQuiz = async (customIds?: (string | number)[], forcedMode?: QuizMode) => {
+    let targetQuestions: Question[] = [];
 
     if (customIds && customIds.length > 0) {
-      targetIds = customIds;
+      targetQuestions = customIds
+        .map((id) => allQuestions[id])
+        .filter((q): q is Question => q !== undefined);
     } else {
-      const activeChs = selectedChapters.map((id) => ALL_CHAPTERS[id]);
-      if (activeChs.length === 0) return;
-      targetIds = generateQuestionIds(activeChs, config);
+      if (selectedChapters.length === 0) return;
+
+      // Query database dynamically for questions matching selected chapters
+      const matchingQuestions = await backend.getQuestionsByChapters(selectedChapters);
+
+      // Filter by selected difficulties
+      let filtered = matchingQuestions.filter((q) => config.diffs.includes(q.d));
+      if (filtered.length === 0) {
+        filtered = matchingQuestions;
+      }
+
+      // Shuffle pool
+      const pool = shuffle([...filtered]);
+      const count = Math.min(config.total, pool.length);
+      targetQuestions = pool.slice(0, count);
     }
 
-    if (targetIds.length === 0) return;
-
-    const questions = targetIds
-      .map((id) => ALL_QUESTIONS[id])
-      .filter((q): q is Question => q !== undefined);
+    if (targetQuestions.length === 0) {
+      setStatusMessage('No questions available for the selected chapters.');
+      return;
+    }
 
     setSession({
-      qs: questions,
+      qs: targetQuestions,
       i: 0,
       ans: {},
       sub: {},
@@ -280,7 +319,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const isSame = prev.ans[currentQ.id] === optionIndex;
       const newAns = { ...prev.ans };
       if (isSame) {
-        // Tapping the same option again deselects / unattempts it
         delete newAns[currentQ.id];
       } else {
         newAns[currentQ.id] = optionIndex;
@@ -414,21 +452,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let correct = 0;
     let incorrect = 0;
     let unattempted = 0;
-    const byChapter: Record<number, { chapterId: number; total: number; correct: number; accuracy: number }> = {};
+    const byChapter: Record<
+      string | number,
+      { chapterId: string | number; chapterName?: string; total: number; correct: number; accuracy: number }
+    > = {};
     const wrongQuestions: Question[] = [];
 
     session.qs.forEach((q) => {
       const chosen = session.ans[q.id];
-      if (!byChapter[q.ch]) {
-        byChapter[q.ch] = { chapterId: q.ch, total: 0, correct: 0, accuracy: 0 };
+      const chKey = q.chapterName || q.ch;
+      if (!byChapter[chKey]) {
+        byChapter[chKey] = {
+          chapterId: chKey,
+          chapterName: q.chapterName,
+          total: 0,
+          correct: 0,
+          accuracy: 0,
+        };
       }
-      byChapter[q.ch].total++;
+      byChapter[chKey].total++;
 
       if (chosen === undefined) {
         unattempted++;
       } else if (chosen === q.c) {
         correct++;
-        byChapter[q.ch].correct++;
+        byChapter[chKey].correct++;
       } else {
         incorrect++;
         wrongQuestions.push(q);
@@ -436,7 +484,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     Object.keys(byChapter).forEach((key) => {
-      const stat = byChapter[Number(key)];
+      const stat = byChapter[key];
       stat.accuracy = stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0;
     });
 
@@ -476,7 +524,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setView('build');
   };
 
-  const toggleBookmark = (questionId: number) => {
+  const toggleBookmark = (questionId: string | number) => {
     setBookmarkedIds((prev) => {
       const exists = prev.includes(questionId);
       const updated = exists
@@ -487,7 +535,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const isBookmarked = (questionId: number) => {
+  const isBookmarked = (questionId: string | number) => {
     return bookmarkedIds.includes(questionId);
   };
 
@@ -496,11 +544,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await saveBookmarks([]);
   };
 
-  const clearChapterBookmarks = async (chapterId: number) => {
+  const clearChapterBookmarks = async (chapterId: string | number) => {
     setBookmarkedIds((prev) => {
       const updated = prev.filter((id) => {
-        const q = ALL_QUESTIONS[id];
-        return q ? q.ch !== chapterId : true;
+        const q = allQuestions[id];
+        return q ? (q.ch !== chapterId && q.chapterName !== chapterId) : true;
       });
       saveBookmarks(updated);
       return updated;
@@ -519,6 +567,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setLanguage,
         view,
         setView,
+        chapters,
+        allQuestions,
+        refreshQuestions,
         selectedChapters,
         toggleChapter,
         toggleGroup,

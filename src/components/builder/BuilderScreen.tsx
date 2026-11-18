@@ -14,11 +14,11 @@ import { ChapterTree } from './ChapterTree';
 import { BasketSummary } from './BasketSummary';
 import { BookmarksPanel } from './BookmarksPanel';
 import { useApp } from '../../context/AppContext';
-import { ALL_CHAPTERS } from '../../constants/syllabusData';
+import { Chapter } from '../../types';
 import { allocateQuestions } from '../../utils/allocator';
 
 export const BuilderScreen: React.FC = () => {
-  const { selectedChapters, config, startQuiz } = useApp();
+  const { chapters, selectedChapters, config, startQuiz } = useApp();
   const { width } = useWindowDimensions();
   const isTablet = width >= 820;
 
@@ -26,9 +26,9 @@ export const BuilderScreen: React.FC = () => {
 
   const activeChapters = useMemo(() => {
     return selectedChapters
-      .map((id) => ALL_CHAPTERS[id])
-      .filter(Boolean);
-  }, [selectedChapters]);
+      .map((id) => chapters.find((c) => c.id === id || c.name === id))
+      .filter((c): c is Chapter => c !== undefined);
+  }, [selectedChapters, chapters]);
 
   const alloc = useMemo(() => {
     return allocateQuestions(activeChapters, config);

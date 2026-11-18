@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserRecord, QuizAttemptRecord } from '../types/auth';
+import { Chapter, Question } from '../types';
+import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -9,6 +11,7 @@ import {
 
 const USERS_STORAGE_KEY = 'bams_cloud_users_v1';
 const SESSION_STORAGE_KEY = 'bams_cloud_session_v1';
+const QUESTIONS_STORAGE_KEY = 'bams_cloud_questions_v1';
 
 // Initial pre-seeded users for immediate admin testing
 const SEED_USERS: UserRecord[] = [
@@ -131,16 +134,63 @@ const DEFAULT_PASSWORDS: Record<string, string> = {
   'rahul.vaidya@bams.com': 'student123',
 };
 
+/**
+ * Dynamically builds Chapter objects from questions stored in the cloud database
+ */
+export function buildChaptersFromQuestions(questions: Question[]): Chapter[] {
+  const map: Record<string, Question[]> = {};
+  questions.forEach((q) => {
+    const chName = (q.chapterName || q.ch?.toString() || 'General Ayurveda').trim();
+    if (!map[chName]) {
+      map[chName] = [];
+    }
+    map[chName].push(q);
+  });
+
+  return Object.keys(map).map((chName, idx) => {
+    const parts = chName.split('>').map((p) => p.trim());
+    let sam = 'Classical Samhita';
+    let sth = 'General';
+    let n: string | number = chName;
+
+    if (parts.length >= 3) {
+      sam = parts[0];
+      sth = parts[1];
+      n = parts[2];
+    } else if (parts.length === 2) {
+      sam = parts[0];
+      sth = parts[1];
+      n = parts[1];
+    } else if (parts.length === 1) {
+      sam = 'General Subjects';
+      sth = parts[0];
+      n = parts[0];
+    }
+
+    return {
+      id: chName,
+      name: n.toString(),
+      sam,
+      sth,
+      n,
+      key: `dyn_${idx}`,
+      qs: map[chName],
+    };
+  });
+}
+
 class BackendService {
   private users: UserRecord[] = [];
   private passwords: Record<string, string> = {};
   private currentUser: UserRecord | null = null;
+  private questions: Question[] = [];
   private isInitialized = false;
 
   private async initialize() {
     if (this.isInitialized) return;
 
     try {
+      // 1. Users
       const storedUsers = await AsyncStorage.getItem(USERS_STORAGE_KEY);
       if (storedUsers) {
         this.users = JSON.parse(storedUsers);
@@ -149,6 +199,7 @@ class BackendService {
         await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
       }
 
+      // 2. Passwords
       const storedPasswords = await AsyncStorage.getItem(PASSWORDS_KEY);
       if (storedPasswords) {
         this.passwords = JSON.parse(storedPasswords);
@@ -157,6 +208,7 @@ class BackendService {
         await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords));
       }
 
+      // 3. Current Session
       const storedSession = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
       if (storedSession) {
         const parsed = JSON.parse(storedSession);
@@ -165,14 +217,28 @@ class BackendService {
           this.currentUser = user;
         }
       }
+
+      // 4. Cloud Questions Collection
+      const storedQuestions = await AsyncStorage.getItem(QUESTIONS_STORAGE_KEY);
+      if (storedQuestions) {
+        this.questions = JSON.parse(storedQuestions);
+      } else {
+        this.questions = [...INITIAL_SEED_QUESTIONS];
+        await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+      }
     } catch (e) {
       console.warn('Backend initialization error:', e);
       this.users = [...SEED_USERS];
       this.passwords = { ...DEFAULT_PASSWORDS };
+      this.questions = [...INITIAL_SEED_QUESTIONS];
     }
 
     this.isInitialized = true;
   }
+
+  // ==========================================
+  // AUTHENTICATION & USERS
+  // ==========================================
 
   async signUp(email: string, password: string): Promise<UserRecord> {
     await this.initialize();
@@ -218,14 +284,12 @@ class BackendService {
       throw new Error('Please enter your email.');
     }
 
-    // Special allowance for admin default credential convenience
     if (normalizedEmail === 'admin@bams.com' && !this.passwords['admin@bams.com']) {
       this.passwords['admin@bams.com'] = 'admin123';
     }
 
     const user = this.users.find((u) => u.email.toLowerCase() === normalizedEmail);
     if (!user) {
-      // If user doesn't exist yet, we guide them
       throw new Error('No account found with this email. Please check your spelling or Sign Up.');
     }
 
@@ -234,7 +298,6 @@ class BackendService {
       throw new Error('Incorrect password. Please try again.');
     }
 
-    // Update last active
     user.lastActive = new Date().toISOString();
     this.currentUser = user;
 
@@ -286,6 +349,114 @@ class BackendService {
   async getAllUsers(): Promise<UserRecord[]> {
     await this.initialize();
     return [...this.users];
+  }
+
+  // ==========================================
+  // CLOUD QUESTIONS COLLECTION (CMS)
+  // ==========================================
+
+  async getQuestions(): Promise<Question[]> {
+    await this.initialize();
+    return [...this.questions];
+  }
+
+  async getQuestionsByChapters(chapterIdsOrNames: (string | number)[]): Promise<Question[]> {
+    await this.initialize();
+    const set = new Set(chapterIdsOrNames.map((c) => c.toString().trim().toLowerCase()));
+    return this.questions.filter((q) => {
+      const chName = (q.chapterName || q.ch?.toString() || '').trim().toLowerCase();
+      const chId = q.ch?.toString().trim().toLowerCase();
+      return set.has(chName) || set.has(chId);
+    });
+  }
+
+  async getChapters(): Promise<Chapter[]> {
+    await this.initialize();
+    return buildChaptersFromQuestions(this.questions);
+  }
+
+  async getUniqueChapterNames(): Promise<string[]> {
+    await this.initialize();
+    const set = new Set<string>();
+    this.questions.forEach((q) => {
+      if (q.chapterName) set.add(q.chapterName.trim());
+    });
+    return Array.from(set).sort();
+  }
+
+  async addQuestion(questionData: Omit<Question, 'id'>): Promise<Question> {
+    await this.initialize();
+
+    const id = `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newQuestion: Question = {
+      id,
+      ...questionData,
+      ch: questionData.chapterName || questionData.ch,
+      chapterName: questionData.chapterName || questionData.ch.toString(),
+      createdAt: new Date().toISOString(),
+    };
+
+    this.questions.unshift(newQuestion);
+    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+
+    return newQuestion;
+  }
+
+  async batchAddQuestions(
+    newQuestions: Omit<Question, 'id'>[]
+  ): Promise<{ added: number; errors: string[] }> {
+    await this.initialize();
+
+    const addedQuestions: Question[] = [];
+    const errors: string[] = [];
+
+    newQuestions.forEach((qData, idx) => {
+      if (!qData.chapterName || !qData.stem || !qData.o || qData.o.length < 4) {
+        errors.push(`Row ${idx + 1}: Incomplete question content.`);
+        return;
+      }
+
+      const id = `q_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+      addedQuestions.push({
+        id,
+        ...qData,
+        ch: qData.chapterName,
+        chapterName: qData.chapterName,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    if (addedQuestions.length > 0) {
+      this.questions = [...addedQuestions, ...this.questions];
+      await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+    }
+
+    return { added: addedQuestions.length, errors };
+  }
+
+  async deleteQuestion(id: string | number): Promise<void> {
+    await this.initialize();
+    this.questions = this.questions.filter((q) => q.id !== id);
+    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+  }
+
+  async updateQuestion(id: string | number, patch: Partial<Question>): Promise<Question> {
+    await this.initialize();
+    const index = this.questions.findIndex((q) => q.id === id);
+    if (index === -1) {
+      throw new Error(`Question with id ${id} not found.`);
+    }
+
+    const updated: Question = {
+      ...this.questions[index],
+      ...patch,
+      ch: patch.chapterName || this.questions[index].chapterName,
+    };
+
+    this.questions[index] = updated;
+    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+
+    return updated;
   }
 }
 

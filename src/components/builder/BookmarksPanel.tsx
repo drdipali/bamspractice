@@ -21,15 +21,17 @@ import { THEME } from '../../constants/theme';
 import { Chapter, QuizMode } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { SegmentedControl } from '../common/SegmentedControl';
-import { ALL_QUESTIONS, ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
+import { getChapterPath } from '../../constants/syllabusData';
 
 interface ChapterBookmarkGroup {
   chapter: Chapter;
-  ids: number[];
+  ids: (string | number)[];
 }
 
 export const BookmarksPanel: React.FC = () => {
   const {
+    chapters,
+    allQuestions,
     bookmarkedIds,
     clearAllBookmarks,
     clearChapterBookmarks,
@@ -38,27 +40,34 @@ export const BookmarksPanel: React.FC = () => {
 
   const [revisionMode, setRevisionMode] = useState<QuizMode>('learning');
   const [showChapterBreakdown, setShowChapterBreakdown] = useState(true);
-  const [selectedChapterIds, setSelectedChapterIds] = useState<number[]>([]);
+  const [selectedChapterIds, setSelectedChapterIds] = useState<(string | number)[]>([]);
 
   const totalCount = bookmarkedIds.length;
 
   // Group bookmarked questions chapter-wise
   const chapterGroups = useMemo<ChapterBookmarkGroup[]>(() => {
-    const map: Record<number, ChapterBookmarkGroup> = {};
+    const map: Record<string, ChapterBookmarkGroup> = {};
     bookmarkedIds.forEach((id) => {
-      const q = ALL_QUESTIONS[id];
+      const q = allQuestions[id];
       if (q) {
-        const ch = ALL_CHAPTERS[q.ch];
-        if (ch) {
-          if (!map[ch.id]) {
-            map[ch.id] = { chapter: ch, ids: [] };
-          }
-          map[ch.id].ids.push(id);
+        const chKey = q.chapterName || q.ch;
+        const ch = chapters.find((c) => c.id === chKey || c.name === chKey || c.id === q.ch) || {
+          id: chKey,
+          name: q.chapterName || String(q.ch),
+          sam: 'Ayurveda',
+          sth: 'Syllabus',
+          n: q.chapterName || String(q.ch),
+          key: String(chKey),
+          qs: [],
+        };
+        if (!map[String(ch.id)]) {
+          map[String(ch.id)] = { chapter: ch, ids: [] };
         }
+        map[String(ch.id)].ids.push(id);
       }
     });
-    return Object.values(map).sort((a, b) => a.chapter.id - b.chapter.id);
-  }, [bookmarkedIds]);
+    return Object.values(map);
+  }, [bookmarkedIds, allQuestions, chapters]);
 
   // Which questions are targeted by current chapter selection filter
   const targetQuestions = useMemo(() => {
@@ -66,12 +75,12 @@ export const BookmarksPanel: React.FC = () => {
       return bookmarkedIds;
     }
     return bookmarkedIds.filter((id) => {
-      const q = ALL_QUESTIONS[id];
-      return q && selectedChapterIds.includes(q.ch);
+      const q = allQuestions[id];
+      return q && (selectedChapterIds.includes(q.ch) || selectedChapterIds.includes(q.chapterName));
     });
-  }, [bookmarkedIds, selectedChapterIds]);
+  }, [bookmarkedIds, selectedChapterIds, allQuestions]);
 
-  const toggleChapterFilter = (chId: number) => {
+  const toggleChapterFilter = (chId: string | number) => {
     setSelectedChapterIds((prev) =>
       prev.includes(chId) ? prev.filter((id) => id !== chId) : [...prev, chId]
     );
@@ -116,7 +125,7 @@ export const BookmarksPanel: React.FC = () => {
     );
   };
 
-  const handleStartRevision = (idsToUse?: number[]) => {
+  const handleStartRevision = (idsToUse?: (string | number)[]) => {
     const ids = idsToUse || targetQuestions;
     if (ids.length === 0) return;
     startQuiz(ids, revisionMode);

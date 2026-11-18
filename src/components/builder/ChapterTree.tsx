@@ -5,58 +5,107 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from 'react-native';
-import { ChevronDown, ChevronRight, Search, X, Bookmark } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Search, X, Bookmark, Layers } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
-import { GROUPS, RAW_TREE, ALL_CHAPTERS, ALL_QUESTIONS } from '../../constants/syllabusData';
 import { Chapter } from '../../types';
 import { useApp } from '../../context/AppContext';
 
+interface DynamicSthana {
+  name: string;
+  key: string;
+  chapters: Chapter[];
+  allChapterIds: (string | number)[];
+}
+
+interface DynamicSamhita {
+  name: string;
+  key: string;
+  sthanas: DynamicSthana[];
+  allChapterIds: (string | number)[];
+}
+
 export const ChapterTree: React.FC = () => {
-  const { selectedChapters, toggleChapter, toggleGroup, bookmarkedIds } = useApp();
+  const {
+    chapters,
+    allQuestions,
+    selectedChapters,
+    toggleChapter,
+    toggleGroup,
+    bookmarkedIds,
+  } = useApp();
+
   const [query, setQuery] = useState('');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    s0: true, // Charaka Samhita open by default
-    '0-0': true, // Sutrasthana open by default
+    sam_0: true, // First Samhita open by default
+    sth_0_0: true, // First Sthana open by default
   });
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Filter chapters based on search query
-  const matchesSearch = (c: Chapter, searchTerms: string[]) => {
-    if (searchTerms.length === 0) return true;
-    const haystack = `${c.sam} ${c.sth} chapter ${c.n}`.toLowerCase();
-    return searchTerms.every((term) => haystack.includes(term));
-  };
-
   const searchTerms = useMemo(() => {
     return query.toLowerCase().split(/\s+/).filter(Boolean);
   }, [query]);
 
-  // Pre-index chapters by Samhita and Sthana
-  const chaptersBySamhitaAndSthana = useMemo(() => {
-    const map: Record<string, Chapter[]> = {};
-    ALL_CHAPTERS.forEach((c) => {
-      const key = `${c.si}-${c.key.split('-')[1]}`;
-      if (!map[key]) map[key] = [];
-      map[key].push(c);
+  // Filter chapters based on search query
+  const matchesSearch = (c: Chapter, terms: string[]) => {
+    if (terms.length === 0) return true;
+    const haystack = `${c.sam} ${c.sth} ${c.name} ${c.n}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  };
+
+  // Build dynamic hierarchy from cloud database chapters
+  const dynamicSamhitas = useMemo<DynamicSamhita[]>(() => {
+    const samMap: Record<string, Record<string, Chapter[]>> = {};
+
+    chapters.forEach((c) => {
+      const samName = c.sam || 'General Ayurveda';
+      const sthName = c.sth || 'General';
+      if (!samMap[samName]) {
+        samMap[samName] = {};
+      }
+      if (!samMap[samName][sthName]) {
+        samMap[samName][sthName] = [];
+      }
+      samMap[samName][sthName].push(c);
     });
-    return map;
-  }, []);
+
+    return Object.keys(samMap).map((samName, sIdx) => {
+      const sthanaMap = samMap[samName];
+      const sthanas: DynamicSthana[] = Object.keys(sthanaMap).map((sthName, tIdx) => {
+        const sthanaChapters = sthanaMap[sthName];
+        return {
+          name: sthName,
+          key: `sth_${sIdx}_${tIdx}`,
+          chapters: sthanaChapters,
+          allChapterIds: sthanaChapters.map((c) => c.id),
+        };
+      });
+
+      return {
+        name: samName,
+        key: `sam_${sIdx}`,
+        sthanas,
+        allChapterIds: sthanas.flatMap((s) => s.allChapterIds),
+      };
+    });
+  }, [chapters]);
 
   // Pre-calculate bookmark count per chapter
   const chapterBookmarksCount = useMemo(() => {
-    const map: Record<number, number> = {};
+    const map: Record<string | number, number> = {};
     bookmarkedIds.forEach((id) => {
-      const q = ALL_QUESTIONS[id];
+      const q = allQuestions[id];
       if (q) {
-        map[q.ch] = (map[q.ch] || 0) + 1;
+        const key = q.chapterName || q.ch;
+        map[key] = (map[key] || 0) + 1;
       }
     });
     return map;
-  }, [bookmarkedIds]);
+  }, [bookmarkedIds, allQuestions]);
 
   return (
     <View style={styles.card}>
@@ -69,7 +118,7 @@ export const ChapterTree: React.FC = () => {
           style={styles.searchInput}
           value={query}
           onChangeText={setQuery}
-          placeholder="Search, e.g. charaka chikitsa 30"
+          placeholder="Search, e.g. charaka sutra 1"
           placeholderTextColor={THEME.colors.muted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -87,264 +136,203 @@ export const ChapterTree: React.FC = () => {
 
       {/* Tree Content */}
       <View style={styles.treeContainer}>
-        {GROUPS.map((groupName, groupIdx) => {
-          const samhitasInGroup = RAW_TREE.filter(
-            (s) => s.groupIndex === groupIdx
-          );
+        {chapters.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="small" color={THEME.colors.brand} />
+            <Text style={styles.emptyText}>Loading cloud chapter syllabus...</Text>
+          </View>
+        ) : (
+          dynamicSamhitas.map((samhita) => {
+            // Filter matching sthanas and chapters
+            const matchingSthanas = samhita.sthanas
+              .map((sth) => ({
+                ...sth,
+                chapters: sth.chapters.filter((c) => matchesSearch(c, searchTerms)),
+              }))
+              .filter((sth) => sth.chapters.length > 0);
 
-          // Check if any chapter in this group matches
-          const hasMatchesInGroup = samhitasInGroup.some((s) => {
-            const si = RAW_TREE.indexOf(s);
-            return ALL_CHAPTERS.filter(
-              (c) => c.si === si && matchesSearch(c, searchTerms)
-            ).length > 0;
-          });
+            if (matchingSthanas.length === 0) return null;
 
-          if (!hasMatchesInGroup) return null;
+            const visibleChapterIds = matchingSthanas.flatMap((s) => s.chapters.map((c) => c.id));
+            const selectedCount = visibleChapterIds.filter((id) =>
+              selectedChapters.includes(id)
+            ).length;
+            const isAllSelected =
+              visibleChapterIds.length > 0 && selectedCount === visibleChapterIds.length;
+            const isPartiallySelected = selectedCount > 0 && !isAllSelected;
 
-          return (
-            <View key={groupName} style={styles.groupBlock}>
-              <Text style={styles.groupHeader}>{groupName.toUpperCase()}</Text>
+            const isExpanded = query.trim().length > 0 || !!openSections[samhita.key];
 
-              {samhitasInGroup.map((samhita) => {
-                const si = RAW_TREE.indexOf(samhita);
-                const samhitaChapters = ALL_CHAPTERS.filter(
-                  (c) => c.si === si && matchesSearch(c, searchTerms)
-                );
+            return (
+              <View key={samhita.key} style={styles.samhitaBlock}>
+                {/* Level 1: Samhita Row */}
+                <View style={styles.rowLevel1}>
+                  <TouchableOpacity
+                    style={styles.expandBtn}
+                    onPress={() => toggleSection(samhita.key)}
+                  >
+                    {isExpanded ? (
+                      <ChevronDown size={18} color={THEME.colors.muted} />
+                    ) : (
+                      <ChevronRight size={18} color={THEME.colors.muted} />
+                    )}
+                  </TouchableOpacity>
 
-                if (samhitaChapters.length === 0) return null;
-
-                const samhitaChapterIds = samhitaChapters.map((c) => c.id);
-                const selectedCount = samhitaChapterIds.filter((id) =>
-                  selectedChapters.includes(id)
-                ).length;
-                const isAllSelected =
-                  samhitaChapterIds.length > 0 &&
-                  selectedCount === samhitaChapterIds.length;
-                const isPartiallySelected =
-                  selectedCount > 0 && !isAllSelected;
-
-                const samhitaKey = `s${si}`;
-                const isExpanded = query.trim().length > 0 || !!openSections[samhitaKey];
-
-                return (
-                  <View key={samhita.name} style={styles.samhitaBlock}>
-                    {/* Level 1: Samhita Row */}
-                    <View style={styles.rowLevel1}>
-                      <TouchableOpacity
-                        style={styles.expandBtn}
-                        onPress={() => toggleSection(samhitaKey)}
-                      >
-                        {isExpanded ? (
-                          <ChevronDown size={18} color={THEME.colors.muted} />
-                        ) : (
-                          <ChevronRight size={18} color={THEME.colors.muted} />
-                        )}
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.checkboxTouch}
-                        onPress={() =>
-                          toggleGroup(samhitaChapterIds, !isAllSelected)
-                        }
-                        activeOpacity={0.7}
-                      >
-                        <View
-                          style={[
-                            styles.checkboxBox,
-                            (isAllSelected || isPartiallySelected) &&
-                              styles.checkboxBoxActive,
-                          ]}
-                        >
-                          {isAllSelected && (
-                            <View style={styles.checkboxCheckmark} />
-                          )}
-                          {isPartiallySelected && (
-                            <View style={styles.checkboxIndeterminate} />
-                          )}
-                        </View>
-                        <Text style={styles.samhitaLabel} numberOfLines={1}>
-                          {samhita.name}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <View style={styles.countBadge}>
-                        <Text style={styles.countBadgeText}>
-                          {selectedCount}/{samhitaChapterIds.length}
-                        </Text>
-                      </View>
+                  <TouchableOpacity
+                    style={styles.checkboxTouch}
+                    onPress={() => toggleGroup(visibleChapterIds, !isAllSelected)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.checkboxBox,
+                        (isAllSelected || isPartiallySelected) && styles.checkboxBoxActive,
+                      ]}
+                    >
+                      {isAllSelected && <View style={styles.checkboxCheckmark} />}
+                      {isPartiallySelected && <View style={styles.checkboxIndeterminate} />}
                     </View>
+                    <Text style={styles.samhitaLabel} numberOfLines={1}>
+                      {samhita.name}
+                    </Text>
+                  </TouchableOpacity>
 
-                    {/* Level 2: Sthanas */}
-                    {isExpanded &&
-                      samhita.sthanas.map((sthana, ti) => {
-                        const sthanaKey = `${si}-${ti}`;
-                        const sthanaChapters = (
-                          chaptersBySamhitaAndSthana[sthanaKey] || []
-                        ).filter((c) => matchesSearch(c, searchTerms));
+                  <View style={styles.countBadge}>
+                    <Text style={styles.countBadgeText}>
+                      {selectedCount}/{visibleChapterIds.length}
+                    </Text>
+                  </View>
+                </View>
 
-                        if (sthanaChapters.length === 0) return null;
+                {/* Level 2: Sthanas */}
+                {isExpanded &&
+                  matchingSthanas.map((sthana) => {
+                    const sthanaVisibleIds = sthana.chapters.map((c) => c.id);
+                    const sthanaSelectedCount = sthanaVisibleIds.filter((id) =>
+                      selectedChapters.includes(id)
+                    ).length;
+                    const isSthanaAllSelected =
+                      sthanaVisibleIds.length > 0 &&
+                      sthanaSelectedCount === sthanaVisibleIds.length;
+                    const isSthanaPartiallySelected =
+                      sthanaSelectedCount > 0 && !isSthanaAllSelected;
 
-                        const sthanaIds = sthanaChapters.map((c) => c.id);
-                        const sthanaSelectedCount = sthanaIds.filter((id) =>
-                          selectedChapters.includes(id)
-                        ).length;
-                        const isSthanaAllSelected =
-                          sthanaIds.length > 0 &&
-                          sthanaSelectedCount === sthanaIds.length;
-                        const isSthanaPartiallySelected =
-                          sthanaSelectedCount > 0 && !isSthanaAllSelected;
+                    const isSthanaExpanded =
+                      query.trim().length > 0 || !!openSections[sthana.key];
 
-                        const isSthanaExpanded =
-                          query.trim().length > 0 ||
-                          !!openSections[sthanaKey];
+                    return (
+                      <View key={sthana.key} style={styles.sthanaBlock}>
+                        {/* Level 2: Sthana Row */}
+                        <View style={styles.rowLevel2}>
+                          <TouchableOpacity
+                            style={styles.expandBtn}
+                            onPress={() => toggleSection(sthana.key)}
+                          >
+                            {isSthanaExpanded ? (
+                              <ChevronDown size={16} color={THEME.colors.muted} />
+                            ) : (
+                              <ChevronRight size={16} color={THEME.colors.muted} />
+                            )}
+                          </TouchableOpacity>
 
-                        return (
-                          <View key={sthana[0]} style={styles.sthanaBlock}>
-                            {/* Level 2 Row */}
-                            <View style={styles.rowLevel2}>
+                          <TouchableOpacity
+                            style={styles.checkboxTouch}
+                            onPress={() => toggleGroup(sthanaVisibleIds, !isSthanaAllSelected)}
+                            activeOpacity={0.7}
+                          >
+                            <View
+                              style={[
+                                styles.checkboxBoxSmall,
+                                (isSthanaAllSelected || isSthanaPartiallySelected) &&
+                                  styles.checkboxBoxActive,
+                              ]}
+                            >
+                              {isSthanaAllSelected && <View style={styles.checkboxCheckmarkSmall} />}
+                              {isSthanaPartiallySelected && (
+                                <View style={styles.checkboxIndeterminateSmall} />
+                              )}
+                            </View>
+                            <Text style={styles.sthanaLabel} numberOfLines={1}>
+                              {sthana.name}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.countBadge}>
+                            <Text style={styles.countBadgeText}>
+                              {sthanaSelectedCount}/{sthanaVisibleIds.length}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Level 3: Individual Chapters */}
+                        {isSthanaExpanded &&
+                          sthana.chapters.map((chapter) => {
+                            const isChSelected = selectedChapters.includes(chapter.id);
+                            const chBookmarkCount =
+                              chapterBookmarksCount[chapter.id] ||
+                              chapterBookmarksCount[chapter.name] ||
+                              0;
+
+                            return (
                               <TouchableOpacity
-                                style={styles.expandBtn}
-                                onPress={() => toggleSection(sthanaKey)}
-                              >
-                                {isSthanaExpanded ? (
-                                  <ChevronDown
-                                    size={16}
-                                    color={THEME.colors.muted}
-                                  />
-                                ) : (
-                                  <ChevronRight
-                                    size={16}
-                                    color={THEME.colors.muted}
-                                  />
-                                )}
-                              </TouchableOpacity>
-
-                              <TouchableOpacity
-                                style={styles.checkboxTouch}
-                                onPress={() =>
-                                  toggleGroup(sthanaIds, !isSthanaAllSelected)
-                                }
+                                key={chapter.id}
+                                style={[
+                                  styles.rowLevel3,
+                                  isChSelected && styles.rowLevel3Selected,
+                                ]}
+                                onPress={() => toggleChapter(chapter.id)}
                                 activeOpacity={0.7}
                               >
                                 <View
                                   style={[
                                     styles.checkboxBoxSmall,
-                                    (isSthanaAllSelected ||
-                                      isSthanaPartiallySelected) &&
-                                      styles.checkboxBoxActive,
+                                    isChSelected && styles.checkboxBoxActive,
                                   ]}
                                 >
-                                  {isSthanaAllSelected && (
-                                    <View style={styles.checkboxCheckmarkSmall} />
-                                  )}
-                                  {isSthanaPartiallySelected && (
-                                    <View
-                                      style={styles.checkboxIndeterminateSmall}
-                                    />
-                                  )}
+                                  {isChSelected && <View style={styles.checkboxCheckmarkSmall} />}
                                 </View>
+
                                 <Text
-                                  style={styles.sthanaLabel}
+                                  style={[
+                                    styles.chapterLabel,
+                                    isChSelected && styles.chapterLabelSelected,
+                                  ]}
                                   numberOfLines={1}
                                 >
-                                  {sthana[0]}
+                                  {chapter.name}
                                 </Text>
-                              </TouchableOpacity>
 
-                              <View style={styles.countBadge}>
-                                <Text style={styles.countBadgeText}>
-                                  {sthanaSelectedCount}/{sthanaIds.length}
-                                </Text>
-                              </View>
-                            </View>
-
-                            {/* Level 3: Individual Chapters */}
-                            {isSthanaExpanded &&
-                              sthanaChapters.map((chapter) => {
-                                const isChSelected = selectedChapters.includes(
-                                  chapter.id
-                                );
-                                const chBookmarkCount =
-                                  chapterBookmarksCount[chapter.id] || 0;
-                                return (
-                                  <TouchableOpacity
-                                    key={chapter.id}
-                                    style={[
-                                      styles.rowLevel3,
-                                      isChSelected && styles.rowLevel3Selected,
-                                    ]}
-                                    onPress={() => toggleChapter(chapter.id)}
-                                    activeOpacity={0.7}
-                                  >
-                                    <View
-                                      style={[
-                                        styles.checkboxBoxSmall,
-                                        isChSelected &&
-                                          styles.checkboxBoxActive,
-                                      ]}
-                                    >
-                                      {isChSelected && (
-                                        <View
-                                          style={
-                                            styles.checkboxCheckmarkSmall
-                                          }
-                                        />
-                                      )}
+                                <View style={styles.chapterRightRow}>
+                                  {chBookmarkCount > 0 && (
+                                    <View style={styles.chapterBookmarkBadge}>
+                                      <Bookmark
+                                        size={9}
+                                        color={THEME.colors.brandInk}
+                                        fill={THEME.colors.accent}
+                                      />
+                                      <Text style={styles.chapterBookmarkBadgeText}>
+                                        {chBookmarkCount}
+                                      </Text>
                                     </View>
-                                    <Text
-                                      style={[
-                                        styles.chapterLabel,
-                                        isChSelected &&
-                                          styles.chapterLabelSelected,
-                                      ]}
-                                      numberOfLines={1}
-                                    >
-                                      Chapter {chapter.n}
-                                      {chapter.id === 0 && (
-                                        <Text style={styles.realTag}>
-                                          {' '}
-                                          · 90 real MCQs
-                                        </Text>
-                                      )}
+                                  )}
+
+                                  <View style={styles.mcqPill}>
+                                    <Text style={styles.mcqPillText}>
+                                      {chapter.qs.length} MCQs
                                     </Text>
-                                    <View style={styles.chapterRightRow}>
-                                      {chBookmarkCount > 0 && (
-                                        <View
-                                          style={styles.chapterBookmarkBadge}
-                                        >
-                                          <Bookmark
-                                            size={9}
-                                            color={THEME.colors.brandInk}
-                                            fill={THEME.colors.accent}
-                                          />
-                                          <Text
-                                            style={
-                                              styles.chapterBookmarkBadgeText
-                                            }
-                                          >
-                                            {chBookmarkCount}
-                                          </Text>
-                                        </View>
-                                      )}
-                                      <View style={styles.mcqPill}>
-                                        <Text style={styles.mcqPillText}>
-                                          {chapter.qs.length} MCQs
-                                        </Text>
-                                      </View>
-                                    </View>
-                                  </TouchableOpacity>
-                                );
-                              })}
-                          </View>
-                        );
-                      })}
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
+                                  </View>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                      </View>
+                    );
+                  })
+                }
+              </View>
+            );
+          })
+        )}
       </View>
     </View>
   );
@@ -354,10 +342,9 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: THEME.colors.surface,
     borderRadius: THEME.radius.lg,
+    padding: 16,
     borderWidth: 1,
     borderColor: THEME.colors.line,
-    padding: 16,
-    marginBottom: 16,
   },
   cardTitle: {
     fontFamily: THEME.fonts.serif,
@@ -370,40 +357,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: THEME.colors.bg,
-    borderRadius: THEME.radius.md,
     borderWidth: 1,
     borderColor: THEME.colors.line,
-    paddingHorizontal: 10,
-    height: 42,
-    marginBottom: 14,
+    borderRadius: THEME.radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    height: '100%',
     fontSize: 14,
     color: THEME.colors.ink,
+    padding: 0,
   },
   clearSearchBtn: {
     padding: 4,
   },
   treeContainer: {
-    borderTopWidth: 1,
-    borderTopColor: THEME.colors.line,
-    paddingTop: 8,
+    gap: 16,
   },
-  groupBlock: {
-    marginBottom: 14,
+  emptyContainer: {
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
   },
-  groupHeader: {
-    fontSize: 11,
-    fontWeight: '700',
+  emptyText: {
+    fontSize: 13,
     color: THEME.colors.muted,
-    letterSpacing: 0.8,
-    marginVertical: 6,
-    paddingHorizontal: 4,
   },
   samhitaBlock: {
     marginBottom: 4,
@@ -411,21 +394,18 @@ const styles = StyleSheet.create({
   rowLevel1: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 7,
+    paddingVertical: 8,
     paddingHorizontal: 4,
-    borderRadius: THEME.radius.sm,
   },
   expandBtn: {
-    width: 26,
-    height: 26,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 4,
+    marginRight: 4,
   },
   checkboxTouch: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 2,
+    gap: 8,
   },
   checkboxBox: {
     width: 18,
@@ -433,20 +413,18 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1.5,
     borderColor: THEME.colors.line,
-    marginRight: 10,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: THEME.colors.surface,
   },
   checkboxBoxSmall: {
     width: 16,
     height: 16,
-    borderRadius: 3.5,
+    borderRadius: 3,
     borderWidth: 1.5,
     borderColor: THEME.colors.line,
-    marginRight: 8,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: THEME.colors.surface,
   },
   checkboxBoxActive: {
@@ -454,77 +432,75 @@ const styles = StyleSheet.create({
     borderColor: THEME.colors.brand,
   },
   checkboxCheckmark: {
-    width: 6,
-    height: 10,
-    borderBottomWidth: 2,
-    borderRightWidth: 2,
-    borderColor: THEME.colors.brandInk,
-    transform: [{ rotate: '45deg' }, { translateY: -1 }],
+    width: 8,
+    height: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 1,
   },
   checkboxCheckmarkSmall: {
-    width: 5,
-    height: 8,
-    borderBottomWidth: 1.8,
-    borderRightWidth: 1.8,
-    borderColor: THEME.colors.brandInk,
-    transform: [{ rotate: '45deg' }, { translateY: -1 }],
+    width: 6,
+    height: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 1,
   },
   checkboxIndeterminate: {
     width: 8,
     height: 2,
-    backgroundColor: THEME.colors.brandInk,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 1,
   },
   checkboxIndeterminateSmall: {
     width: 6,
     height: 2,
-    backgroundColor: THEME.colors.brandInk,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 1,
   },
   samhitaLabel: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: THEME.colors.ink,
     flex: 1,
   },
   countBadge: {
-    backgroundColor: THEME.colors.soft,
-    paddingHorizontal: 8,
+    backgroundColor: THEME.colors.bg,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: THEME.radius.pill,
-    marginLeft: 6,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
   },
   countBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
     color: THEME.colors.muted,
+    fontWeight: '600',
   },
   sthanaBlock: {
-    marginLeft: 14,
-    marginVertical: 2,
+    marginLeft: 16,
+    marginTop: 2,
   },
   rowLevel2: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
+    paddingVertical: 6,
     paddingHorizontal: 4,
-    borderRadius: THEME.radius.sm,
   },
   sthanaLabel: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
     color: THEME.colors.ink,
     flex: 1,
   },
   rowLevel3: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
-    paddingLeft: 28,
-    paddingRight: 6,
-    marginVertical: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    marginLeft: 24,
     borderRadius: THEME.radius.sm,
+    gap: 8,
   },
   rowLevel3Selected: {
-    backgroundColor: THEME.colors.soft,
+    backgroundColor: '#E6F4EA',
   },
   chapterLabel: {
     fontSize: 13,
@@ -532,13 +508,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   chapterLabelSelected: {
-    fontWeight: '500',
-    color: THEME.colors.brand,
-  },
-  realTag: {
-    fontSize: 11,
-    color: THEME.colors.brand,
     fontWeight: '600',
+    color: THEME.colors.brand,
   },
   chapterRightRow: {
     flexDirection: 'row',
@@ -549,12 +520,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: THEME.colors.accentSoft,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: THEME.radius.pill,
-    borderWidth: 1,
-    borderColor: THEME.colors.accent,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   chapterBookmarkBadgeText: {
     fontSize: 10,
@@ -562,10 +531,10 @@ const styles = StyleSheet.create({
     color: THEME.colors.brandInk,
   },
   mcqPill: {
-    backgroundColor: THEME.colors.soft,
-    paddingHorizontal: 7,
+    backgroundColor: THEME.colors.bg,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: THEME.radius.pill,
+    borderRadius: THEME.radius.sm,
   },
   mcqPillText: {
     fontSize: 11,

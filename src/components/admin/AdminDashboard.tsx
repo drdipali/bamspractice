@@ -27,9 +27,11 @@ import { THEME } from '../../constants/theme';
 import { UserRecord } from '../../types/auth';
 import { backend } from '../../services/backend';
 import { useApp } from '../../context/AppContext';
+import { QuestionManagement } from './QuestionManagement';
 
 export const AdminDashboard: React.FC = () => {
   const { setView, currentUser } = useApp();
+  const [activeTab, setActiveTab] = useState<'users' | 'cms'>('cms');
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -147,9 +149,41 @@ export const AdminDashboard: React.FC = () => {
         </View>
       </View>
 
+      {/* Admin Tab Switcher */}
+      <View style={styles.navTabsBar}>
+        <TouchableOpacity
+          style={[styles.navTab, activeTab === 'cms' && styles.navTabActive]}
+          onPress={() => setActiveTab('cms')}
+          activeOpacity={0.7}
+        >
+          <BookOpen size={15} color={activeTab === 'cms' ? THEME.colors.brand : THEME.colors.muted} />
+          <Text style={[styles.navTabText, activeTab === 'cms' && styles.navTabTextActive]}>
+            Question Management (CMS)
+          </Text>
+          <View style={styles.tabBadge}>
+            <Text style={styles.tabBadgeText}>Cloud DB</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.navTab, activeTab === 'users' && styles.navTabActive]}
+          onPress={() => setActiveTab('users')}
+          activeOpacity={0.7}
+        >
+          <Users size={15} color={activeTab === 'users' ? THEME.colors.brand : THEME.colors.muted} />
+          <Text style={[styles.navTabText, activeTab === 'users' && styles.navTabTextActive]}>
+            User Directory & Activity ({users.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Metric Summary Cards */}
-        <View style={styles.metricsGrid}>
+        {activeTab === 'cms' ? (
+          <QuestionManagement />
+        ) : (
+          <>
+            {/* Metric Summary Cards */}
+            <View style={styles.metricsGrid}>
           <View style={styles.metricCard}>
             <View style={styles.metricIconBox}>
               <Users size={18} color={THEME.colors.brand} />
@@ -325,6 +359,8 @@ export const AdminDashboard: React.FC = () => {
             </View>
           )}
         </View>
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -404,6 +440,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: THEME.colors.brandInk,
+  },
+  navTabsBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.colors.line,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  navTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  navTabActive: {
+    borderBottomColor: THEME.colors.brand,
+  },
+  navTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: THEME.colors.muted,
+  },
+  navTabTextActive: {
+    color: THEME.colors.brand,
+    fontWeight: '700',
+  },
+  tabBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  tabBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#92400E',
   },
   scrollContent: {
     padding: 16,

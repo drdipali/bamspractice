@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AlertCircle, Bookmark, Check, CheckCircle2, Flag, HelpCircle, XCircle } from 'lucide-react-native';
 import { THEME, OPTION_LABELS } from '../../constants/theme';
-import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 import { Language, Question, QuizSession } from '../../types';
 import { useApp } from '../../context/AppContext';
 
@@ -10,7 +9,7 @@ interface IncorrectReviewListProps {
   wrongQuestions: Question[];
   session: QuizSession;
   language: Language;
-  claimedQuestions: Record<number, boolean>;
+  claimedQuestions: Record<string | number, boolean>;
   onClaimPress: (question: Question) => void;
 }
 
@@ -95,7 +94,6 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
       ) : (
         <View style={styles.list}>
           {displayedQuestions.map((q, idx) => {
-            const chapter = ALL_CHAPTERS[q.ch];
             const userChoice = session.ans[q.id];
             const hasAnswered = userChoice !== undefined;
             const userChoiceLabel = hasAnswered ? OPTION_LABELS[userChoice] : 'None';
@@ -116,11 +114,9 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
                 <View style={styles.itemMeta}>
                   <View style={styles.metaLeft}>
                     <Text style={styles.qBadge}>Q #{idx + 1}</Text>
-                    {chapter && (
-                      <Text style={styles.chapterText} numberOfLines={1}>
-                        {getChapterPath(chapter)}
-                      </Text>
-                    )}
+                    <Text style={styles.chapterText} numberOfLines={1}>
+                      {q.chapterName || `Chapter ${q.ch}`}
+                    </Text>
                   </View>
 
                   <View style={styles.metaRightActions}>

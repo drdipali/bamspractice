@@ -118,7 +118,7 @@ console.log('\n--- Test 4: Results & Scorecard Analytics ---');
 let correct = 0;
 let incorrect = 0;
 let unattempted = 0;
-const byChapter: Record<number, { chapterId: number; total: number; correct: number; accuracy: number }> = {};
+const byChapter: Record<string | number, { chapterId: string | number; total: number; correct: number; accuracy: number }> = {};
 const wrongQuestions: Question[] = [];
 
 session.qs.forEach((q) => {
@@ -140,7 +140,7 @@ session.qs.forEach((q) => {
 });
 
 Object.keys(byChapter).forEach((key) => {
-  const stat = byChapter[Number(key)];
+  const stat = byChapter[key];
   stat.accuracy = stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0;
 });
 
