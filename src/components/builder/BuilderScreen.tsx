@@ -12,6 +12,7 @@ import { THEME } from '../../constants/theme';
 import { Header } from '../common/Header';
 import { ChapterTree } from './ChapterTree';
 import { BasketSummary } from './BasketSummary';
+import { BookmarksPanel } from './BookmarksPanel';
 import { useApp } from '../../context/AppContext';
 import { ALL_CHAPTERS } from '../../constants/syllabusData';
 import { allocateQuestions } from '../../utils/allocator';
@@ -104,6 +105,7 @@ export const BuilderScreen: React.FC = () => {
           // Tablet / Desktop: 2-column Grid
           <View style={styles.grid}>
             <View style={styles.leftCol}>
+              <BookmarksPanel />
               <ChapterTree />
             </View>
             <View style={styles.rightCol}>
@@ -113,7 +115,14 @@ export const BuilderScreen: React.FC = () => {
         ) : (
           // Mobile: Tab-driven view
           <View>
-            {activeTab === 'tree' ? <ChapterTree /> : <BasketSummary />}
+            {activeTab === 'tree' ? (
+              <>
+                <BookmarksPanel />
+                <ChapterTree />
+              </>
+            ) : (
+              <BasketSummary />
+            )}
           </View>
         )}
       </ScrollView>

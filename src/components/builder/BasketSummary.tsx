@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -7,7 +7,7 @@ import {
   View,
   Alert,
 } from 'react-native';
-import { Trash2, Play, BookOpen, Layers, CheckCircle2 } from 'lucide-react-native';
+import { Trash2, Play, BookOpen, Layers, CheckCircle2, Plus, Minus } from 'lucide-react-native';
 import { THEME, DIFFICULTY_LABELS } from '../../constants/theme';
 import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 import { Difficulty, DistributionType, QuizMode, SavedPracticeSet } from '../../types';
@@ -67,17 +67,51 @@ export const BasketSummary: React.FC = () => {
     { value: 'test', label: 'Test' },
   ];
 
+  // Local state for smooth numeric input editing
+  const [totalStr, setTotalStr] = useState<string>(String(config.total));
+
+  useEffect(() => {
+    setTotalStr(String(config.total));
+  }, [config.total]);
+
   const handleTotalChange = (text: string) => {
-    const val = parseInt(text.replace(/[^0-9]/g, ''), 10);
-    if (!isNaN(val)) {
-      updateConfig({ total: Math.max(1, Math.min(500, val)) });
-    } else if (text === '') {
-      updateConfig({ total: 1 });
+    const clean = text.replace(/[^0-9]/g, '');
+    setTotalStr(clean);
+    if (clean !== '') {
+      const val = parseInt(clean, 10);
+      if (!isNaN(val) && val > 0) {
+        updateConfig({ total: Math.min(500, val) });
+      }
     }
   };
 
+  const handleTotalBlur = () => {
+    if (!totalStr || parseInt(totalStr, 10) < 1) {
+      setTotalStr('1');
+      updateConfig({ total: 1 });
+    } else {
+      const val = Math.max(1, Math.min(500, parseInt(totalStr, 10)));
+      setTotalStr(String(val));
+      updateConfig({ total: val });
+    }
+  };
+
+  const stepTotal = (delta: number) => {
+    const cur = parseInt(totalStr, 10) || config.total || 1;
+    const next = Math.max(1, Math.min(500, cur + delta));
+    setTotalStr(String(next));
+    updateConfig({ total: next });
+  };
+
+  const setPresetTotal = (count: number) => {
+    const next = Math.max(1, Math.min(500, count));
+    setTotalStr(String(next));
+    updateConfig({ total: next });
+  };
+
   const handleManualCountChange = (chapterId: number, text: string) => {
-    const val = parseInt(text.replace(/[^0-9]/g, ''), 10);
+    const clean = text.replace(/[^0-9]/g, '');
+    const val = clean === '' ? 0 : parseInt(clean, 10);
     setManualCount(chapterId, isNaN(val) ? 0 : val);
   };
 
@@ -149,19 +183,122 @@ export const BasketSummary: React.FC = () => {
 
       {/* Configuration Controls */}
       <View style={styles.cfgGrid}>
-        {/* Total Questions */}
+        {/* Total Questions with Stepper & Quick Presets */}
         <View style={styles.cfgItem}>
-          <Text style={styles.cfgLabel}>Total questions</Text>
-          <TextInput
-            style={[
-              styles.inInput,
-              config.dist === 'manual' && styles.inInputDisabled,
-            ]}
-            keyboardType="number-pad"
-            value={String(config.total)}
-            onChangeText={handleTotalChange}
-            editable={config.dist !== 'manual'}
-          />
+          <View style={styles.cfgLabelRow}>
+            <Text style={styles.cfgLabel}>Total questions</Text>
+            {config.dist !== 'manual' && (
+              <Text style={styles.cfgSubLabel}>
+                Eligible: {alloc.totalEligible}
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.stepperContainer}>
+            <TouchableOpacity
+              style={[
+                styles.stepperBtn,
+                (config.total <= 1 || config.dist === 'manual') &&
+                  styles.stepperBtnDisabled,
+              ]}
+              onPress={() => stepTotal(-1)}
+              disabled={config.total <= 1 || config.dist === 'manual'}
+              accessibilityLabel="Decrease question count"
+            >
+              <Minus
+                size={18}
+                color={
+                  config.total <= 1 || config.dist === 'manual'
+                    ? THEME.colors.muted
+                    : THEME.colors.ink
+                }
+              />
+            </TouchableOpacity>
+
+            <TextInput
+              style={[
+                styles.inInput,
+                styles.inInputCenter,
+                config.dist === 'manual' && styles.inInputDisabled,
+              ]}
+              keyboardType="number-pad"
+              value={totalStr}
+              onChangeText={handleTotalChange}
+              onBlur={handleTotalBlur}
+              editable={config.dist !== 'manual'}
+              placeholder="1"
+              placeholderTextColor={THEME.colors.muted}
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.stepperBtn,
+                (config.total >= 500 || config.dist === 'manual') &&
+                  styles.stepperBtnDisabled,
+              ]}
+              onPress={() => stepTotal(1)}
+              disabled={config.total >= 500 || config.dist === 'manual'}
+              accessibilityLabel="Increase question count"
+            >
+              <Plus
+                size={18}
+                color={
+                  config.total >= 500 || config.dist === 'manual'
+                    ? THEME.colors.muted
+                    : THEME.colors.ink
+                }
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Quick Preset Buttons */}
+          {config.dist !== 'manual' && (
+            <View style={styles.presetsContainer}>
+              <Text style={styles.presetsHeading}>Quick select:</Text>
+              <View style={styles.presetsList}>
+                {[2, 5, 10, 20, 50].map((presetCount) => (
+                  <TouchableOpacity
+                    key={presetCount}
+                    style={[
+                      styles.presetChip,
+                      config.total === presetCount && styles.presetChipActive,
+                    ]}
+                    onPress={() => setPresetTotal(presetCount)}
+                  >
+                    <Text
+                      style={[
+                        styles.presetChipText,
+                        config.total === presetCount && styles.presetChipTextActive,
+                      ]}
+                    >
+                      {presetCount} Qs
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                {alloc.totalEligible > 0 &&
+                  ![2, 5, 10, 20, 50].includes(alloc.totalEligible) && (
+                    <TouchableOpacity
+                      style={[
+                        styles.presetChip,
+                        config.total === alloc.totalEligible &&
+                          styles.presetChipActive,
+                      ]}
+                      onPress={() => setPresetTotal(alloc.totalEligible)}
+                    >
+                      <Text
+                        style={[
+                          styles.presetChipText,
+                          config.total === alloc.totalEligible &&
+                            styles.presetChipTextActive,
+                        ]}
+                      >
+                        All ({alloc.totalEligible})
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Distribution Selection */}
@@ -220,7 +357,7 @@ export const BasketSummary: React.FC = () => {
             <Text style={[styles.thText, styles.thRight, { flex: 1 }]}>
               Pool
             </Text>
-            <Text style={[styles.thText, styles.thRight, { flex: 1.2 }]}>
+            <Text style={[styles.thText, styles.thRight, { flex: 1.4 }]}>
               {config.dist === 'manual' ? 'Custom' : 'Draw'}
             </Text>
           </View>
@@ -239,16 +376,41 @@ export const BasketSummary: React.FC = () => {
                 <Text style={[styles.tdText, styles.tdRight, { flex: 1 }]}>
                   {available}
                 </Text>
-                <View style={[styles.tdRightContainer, { flex: 1.2 }]}>
+                <View style={[styles.tdRightContainer, { flex: 1.4 }]}>
                   {config.dist === 'manual' ? (
-                    <TextInput
-                      style={styles.manualInput}
-                      keyboardType="number-pad"
-                      value={String(config.manual[chapter.id] || 0)}
-                      onChangeText={(val) =>
-                        handleManualCountChange(chapter.id, val)
-                      }
-                    />
+                    <View style={styles.manualStepperRow}>
+                      <TouchableOpacity
+                        style={styles.miniStepperBtn}
+                        onPress={() => {
+                          const cur = config.manual[chapter.id] || 0;
+                          setManualCount(chapter.id, Math.max(0, cur - 1));
+                        }}
+                        accessibilityLabel="Minus one MCQ"
+                      >
+                        <Minus size={12} color={THEME.colors.ink} />
+                      </TouchableOpacity>
+                      <TextInput
+                        style={styles.manualInput}
+                        keyboardType="number-pad"
+                        value={String(config.manual[chapter.id] ?? 0)}
+                        onChangeText={(val) =>
+                          handleManualCountChange(chapter.id, val)
+                        }
+                      />
+                      <TouchableOpacity
+                        style={styles.miniStepperBtn}
+                        onPress={() => {
+                          const cur = config.manual[chapter.id] || 0;
+                          setManualCount(
+                            chapter.id,
+                            Math.min(available, cur + 1)
+                          );
+                        }}
+                        accessibilityLabel="Plus one MCQ"
+                      >
+                        <Plus size={12} color={THEME.colors.ink} />
+                      </TouchableOpacity>
+                    </View>
                   ) : (
                     <Text style={[styles.tdText, styles.tdRight]}>
                       {allocatedCount}
@@ -479,10 +641,37 @@ const styles = StyleSheet.create({
   cfgItem: {
     gap: 6,
   },
+  cfgLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+  },
   cfgLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: THEME.colors.muted,
+  },
+  cfgSubLabel: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepperBtnDisabled: {
+    opacity: 0.35,
   },
   inInput: {
     backgroundColor: THEME.colors.bg,
@@ -494,8 +683,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.colors.ink,
   },
+  inInputCenter: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '700',
+    height: 44,
+  },
   inInputDisabled: {
     opacity: 0.5,
+  },
+  presetsContainer: {
+    marginTop: 4,
+    gap: 6,
+  },
+  presetsHeading: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  presetsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  presetChip: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: THEME.radius.sm,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+  },
+  presetChipActive: {
+    backgroundColor: THEME.colors.brand,
+    borderColor: THEME.colors.brand,
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.colors.ink,
+  },
+  presetChipTextActive: {
+    color: THEME.colors.brandInk,
   },
   diffRow: {
     flexDirection: 'row',
@@ -567,14 +799,29 @@ const styles = StyleSheet.create({
   tdRightContainer: {
     alignItems: 'flex-end',
   },
+  manualStepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  miniStepperBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   manualInput: {
-    width: 60,
+    width: 44,
     backgroundColor: THEME.colors.surface,
     borderWidth: 1,
     borderColor: THEME.colors.line,
     borderRadius: 4,
     paddingVertical: 2,
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
     fontSize: 12,
     textAlign: 'center',
     color: THEME.colors.ink,
