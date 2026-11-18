@@ -10,6 +10,7 @@ import {
   QuizResults,
   QuizSession,
   SavedPracticeSet,
+  UserRecord,
 } from '../types';
 import { ALL_CHAPTERS, ALL_QUESTIONS } from '../constants/syllabusData';
 import { allocateQuestions, generateQuestionIds, shuffle } from '../utils/allocator';
@@ -23,8 +24,14 @@ import {
   savePracticeSets,
   saveBookmarks,
 } from '../utils/storage';
+import { backend } from '../services/backend';
 
 interface AppContextType {
+  currentUser: UserRecord | null;
+  logIn: (email: string, pass: string) => Promise<void>;
+  signUp: (email: string, pass: string) => Promise<void>;
+  logOut: () => Promise<void>;
+  navigateToAdmin: () => void;
   language: Language;
   setLanguage: (lang: Language) => void;
   view: ActiveView;
@@ -75,8 +82,9 @@ const DEFAULT_CONFIG: PracticeConfig = {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [language, setLangState] = useState<Language>('en');
-  const [view, setView] = useState<ActiveView>('build');
+  const [view, setView] = useState<ActiveView>('auth');
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
   const [config, setConfig] = useState<PracticeConfig>(DEFAULT_CONFIG);
   const [savedSets, setSavedSets] = useState<SavedPracticeSet[]>([]);
@@ -84,11 +92,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
 
-  // Initial load from storage
+  // Initial load from storage & backend authentication
   useEffect(() => {
     (async () => {
       const storedLang = await loadLanguage('en');
       setLangState(storedLang);
+
+      // Check existing auth session
+      const user = await backend.getCurrentUser();
+      if (user) {
+        setCurrentUser(user);
+        setView('build');
+      } else {
+        setView('auth');
+      }
 
       const storedDraft = await loadDraft();
       if (storedDraft) {
@@ -107,6 +124,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBookmarkedIds(storedBookmarks);
     })();
   }, []);
+
+  const logIn = async (email: string, pass: string) => {
+    const user = await backend.logIn(email, pass);
+    setCurrentUser(user);
+    setView('build');
+  };
+
+  const signUp = async (email: string, pass: string) => {
+    const user = await backend.signUp(email, pass);
+    setCurrentUser(user);
+    setView('build');
+  };
+
+  const logOut = async () => {
+    await backend.logOut();
+    setCurrentUser(null);
+    setView('auth');
+  };
+
+  const navigateToAdmin = () => {
+    if (currentUser?.email.toLowerCase() === 'admin@bams.com') {
+      setView('admin');
+    }
+  };
 
   // Save draft whenever selection or config changes
   useEffect(() => {
@@ -321,8 +362,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const finishQuiz = () => {
     if (!session) return;
-    setSession((prev) => (prev ? { ...prev, t1: Date.now() } : null));
+    const tEnd = Date.now();
+    setSession((prev) => (prev ? { ...prev, t1: tEnd } : null));
     setView('result');
+
+    // Cloud Database Synchronization: sync final score and timestamp to user profile
+    if (currentUser) {
+      let correct = 0;
+      let incorrect = 0;
+      let unattempted = 0;
+      session.qs.forEach((q) => {
+        const chosen = session.ans[q.id];
+        if (chosen === undefined) {
+          unattempted++;
+        } else if (chosen === q.c) {
+          correct++;
+        } else {
+          incorrect++;
+        }
+      });
+
+      const score = correct * 4 - incorrect * 1;
+      const maxScore = session.qs.length * 4;
+      const scorePercent =
+        maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+
+      backend
+        .recordQuizAttempt(currentUser.id, {
+          timestamp: new Date(tEnd).toISOString(),
+          score,
+          maxScore,
+          scorePercent,
+          correct,
+          incorrect,
+          unattempted,
+          mode: session.mode,
+          chapterCount: session.chs.length || 1,
+        })
+        .then(() => backend.getCurrentUser())
+        .then((updatedUser) => {
+          if (updatedUser) {
+            setCurrentUser(updatedUser);
+          }
+        })
+        .catch((err) => console.warn('Cloud score sync error:', err));
+    }
   };
 
   const results: QuizResults | null = useMemo(() => {
@@ -426,6 +510,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        currentUser,
+        logIn,
+        signUp,
+        logOut,
+        navigateToAdmin,
         language,
         setLanguage,
         view,

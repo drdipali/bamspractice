@@ -2,7 +2,8 @@ export type Difficulty = 0 | 1 | 2; // 0: Easy, 1: Medium, 2: Hard
 export type Language = 'en' | 'hi' | 'both';
 export type QuizMode = 'learning' | 'test';
 export type DistributionType = 'pooled' | 'equal' | 'proportional' | 'manual';
-export type ActiveView = 'build' | 'quiz' | 'result';
+export type ActiveView = 'auth' | 'build' | 'quiz' | 'result' | 'admin';
+export * from './auth';
 
 export interface Question {
   id: number;
