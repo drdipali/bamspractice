@@ -31,7 +31,7 @@ export const Scorecard: React.FC<ScorecardProps> = ({ results }) => {
 
         <View style={styles.scoreMainRow}>
           <Text style={styles.scoreDisplay}>
-            {results.score}{' '}
+            Score: {results.score}{' '}
             <Text style={styles.scoreMax}>/ {results.maxScore}</Text>
           </Text>
           <View style={styles.percentageBadge}>
