@@ -41,7 +41,11 @@ export const QuestionPalette: React.FC<QuestionPaletteProps> = ({
           const hasAnswer = session.ans[q.id] !== undefined;
           const isSubmitted = isLearning && !!session.sub[q.id];
           const isCorrect = isSubmitted && session.ans[q.id] === q.c;
-          const isIncorrect = isSubmitted && session.ans[q.id] !== q.c;
+          const isIncorrect =
+            isSubmitted &&
+            session.ans[q.id] !== undefined &&
+            session.ans[q.id] !== q.c;
+          const isSkipped = isSubmitted && session.ans[q.id] === undefined;
 
           let tileStyle = styles.tileDefault;
           let textStyle = styles.tileTextDefault;
@@ -52,6 +56,9 @@ export const QuestionPalette: React.FC<QuestionPaletteProps> = ({
           } else if (isIncorrect) {
             tileStyle = styles.tileIncorrect;
             textStyle = styles.tileTextLight;
+          } else if (isSkipped) {
+            tileStyle = styles.tileSkipped;
+            textStyle = styles.tileTextSkipped;
           } else if (hasAnswer) {
             tileStyle = styles.tileAnswered;
             textStyle = styles.tileTextAnswered;
@@ -182,6 +189,14 @@ const styles = StyleSheet.create({
   tileIncorrect: {
     backgroundColor: THEME.colors.bad,
     borderColor: THEME.colors.bad,
+  },
+  tileSkipped: {
+    backgroundColor: THEME.colors.bg,
+    borderColor: THEME.colors.line,
+    borderWidth: 1,
+  },
+  tileTextSkipped: {
+    color: THEME.colors.muted,
   },
   tileText: {
     fontSize: 12,

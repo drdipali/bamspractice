@@ -44,6 +44,7 @@ interface AppContextType {
   session: QuizSession | null;
   startQuiz: (customIds?: number[], forcedMode?: QuizMode) => void;
   answerQuestion: (optionIndex: number) => void;
+  unattemptQuestion: () => void;
   submitQuestion: () => void;
   toggleMarkReview: () => void;
   jumpToQuestion: (index: number) => void;
@@ -234,12 +235,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setSession((prev) => {
       if (!prev) return null;
+      const isSame = prev.ans[currentQ.id] === optionIndex;
+      const newAns = { ...prev.ans };
+      if (isSame) {
+        // Tapping the same option again deselects / unattempts it
+        delete newAns[currentQ.id];
+      } else {
+        newAns[currentQ.id] = optionIndex;
+      }
       return {
         ...prev,
-        ans: {
-          ...prev.ans,
-          [currentQ.id]: optionIndex,
-        },
+        ans: newAns,
+      };
+    });
+  };
+
+  const unattemptQuestion = () => {
+    if (!session) return;
+    const currentQ = session.qs[session.i];
+    if (!currentQ) return;
+    if (session.mode === 'learning' && session.sub[currentQ.id]) return; // Locked
+
+    setSession((prev) => {
+      if (!prev) return null;
+      const newAns = { ...prev.ans };
+      delete newAns[currentQ.id];
+      return {
+        ...prev,
+        ans: newAns,
       };
     });
   };
@@ -247,7 +270,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const submitQuestion = () => {
     if (!session) return;
     const currentQ = session.qs[session.i];
-    if (!currentQ || session.ans[currentQ.id] === undefined) return;
+    if (!currentQ) return;
 
     setSession((prev) => {
       if (!prev) return null;
@@ -410,6 +433,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         session,
         startQuiz,
         answerQuestion,
+        unattemptQuestion,
         submitQuestion,
         toggleMarkReview,
         jumpToQuestion,

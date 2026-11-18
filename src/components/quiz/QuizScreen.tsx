@@ -17,6 +17,8 @@ import {
   LayoutGrid,
   Info,
   AlertCircle,
+  XCircle,
+  HelpCircle,
 } from 'lucide-react-native';
 import { THEME, DIFFICULTY_LABELS, OPTION_LABELS } from '../../constants/theme';
 import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
@@ -32,6 +34,7 @@ export const QuizScreen: React.FC = () => {
     session,
     language,
     answerQuestion,
+    unattemptQuestion,
     submitQuestion,
     toggleMarkReview,
     jumpToQuestion,
@@ -150,6 +153,8 @@ export const QuizScreen: React.FC = () => {
                     styles.explanationBox,
                     selectedAnswer === currentQ.c
                       ? styles.explanationCorrect
+                      : selectedAnswer === undefined
+                      ? styles.explanationUnattempted
                       : styles.explanationIncorrect,
                   ]}
                 >
@@ -159,6 +164,8 @@ export const QuizScreen: React.FC = () => {
                       color={
                         selectedAnswer === currentQ.c
                           ? THEME.colors.ok
+                          : selectedAnswer === undefined
+                          ? THEME.colors.accent
                           : THEME.colors.bad
                       }
                     />
@@ -167,12 +174,16 @@ export const QuizScreen: React.FC = () => {
                         styles.explanationTitle,
                         selectedAnswer === currentQ.c
                           ? styles.textOk
+                          : selectedAnswer === undefined
+                          ? styles.textAccent
                           : styles.textBad,
                       ]}
                     >
                       {selectedAnswer === currentQ.c
-                        ? 'Correct Answer!'
-                        : `Incorrect. Correct answer is Option ${OPTION_LABELS[currentQ.c]}.`}
+                        ? 'Correct Answer! (+4 marks)'
+                        : selectedAnswer === undefined
+                        ? `Unattempted (0 marks). Correct answer is Option ${OPTION_LABELS[currentQ.c]}.`
+                        : `Incorrect (-1 mark). Correct answer is Option ${OPTION_LABELS[currentQ.c]}.`}
                     </Text>
                   </View>
                   <Text style={styles.explanationRef}>
@@ -185,19 +196,55 @@ export const QuizScreen: React.FC = () => {
 
               {/* Control Action Buttons */}
               <View style={styles.controlsRow}>
-                {isLearning && !isLocked ? (
+                {/* Learning Mode Question Actions */}
+                {isLearning && !isLocked && (
+                  <View style={styles.submitSection}>
+                    {selectedAnswer !== undefined ? (
+                      <>
+                        <TouchableOpacity
+                          style={styles.submitBtn}
+                          onPress={submitQuestion}
+                        >
+                          <CheckCircle size={16} color={THEME.colors.brandInk} />
+                          <Text style={styles.submitBtnText}>Submit Answer</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.clearChoiceBtn}
+                          onPress={unattemptQuestion}
+                        >
+                          <XCircle size={14} color={THEME.colors.muted} />
+                          <Text style={styles.clearChoiceText}>
+                            Clear selection / Leave unattempted
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.skipUnattemptBtn}
+                        onPress={submitQuestion}
+                      >
+                        <HelpCircle size={16} color={THEME.colors.brand} />
+                        <Text style={styles.skipUnattemptBtnText}>
+                          Submit as Unattempted & Reveal Answer
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+
+                {/* Test Mode Clear Option */}
+                {!isLearning && selectedAnswer !== undefined && (
                   <TouchableOpacity
-                    style={[
-                      styles.submitBtn,
-                      selectedAnswer === undefined && styles.btnDisabled,
-                    ]}
-                    disabled={selectedAnswer === undefined}
-                    onPress={submitQuestion}
+                    style={styles.clearChoiceBtn}
+                    onPress={unattemptQuestion}
                   >
-                    <CheckCircle size={16} color={THEME.colors.brandInk} />
-                    <Text style={styles.submitBtnText}>Submit Answer</Text>
+                    <XCircle size={14} color={THEME.colors.muted} />
+                    <Text style={styles.clearChoiceText}>
+                      Clear selection (Leave unattempted for 0 marks)
+                    </Text>
                   </TouchableOpacity>
-                ) : null}
+                )}
 
                 <View style={styles.navRow}>
                   <TouchableOpacity
@@ -212,17 +259,24 @@ export const QuizScreen: React.FC = () => {
                     <Text style={styles.navBtnText}>Previous</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.navBtn,
-                      session.i === totalQuestions - 1 && styles.btnDisabled,
-                    ]}
-                    disabled={session.i === totalQuestions - 1}
-                    onPress={nextQuestion}
-                  >
-                    <Text style={styles.navBtnText}>Next</Text>
-                    <ChevronRight size={16} color={THEME.colors.brand} />
-                  </TouchableOpacity>
+                  {session.i === totalQuestions - 1 ? (
+                    <TouchableOpacity
+                      style={styles.finishNavBtn}
+                      onPress={handleFinishPress}
+                      activeOpacity={0.8}
+                    >
+                      <CheckCircle size={15} color={THEME.colors.brandInk} />
+                      <Text style={styles.finishNavBtnText}>Finish Exam</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.navBtn}
+                      onPress={nextQuestion}
+                    >
+                      <Text style={styles.navBtnText}>Next</Text>
+                      <ChevronRight size={16} color={THEME.colors.brand} />
+                    </TouchableOpacity>
+                  )}
 
                   {/* Persistent Revision Bookmark Button */}
                   <TouchableOpacity
@@ -322,25 +376,26 @@ export const QuizScreen: React.FC = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.warningModalCard}>
             <View style={styles.warningHeaderRow}>
-              <AlertCircle size={22} color={THEME.colors.bad} />
-              <Text style={styles.warningModalTitle}>Unattempted Questions</Text>
+              <AlertCircle size={22} color={THEME.colors.accent} />
+              <Text style={styles.warningModalTitle}>Submit Exam Early?</Text>
             </View>
 
             <Text style={styles.warningModalMessage}>
-              You still have{' '}
+              You have{' '}
               <Text style={styles.warningBoldHighlight}>
                 {unattemptedCount}
               </Text>{' '}
-              unattempted questions. Unattempted questions will receive 0 marks. Are you sure you want to submit your exam?
+              unattempted question{unattemptedCount > 1 ? 's' : ''}. Unattempted questions will receive{' '}
+              <Text style={{ fontWeight: '700' }}>0 marks</Text> with no negative penalty.
             </Text>
 
             <View style={styles.warningMetricsRow}>
               <View style={styles.warningMetricBox}>
                 <Text style={styles.warningMetricNum}>{answeredCount}</Text>
-                <Text style={styles.warningMetricLabel}>Answered</Text>
+                <Text style={styles.warningMetricLabel}>Attempted</Text>
               </View>
-              <View style={[styles.warningMetricBox, styles.warningMetricBoxBad]}>
-                <Text style={[styles.warningMetricNum, { color: THEME.colors.bad }]}>
+              <View style={[styles.warningMetricBox, styles.warningMetricBoxUnattempted]}>
+                <Text style={[styles.warningMetricNum, { color: THEME.colors.accent }]}>
                   {unattemptedCount}
                 </Text>
                 <Text style={styles.warningMetricLabel}>Unattempted (0)</Text>
@@ -357,7 +412,7 @@ export const QuizScreen: React.FC = () => {
                 onPress={() => setShowWarningModal(false)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.warningCancelBtnText}>Cancel</Text>
+                <Text style={styles.warningCancelBtnText}>Return to Quiz</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -368,7 +423,8 @@ export const QuizScreen: React.FC = () => {
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.warningSubmitBtnText}>Yes, Submit</Text>
+                <CheckCircle size={15} color={THEME.colors.brandInk} style={{ marginRight: 4 }} />
+                <Text style={styles.warningSubmitBtnText}>Yes, Submit Exam</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -492,6 +548,10 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.colors.badSoft,
     borderLeftColor: THEME.colors.bad,
   },
+  explanationUnattempted: {
+    backgroundColor: THEME.colors.accentSoft,
+    borderLeftColor: THEME.colors.accent,
+  },
   explanationHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -507,6 +567,9 @@ const styles = StyleSheet.create({
   textBad: {
     color: THEME.colors.bad,
   },
+  textAccent: {
+    color: THEME.colors.accent,
+  },
   explanationRef: {
     fontSize: 12,
     color: THEME.colors.inkLight,
@@ -519,6 +582,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: THEME.colors.line,
     paddingTop: 14,
+  },
+  submitSection: {
+    gap: 8,
   },
   submitBtn: {
     flexDirection: 'row',
@@ -533,6 +599,35 @@ const styles = StyleSheet.create({
     color: THEME.colors.brandInk,
     fontWeight: '700',
     fontSize: 14,
+  },
+  skipUnattemptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1.5,
+    borderColor: THEME.colors.brand,
+    paddingVertical: 12,
+    borderRadius: THEME.radius.md,
+  },
+  skipUnattemptBtnText: {
+    color: THEME.colors.brand,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  clearChoiceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  clearChoiceText: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
   },
   navRow: {
     flexDirection: 'row',
@@ -555,6 +650,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: THEME.colors.brand,
+  },
+  finishNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.brand,
+  },
+  finishNavBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.brandInk,
   },
   reviewBtn: {
     flexDirection: 'row',
@@ -683,6 +792,9 @@ const styles = StyleSheet.create({
   warningMetricBoxBad: {
     backgroundColor: THEME.colors.badSoft,
   },
+  warningMetricBoxUnattempted: {
+    backgroundColor: THEME.colors.accentSoft,
+  },
   warningMetricNum: {
     fontFamily: THEME.fonts.serif,
     fontSize: 18,
@@ -715,11 +827,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   warningSubmitBtn: {
-    backgroundColor: THEME.colors.bad,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.colors.brand,
   },
   warningSubmitBtnText: {
     fontSize: 13,
-    color: '#FFFFFF',
+    color: THEME.colors.brandInk,
     fontWeight: '700',
   },
 });
