@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserRecord, QuizAttemptRecord } from '../types/auth';
 import { Chapter, Question } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
+import { ALL_CHAPTERS } from '../constants/syllabusData';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -135,23 +136,54 @@ const DEFAULT_PASSWORDS: Record<string, string> = {
 };
 
 /**
- * Dynamically builds Chapter objects from questions stored in the cloud database
+ * Builds Chapter objects containing all 1,179 classical BAMS syllabus chapters,
+ * dynamically merging any questions created or imported into the cloud database.
  */
-export function buildChaptersFromQuestions(questions: Question[]): Chapter[] {
-  const map: Record<string, Question[]> = {};
-  questions.forEach((q) => {
-    const chName = (q.chapterName || q.ch?.toString() || 'General Ayurveda').trim();
-    if (!map[chName]) {
-      map[chName] = [];
-    }
-    map[chName].push(q);
+export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[] {
+  // 1. Clone all 1,179 base chapters from the accredited classical syllabus
+  const baseChapters: Chapter[] = ALL_CHAPTERS.map((ch) => ({
+    ...ch,
+    qs: [...ch.qs],
+  }));
+
+  const chapterMap: Record<string, Chapter> = {};
+  baseChapters.forEach((ch) => {
+    chapterMap[String(ch.id)] = ch;
+    const path = `${ch.sam} > ${ch.sth} > Chapter ${ch.n}`.toLowerCase();
+    chapterMap[path] = ch;
+    const pathAlt = `${ch.sam} > ${ch.sth} > ${ch.name}`.toLowerCase();
+    chapterMap[pathAlt] = ch;
   });
 
-  return Object.keys(map).map((chName, idx) => {
-    const parts = chName.split('>').map((p) => p.trim());
-    let sam = 'Classical Samhita';
+  // 2. Merge cloud-authored and CSV-imported questions into their target chapters
+  const extraChaptersMap: Record<string, Question[]> = {};
+
+  cloudQuestions.forEach((q) => {
+    const chBreadcrumb = (q.chapterName || String(q.ch)).trim().toLowerCase();
+    const chId = String(q.ch).trim();
+
+    const target = chapterMap[chId] || chapterMap[chBreadcrumb];
+    if (target) {
+      // Add or replace question without duplicates
+      if (!target.qs.some((existing) => String(existing.id) === String(q.id))) {
+        target.qs.unshift(q);
+      }
+    } else {
+      // Custom chapter added outside the 1,179 standard chapters
+      const customKey = q.chapterName || String(q.ch);
+      if (!extraChaptersMap[customKey]) {
+        extraChaptersMap[customKey] = [];
+      }
+      extraChaptersMap[customKey].push(q);
+    }
+  });
+
+  // 3. Append any custom admin chapters
+  Object.keys(extraChaptersMap).forEach((customKey, idx) => {
+    const parts = customKey.split('>').map((p) => p.trim());
+    let sam = 'Custom Subjects';
     let sth = 'General';
-    let n: string | number = chName;
+    let n: string | number = customKey;
 
     if (parts.length >= 3) {
       sam = parts[0];
@@ -161,22 +193,20 @@ export function buildChaptersFromQuestions(questions: Question[]): Chapter[] {
       sam = parts[0];
       sth = parts[1];
       n = parts[1];
-    } else if (parts.length === 1) {
-      sam = 'General Subjects';
-      sth = parts[0];
-      n = parts[0];
     }
 
-    return {
-      id: chName,
+    baseChapters.push({
+      id: `custom_${idx}`,
       name: n.toString(),
       sam,
       sth,
       n,
-      key: `dyn_${idx}`,
-      qs: map[chName],
-    };
+      key: `custom_${idx}`,
+      qs: extraChaptersMap[customKey],
+    });
   });
+
+  return baseChapters;
 }
 
 class BackendService {
@@ -362,12 +392,40 @@ class BackendService {
 
   async getQuestionsByChapters(chapterIdsOrNames: (string | number)[]): Promise<Question[]> {
     await this.initialize();
+    const allChapters = await this.getChapters();
     const set = new Set(chapterIdsOrNames.map((c) => c.toString().trim().toLowerCase()));
-    return this.questions.filter((q) => {
+
+    const result: Question[] = [];
+    const seen = new Set<string | number>();
+
+    // 1. Cloud-authored questions matching selected chapters
+    this.questions.forEach((q) => {
       const chName = (q.chapterName || q.ch?.toString() || '').trim().toLowerCase();
       const chId = q.ch?.toString().trim().toLowerCase();
-      return set.has(chName) || set.has(chId);
+      if (set.has(chName) || set.has(chId)) {
+        if (!seen.has(q.id)) {
+          seen.add(q.id);
+          result.push(q);
+        }
+      }
     });
+
+    // 2. Base syllabus questions matching selected chapters
+    allChapters.forEach((ch) => {
+      const chId = ch.id.toString().trim().toLowerCase();
+      const chPath = `${ch.sam} > ${ch.sth} > Chapter ${ch.n}`.toLowerCase();
+      const chPathAlt = `${ch.sam} > ${ch.sth} > ${ch.name}`.toLowerCase();
+      if (set.has(chId) || set.has(chPath) || set.has(chPathAlt)) {
+        ch.qs.forEach((q) => {
+          if (!seen.has(q.id)) {
+            seen.add(q.id);
+            result.push(q);
+          }
+        });
+      }
+    });
+
+    return result;
   }
 
   async getChapters(): Promise<Chapter[]> {
