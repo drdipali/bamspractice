@@ -21,6 +21,7 @@ import {
   Clock,
   CheckCircle2,
   Calendar,
+  Phone,
   X,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
@@ -57,7 +58,11 @@ export const AdminDashboard: React.FC = () => {
   const filteredUsers = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return users;
-    return users.filter((u) => u.email.toLowerCase().includes(q));
+    return users.filter(
+      (u) =>
+        u.email.toLowerCase().includes(q) ||
+        (u.phone && u.phone.includes(q))
+    );
   }, [users, query]);
 
   // High-level analytics metrics
@@ -217,7 +222,7 @@ export const AdminDashboard: React.FC = () => {
               style={styles.searchInput}
               value={query}
               onChangeText={setQuery}
-              placeholder="Search registered users by email..."
+              placeholder="Search registered users by email or mobile..."
               placeholderTextColor={THEME.colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -270,6 +275,12 @@ export const AdminDashboard: React.FC = () => {
                       <View style={styles.userMainCol}>
                         <View style={styles.userEmailRow}>
                           <Text style={styles.userEmail}>{user.email}</Text>
+                          {user.phone ? (
+                            <View style={styles.phoneTag}>
+                              <Phone size={10} color="#1E40AF" />
+                              <Text style={styles.phoneTagText}>+91 {user.phone}</Text>
+                            </View>
+                          ) : null}
                           {isAdmin && (
                             <View style={styles.adminTag}>
                               <Text style={styles.adminTagText}>ADMIN</Text>
@@ -608,6 +619,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: THEME.colors.ink,
+  },
+  phoneTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  phoneTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1E40AF',
   },
   adminTag: {
     backgroundColor: THEME.colors.brand,

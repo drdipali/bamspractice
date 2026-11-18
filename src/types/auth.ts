@@ -16,6 +16,7 @@ export interface QuizAttemptRecord {
 export interface UserRecord {
   id: string;
   email: string;
+  phone?: string;
   createdAt: string;
   lastActive: string;
   quizCount: number;

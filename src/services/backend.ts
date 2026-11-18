@@ -19,6 +19,7 @@ const SEED_USERS: UserRecord[] = [
   {
     id: 'user_admin_001',
     email: 'admin@bams.com',
+    phone: '9876543210',
     createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date().toISOString(),
     quizCount: 2,
@@ -52,6 +53,7 @@ const SEED_USERS: UserRecord[] = [
   {
     id: 'user_student_001',
     email: 'sharma.ayur@bams.com',
+    phone: '9820012345',
     createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
     quizCount: 4,
@@ -85,6 +87,7 @@ const SEED_USERS: UserRecord[] = [
   {
     id: 'user_student_002',
     email: 'priya.bams@bams.com',
+    phone: '9830067890',
     createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
     quizCount: 2,
@@ -106,6 +109,7 @@ const SEED_USERS: UserRecord[] = [
   {
     id: 'user_student_003',
     email: 'rahul.vaidya@bams.com',
+    phone: '9840054321',
     createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
     quizCount: 1,
@@ -130,9 +134,13 @@ const SEED_USERS: UserRecord[] = [
 const PASSWORDS_KEY = 'bams_cloud_passwords_v1';
 const DEFAULT_PASSWORDS: Record<string, string> = {
   'admin@bams.com': 'admin123',
+  '9876543210': 'admin123',
   'sharma.ayur@bams.com': 'student123',
+  '9820012345': 'student123',
   'priya.bams@bams.com': 'student123',
+  '9830067890': 'student123',
   'rahul.vaidya@bams.com': 'student123',
+  '9840054321': 'student123',
 };
 
 /**
@@ -270,7 +278,7 @@ class BackendService {
   // AUTHENTICATION & USERS
   // ==========================================
 
-  async signUp(email: string, password: string): Promise<UserRecord> {
+  async signUp(email: string, password: string, phone?: string): Promise<UserRecord> {
     await this.initialize();
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -281,14 +289,31 @@ class BackendService {
       throw new Error('Password must be at least 6 characters long.');
     }
 
-    const existing = this.users.find((u) => u.email.toLowerCase() === normalizedEmail);
-    if (existing) {
+    const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : undefined;
+    if (cleanPhone && cleanPhone.length < 10) {
+      throw new Error('Please enter a valid 10-digit mobile number.');
+    }
+
+    const existingEmail = this.users.find((u) => u.email.toLowerCase() === normalizedEmail);
+    if (existingEmail) {
       throw new Error('An account with this email already exists. Please log in.');
+    }
+
+    if (cleanPhone) {
+      const existingPhone = this.users.find(
+        (u) =>
+          u.phone &&
+          u.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone.slice(-10)
+      );
+      if (existingPhone) {
+        throw new Error('An account with this mobile number already exists. Please log in.');
+      }
     }
 
     const newUser: UserRecord = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       email: normalizedEmail,
+      phone: cleanPhone ? cleanPhone.slice(-10) : undefined,
       createdAt: new Date().toISOString(),
       lastActive: new Date().toISOString(),
       quizCount: 0,
@@ -297,6 +322,9 @@ class BackendService {
 
     this.users.unshift(newUser);
     this.passwords[normalizedEmail] = password;
+    if (cleanPhone) {
+      this.passwords[cleanPhone.slice(-10)] = password;
+    }
     this.currentUser = newUser;
 
     await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
@@ -306,24 +334,46 @@ class BackendService {
     return newUser;
   }
 
-  async logIn(email: string, password: string): Promise<UserRecord> {
+  async logIn(identifier: string, password: string): Promise<UserRecord> {
     await this.initialize();
 
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) {
-      throw new Error('Please enter your email.');
+    const normalized = identifier.trim().toLowerCase();
+    const digitsOnly = identifier.replace(/[^0-9]/g, '');
+
+    if (!normalized) {
+      throw new Error('Please enter your email or mobile number.');
     }
 
-    if (normalizedEmail === 'admin@bams.com' && !this.passwords['admin@bams.com']) {
+    if (normalized === 'admin@bams.com' && !this.passwords['admin@bams.com']) {
       this.passwords['admin@bams.com'] = 'admin123';
     }
 
-    const user = this.users.find((u) => u.email.toLowerCase() === normalizedEmail);
+    // Match by email or 10-digit mobile number
+    const user = this.users.find((u) => {
+      if (u.email.toLowerCase() === normalized) return true;
+      if (
+        digitsOnly.length >= 10 &&
+        u.phone &&
+        u.phone.replace(/[^0-9]/g, '').slice(-10) === digitsOnly.slice(-10)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
     if (!user) {
-      throw new Error('No account found with this email. Please check your spelling or Sign Up.');
+      throw new Error(
+        'No account found with this email or mobile number. Please check your details or Sign Up.'
+      );
     }
 
-    const savedPassword = this.passwords[normalizedEmail];
+    // Verify password against email or phone key
+    const savedPassword =
+      this.passwords[user.email.toLowerCase()] ||
+      (user.phone ? this.passwords[user.phone.slice(-10)] : undefined) ||
+      this.passwords[normalized] ||
+      (digitsOnly ? this.passwords[digitsOnly.slice(-10)] : undefined);
+
     if (savedPassword && savedPassword !== password) {
       throw new Error('Incorrect password. Please try again.');
     }

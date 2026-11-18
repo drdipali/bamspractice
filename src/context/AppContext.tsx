@@ -27,8 +27,8 @@ import { backend } from '../services/backend';
 
 export interface AppContextType {
   currentUser: UserRecord | null;
-  logIn: (email: string, pass: string) => Promise<void>;
-  signUp: (email: string, pass: string) => Promise<void>;
+  logIn: (emailOrPhone: string, pass: string) => Promise<void>;
+  signUp: (email: string, pass: string, phone?: string) => Promise<void>;
   logOut: () => Promise<void>;
   navigateToAdmin: () => void;
   language: Language;
@@ -150,14 +150,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     })();
   }, []);
 
-  const logIn = async (email: string, pass: string) => {
-    const user = await backend.logIn(email, pass);
+  const logIn = async (emailOrPhone: string, pass: string) => {
+    const user = await backend.logIn(emailOrPhone, pass);
     setCurrentUser(user);
     setView('build');
   };
 
-  const signUp = async (email: string, pass: string) => {
-    const user = await backend.signUp(email, pass);
+  const signUp = async (email: string, pass: string, phone?: string) => {
+    const user = await backend.signUp(email, pass, phone);
     setCurrentUser(user);
     setView('build');
   };

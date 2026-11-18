@@ -14,6 +14,7 @@ import {
   BookOpen,
   Lock,
   Mail,
+  Phone,
   Shield,
   Eye,
   EyeOff,
@@ -28,7 +29,9 @@ import { useApp } from '../../context/AppContext';
 export const WelcomeScreen: React.FC = () => {
   const { logIn, signUp } = useApp();
   const [isSignUp, setIsSignUp] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<'email' | 'mobile'>('mobile');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -36,17 +39,43 @@ export const WelcomeScreen: React.FC = () => {
 
   const handleSubmit = async () => {
     setErrorMessage('');
-    if (!email.trim() || !password) {
-      setErrorMessage('Please enter both email and password.');
-      return;
+
+    if (isSignUp) {
+      if (!email.trim() || !password) {
+        setErrorMessage('Please enter email and password.');
+        return;
+      }
+      if (phone.trim() && phone.replace(/[^0-9]/g, '').length < 10) {
+        setErrorMessage('Please enter a valid 10-digit mobile number.');
+        return;
+      }
+    } else {
+      // Log In validation
+      if (loginMethod === 'mobile') {
+        const cleanDigits = phone.replace(/[^0-9]/g, '');
+        if (!cleanDigits || cleanDigits.length < 10) {
+          setErrorMessage('Please enter your 10-digit registered mobile number.');
+          return;
+        }
+      } else {
+        if (!email.trim()) {
+          setErrorMessage('Please enter your registered email address.');
+          return;
+        }
+      }
+      if (!password) {
+        setErrorMessage('Please enter your password.');
+        return;
+      }
     }
 
     setLoading(true);
     try {
       if (isSignUp) {
-        await signUp(email.trim(), password);
+        await signUp(email.trim(), password, phone.trim() ? phone.replace(/[^0-9]/g, '') : undefined);
       } else {
-        await logIn(email.trim(), password);
+        const identifier = loginMethod === 'mobile' ? phone.replace(/[^0-9]/g, '') : email.trim();
+        await logIn(identifier, password);
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Authentication failed. Please try again.');
@@ -55,8 +84,9 @@ export const WelcomeScreen: React.FC = () => {
     }
   };
 
-  const fillQuickCredentials = (demoEmail: string, demoPass: string) => {
+  const fillQuickCredentials = (demoEmail: string, demoPhone: string, demoPass: string) => {
     setEmail(demoEmail);
+    setPhone(demoPhone);
     setPassword(demoPass);
     setErrorMessage('');
   };
@@ -83,7 +113,7 @@ export const WelcomeScreen: React.FC = () => {
 
         {/* Main Auth Card */}
         <View style={styles.card}>
-          {/* Mode Switcher */}
+          {/* Mode Switcher: Log In vs Sign Up */}
           <View style={styles.tabRow}>
             <TouchableOpacity
               style={[styles.tabBtn, !isSignUp && styles.tabBtnActive]}
@@ -116,6 +146,63 @@ export const WelcomeScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
 
+          {/* Sub-toggle for Login: Mobile vs Email */}
+          {!isSignUp && (
+            <View style={styles.methodSelectorRow}>
+              <TouchableOpacity
+                style={[
+                  styles.methodPill,
+                  loginMethod === 'mobile' && styles.methodPillActive,
+                ]}
+                onPress={() => {
+                  setLoginMethod('mobile');
+                  setErrorMessage('');
+                }}
+              >
+                <Phone
+                  size={13}
+                  color={
+                    loginMethod === 'mobile' ? THEME.colors.brandInk : THEME.colors.muted
+                  }
+                />
+                <Text
+                  style={[
+                    styles.methodPillText,
+                    loginMethod === 'mobile' && styles.methodPillTextActive,
+                  ]}
+                >
+                  Mobile Number
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.methodPill,
+                  loginMethod === 'email' && styles.methodPillActive,
+                ]}
+                onPress={() => {
+                  setLoginMethod('email');
+                  setErrorMessage('');
+                }}
+              >
+                <Mail
+                  size={13}
+                  color={
+                    loginMethod === 'email' ? THEME.colors.brandInk : THEME.colors.muted
+                  }
+                />
+                <Text
+                  style={[
+                    styles.methodPillText,
+                    loginMethod === 'email' && styles.methodPillTextActive,
+                  ]}
+                >
+                  Email Address
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Error Banner */}
           {errorMessage ? (
             <View style={styles.errorBox}>
@@ -126,26 +213,56 @@ export const WelcomeScreen: React.FC = () => {
 
           {/* Form Fields */}
           <View style={styles.form}>
-            {/* Email Field */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Email Address</Text>
-              <View style={styles.inputWrapper}>
-                <Mail size={18} color={THEME.colors.muted} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  value={email}
-                  onChangeText={(val) => {
-                    setEmail(val);
-                    if (errorMessage) setErrorMessage('');
-                  }}
-                  placeholder="e.g. vaidya@ayurveda.edu"
-                  placeholderTextColor={THEME.colors.muted}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
+            {/* Login via Mobile OR Sign Up Mobile Field */}
+            {(!isSignUp && loginMethod === 'mobile') || isSignUp ? (
+              <View style={styles.fieldGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.fieldLabel}>Student Mobile Number</Text>
+                  {isSignUp && <Text style={styles.optionalTag}>(Required for SMS/Verification)</Text>}
+                </View>
+                <View style={styles.inputWrapper}>
+                  <View style={styles.countryCodeBadge}>
+                    <Text style={styles.countryCodeText}>+91</Text>
+                  </View>
+                  <Phone size={16} color={THEME.colors.muted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={phone}
+                    onChangeText={(val) => {
+                      setPhone(val.replace(/[^0-9]/g, ''));
+                      if (errorMessage) setErrorMessage('');
+                    }}
+                    placeholder="10-digit mobile number"
+                    placeholderTextColor={THEME.colors.muted}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                  />
+                </View>
               </View>
-            </View>
+            ) : null}
+
+            {/* Email Field (for Email login or Sign Up) */}
+            {(!isSignUp && loginMethod === 'email') || isSignUp ? (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Email Address</Text>
+                <View style={styles.inputWrapper}>
+                  <Mail size={18} color={THEME.colors.muted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={email}
+                    onChangeText={(val) => {
+                      setEmail(val);
+                      if (errorMessage) setErrorMessage('');
+                    }}
+                    placeholder="e.g. vaidya@ayurveda.edu"
+                    placeholderTextColor={THEME.colors.muted}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+            ) : null}
 
             {/* Password Field */}
             <View style={styles.fieldGroup}>
@@ -189,7 +306,11 @@ export const WelcomeScreen: React.FC = () => {
               ) : (
                 <>
                   <Text style={styles.submitBtnText}>
-                    {isSignUp ? 'Create Student Account' : 'Log In to Practice'}
+                    {isSignUp
+                      ? 'Create Student Account'
+                      : loginMethod === 'mobile'
+                      ? 'Log In with Mobile'
+                      : 'Log In with Email'}
                   </Text>
                   <ArrowRight size={16} color={THEME.colors.brandInk} />
                 </>
@@ -201,26 +322,36 @@ export const WelcomeScreen: React.FC = () => {
           <View style={styles.demoSection}>
             <View style={styles.demoHeader}>
               <Sparkles size={14} color={THEME.colors.accent} />
-              <Text style={styles.demoTitle}>Quick Demo Logins (1-Tap):</Text>
+              <Text style={styles.demoTitle}>Quick 1-Tap Demo Logins:</Text>
             </View>
 
             <View style={styles.demoBtnRow}>
               <TouchableOpacity
                 style={styles.demoChip}
-                onPress={() => fillQuickCredentials('admin@bams.com', 'admin123')}
+                onPress={() =>
+                  fillQuickCredentials('admin@bams.com', '9876543210', 'admin123')
+                }
                 activeOpacity={0.7}
               >
                 <Shield size={13} color={THEME.colors.brand} />
-                <Text style={styles.demoChipText}>Admin (admin@bams.com)</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.demoChipText}>Admin Portal</Text>
+                  <Text style={styles.demoSubText}>+91 98765 43210 · admin@bams.com</Text>
+                </View>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.demoChip}
-                onPress={() => fillQuickCredentials('sharma.ayur@bams.com', 'student123')}
+                onPress={() =>
+                  fillQuickCredentials('sharma.ayur@bams.com', '9820012345', 'student123')
+                }
                 activeOpacity={0.7}
               >
                 <GraduationCap size={13} color={THEME.colors.accent} />
-                <Text style={styles.demoChipText}>Student (sharma.ayur@bams.com)</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.demoChipText}>Student (Vaidya Sharma)</Text>
+                  <Text style={styles.demoSubText}>+91 98200 12345 · sharma.ayur@bams.com</Text>
+                </View>
               </TouchableOpacity>
             </View>
           </View>
@@ -249,16 +380,16 @@ const styles = StyleSheet.create({
   },
   brandHeader: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: THEME.colors.brand,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
@@ -267,7 +398,7 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     fontFamily: THEME.fonts.serif,
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '700',
     color: THEME.colors.ink,
     textAlign: 'center',
@@ -299,13 +430,13 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.colors.bg,
     borderRadius: THEME.radius.md,
     padding: 4,
-    marginBottom: 20,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: THEME.colors.line,
   },
   tabBtn: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
     alignItems: 'center',
     borderRadius: THEME.radius.sm,
   },
@@ -319,6 +450,43 @@ const styles = StyleSheet.create({
   },
   tabBtnTextActive: {
     color: THEME.colors.brandInk,
+  },
+  methodSelectorRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 3,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    gap: 4,
+  },
+  methodPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    borderRadius: 6,
+    gap: 6,
+  },
+  methodPillActive: {
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  methodPillText: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+    fontWeight: '600',
+  },
+  methodPillTextActive: {
+    color: THEME.colors.brandInk,
+    fontWeight: '700',
   },
   errorBox: {
     flexDirection: 'row',
@@ -338,15 +506,24 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   form: {
-    gap: 16,
+    gap: 14,
   },
   fieldGroup: {
     gap: 6,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '600',
     color: THEME.colors.ink,
+  },
+  optionalTag: {
+    fontSize: 10,
+    color: THEME.colors.muted,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -357,6 +534,18 @@ const styles = StyleSheet.create({
     borderRadius: THEME.radius.md,
     paddingHorizontal: 12,
     height: 46,
+  },
+  countryCodeBadge: {
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  countryCodeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.brandInk,
   },
   inputIcon: {
     marginRight: 8,
@@ -389,8 +578,8 @@ const styles = StyleSheet.create({
     color: THEME.colors.brandInk,
   },
   demoSection: {
-    marginTop: 22,
-    paddingTop: 18,
+    marginTop: 20,
+    paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.line,
     gap: 10,
@@ -413,9 +602,9 @@ const styles = StyleSheet.create({
   demoChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     backgroundColor: THEME.colors.bg,
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: THEME.radius.sm,
     borderWidth: 1,
@@ -424,12 +613,17 @@ const styles = StyleSheet.create({
   demoChipText: {
     fontSize: 12,
     color: THEME.colors.ink,
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  demoSubText: {
+    fontSize: 10,
+    color: THEME.colors.muted,
+    marginTop: 1,
   },
   footerNote: {
     fontSize: 12,
     color: THEME.colors.muted,
-    marginTop: 24,
+    marginTop: 20,
     textAlign: 'center',
   },
 });
