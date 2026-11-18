@@ -1,6 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { AlertCircle, CheckCircle2, XCircle } from 'lucide-react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AlertCircle, Check, CheckCircle2, Flag, XCircle } from 'lucide-react-native';
 import { THEME, OPTION_LABELS } from '../../constants/theme';
 import { ALL_CHAPTERS, getChapterPath } from '../../constants/syllabusData';
 import { Language, Question, QuizSession } from '../../types';
@@ -9,12 +9,16 @@ interface IncorrectReviewListProps {
   wrongQuestions: Question[];
   session: QuizSession;
   language: Language;
+  claimedQuestions: Record<number, boolean>;
+  onClaimPress: (question: Question) => void;
 }
 
 export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
   wrongQuestions,
   session,
   language,
+  claimedQuestions,
+  onClaimPress,
 }) => {
   if (wrongQuestions.length === 0) return null;
 
@@ -27,7 +31,7 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
         </Text>
       </View>
       <Text style={styles.subtitle}>
-        Review your mistakes and classical Samhita citations below:
+        Review your mistakes, study classical citations, or report question discrepancies:
       </Text>
 
       <View style={styles.list}>
@@ -37,6 +41,7 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
           const userChoiceLabel =
             userChoice !== undefined ? OPTION_LABELS[userChoice] : 'None';
           const correctChoiceLabel = OPTION_LABELS[q.c];
+          const isClaimed = !!claimedQuestions[q.id];
 
           // Bilingual stem
           const stemText =
@@ -50,11 +55,30 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
           return (
             <View key={q.id} style={styles.item}>
               <View style={styles.itemMeta}>
-                <Text style={styles.qBadge}>Q #{idx + 1}</Text>
-                {chapter && (
-                  <Text style={styles.chapterText} numberOfLines={1}>
-                    {getChapterPath(chapter)}
-                  </Text>
+                <View style={styles.metaLeft}>
+                  <Text style={styles.qBadge}>Q #{idx + 1}</Text>
+                  {chapter && (
+                    <Text style={styles.chapterText} numberOfLines={1}>
+                      {getChapterPath(chapter)}
+                    </Text>
+                  )}
+                </View>
+
+                {/* Report / Claim Error button */}
+                {isClaimed ? (
+                  <View style={styles.claimSubmittedBadge}>
+                    <Check size={12} color={THEME.colors.ok} />
+                    <Text style={styles.claimSubmittedText}>Claim Submitted</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.claimBtn}
+                    onPress={() => onClaimPress(q)}
+                    activeOpacity={0.7}
+                  >
+                    <Flag size={12} color={THEME.colors.brand} />
+                    <Text style={styles.claimBtnText}>Report/Claim Error</Text>
+                  </TouchableOpacity>
                 )}
               </View>
 
@@ -132,7 +156,16 @@ const styles = StyleSheet.create({
   itemMeta: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 8,
+  },
+  metaLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 160,
   },
   qBadge: {
     fontSize: 12,
@@ -147,6 +180,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.colors.muted,
     flex: 1,
+  },
+  claimBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.brand,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: THEME.radius.sm,
+  },
+  claimBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: THEME.colors.brand,
+  },
+  claimSubmittedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.colors.okSoft,
+    borderWidth: 1,
+    borderColor: THEME.colors.ok,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: THEME.radius.sm,
+  },
+  claimSubmittedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.ok,
   },
   stemText: {
     fontSize: 14,

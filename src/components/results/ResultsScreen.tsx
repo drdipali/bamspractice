@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -6,22 +6,49 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { RotateCcw, ArrowLeft, Trophy } from 'lucide-react-native';
+import { RotateCcw, ArrowLeft, Trophy, CheckCircle2, X } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Scorecard } from './Scorecard';
 import { ChapterAccuracyList } from './ChapterAccuracyList';
 import { IncorrectReviewList } from './IncorrectReviewList';
+import { ClaimQuestionModal } from './ClaimQuestionModal';
+import { Question } from '../../types';
 
 export const ResultsScreen: React.FC = () => {
   const { results, session, language, reattemptIncorrect, backToBuilder } =
     useApp();
 
+  const [activeClaimQuestion, setActiveClaimQuestion] = useState<Question | null>(null);
+  const [claimedQuestions, setClaimedQuestions] = useState<Record<number, boolean>>({});
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
   if (!results || !session) return null;
 
   const modeTitle =
     session.mode === 'learning' ? 'Learning Mode' : 'Test Mode';
+
+  const handleClaimPress = (question: Question) => {
+    setActiveClaimQuestion(question);
+  };
+
+  const handleClaimSubmit = (questionId: number, comment: string, fileName?: string) => {
+    // Record claim
+    setClaimedQuestions((prev) => ({ ...prev, [questionId]: true }));
+    setActiveClaimQuestion(null);
+    setToastMessage('Your claim has been submitted for review.');
+  };
 
   return (
     <View style={styles.container}>
@@ -36,6 +63,20 @@ export const ResultsScreen: React.FC = () => {
         }
       />
 
+      {/* Floating Success Toast */}
+      {toastMessage && (
+        <View style={styles.toast}>
+          <CheckCircle2 size={18} color={THEME.colors.ok} />
+          <Text style={styles.toastText}>{toastMessage}</Text>
+          <TouchableOpacity
+            onPress={() => setToastMessage(null)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <X size={16} color={THEME.colors.muted} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
         <View style={styles.contentWrapper}>
           {/* Main Results Panel */}
@@ -45,7 +86,7 @@ export const ResultsScreen: React.FC = () => {
               <Text style={styles.panelTitle}>Performance Summary</Text>
             </View>
 
-            {/* Scorecard */}
+            {/* Scorecard with Competitive Scoring */}
             <Scorecard results={results} />
 
             {/* Accuracy by Chapter */}
@@ -77,14 +118,24 @@ export const ResultsScreen: React.FC = () => {
             </View>
           </View>
 
-          {/* Detailed Incorrect Questions Review */}
+          {/* Detailed Incorrect Questions Review with Claim / Report Error Feature */}
           <IncorrectReviewList
             wrongQuestions={results.wrongQuestions}
             session={session}
             language={language}
+            claimedQuestions={claimedQuestions}
+            onClaimPress={handleClaimPress}
           />
         </View>
       </ScrollView>
+
+      {/* Claim / Report Question Modal */}
+      <ClaimQuestionModal
+        visible={activeClaimQuestion !== null}
+        question={activeClaimQuestion}
+        onClose={() => setActiveClaimQuestion(null)}
+        onSubmit={handleClaimSubmit}
+      />
     </View>
   );
 };
@@ -93,6 +144,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.colors.bg,
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: THEME.colors.okSoft,
+    borderWidth: 1,
+    borderColor: THEME.colors.ok,
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: THEME.radius.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  toastText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: THEME.colors.ok,
   },
   backTopBtn: {
     flexDirection: 'row',
