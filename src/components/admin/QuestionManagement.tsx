@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,24 +13,28 @@ import {
   Plus,
   Trash2,
   Upload,
-  FileText,
+  Download,
+  Pencil,
+  FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
   HelpCircle,
   Search,
-  Filter,
   X,
   Layers,
-  ChevronDown,
-  ChevronRight,
-  BookOpen,
   ArrowRight,
   RefreshCw,
+  Eye,
+  Check,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
 import { backend } from '../../services/backend';
-import { parseQuestionsCsv, generateSampleCsv } from '../../utils/csvParser';
+import {
+  parseSpreadsheetBuffer,
+  downloadSampleTemplate,
+  SpreadsheetParseResult,
+} from '../../utils/spreadsheetHelper';
 import { useApp } from '../../context/AppContext';
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
@@ -42,17 +45,17 @@ const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
 };
 
 const STANDARD_AR_OPTIONS = [
-  'Both (A) and (R) are true and (R) is the correct explanation of (A)',
-  'Both (A) and (R) are true but (R) is NOT the correct explanation of (A)',
-  '(A) is true but (R) is false',
-  '(A) is false but (R) is true',
+  'Both (A) and (R) are true and (R) is the correct explanation of (A) / (A) और (R) दोनों सही हैं और (R), (A) की सही व्याख्या है',
+  'Both (A) and (R) are true but (R) is NOT the correct explanation of (A) / (A) और (R) दोनों सही हैं परंतु (R), (A) की सही व्याख्या नहीं है',
+  '(A) is true but (R) is false / (A) सही है परंतु (R) सही नहीं है',
+  '(A) is false but (R) is true / (A) सही नहीं है परंतु (R) सही है',
 ];
 
 const STANDARD_STATEMENT_OPTIONS = [
-  'Both Statement I and Statement II are correct',
-  'Both Statement I and Statement II are incorrect',
-  'Statement I is correct but Statement II is incorrect',
-  'Statement I is incorrect but Statement II is correct',
+  'Both Statement I and Statement II are correct / दोनों कथन I और II सही हैं',
+  'Both Statement I and Statement II are incorrect / दोनों कथन I और II गलत हैं',
+  'Statement I is correct but Statement II is incorrect / कथन I सही है परंतु कथन II गलत है',
+  'Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है',
 ];
 
 export const QuestionManagement: React.FC = () => {
@@ -61,19 +64,20 @@ export const QuestionManagement: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
-  const [selectedChapterFilter, setSelectedChapterFilter] = useState<string>('all');
+  const [visibleCount, setVisibleCount] = useState<number>(50);
 
-  // UI state for modals / panels
+  // Modals & form state
   const [isAddFormOpen, setIsAddFormOpen] = useState<boolean>(false);
-  const [isCsvModalOpen, setIsCsvModalOpen] = useState<boolean>(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
 
-  // Form State
+  // Form State (for Add or Edit)
   const [qType, setQType] = useState<QuestionType>('standard');
   const [chapterName, setChapterName] = useState<string>('Charaka Samhita > Sutrasthana > Chapter 1');
   const [refSource, setRefSource] = useState<string>('');
-  const [difficulty, setDifficulty] = useState<Difficulty>(0);
+  const [difficulty, setDifficulty] = useState<Difficulty>(1);
   const [stem, setStem] = useState<string>('');
   const [options, setOptions] = useState<string[]>(['', '', '', '']);
   const [correctAnswer, setCorrectAnswer] = useState<number>(0);
@@ -85,16 +89,16 @@ export const QuestionManagement: React.FC = () => {
   const [statement1, setStatement1] = useState<string>('');
   const [statement2, setStatement2] = useState<string>('');
   const [matchPairs, setMatchPairs] = useState<MatchPair[]>([
-    { left: 'A. Charaka Samhita', right: 'I. Agnivesha Tantra' },
-    { left: 'B. Sushruta Samhita', right: 'II. Vriddha Sushruta' },
-    { left: 'C. Ashtanga Hridaya', right: 'III. Vagbhata' },
-    { left: 'D. Madhava Nidana', right: 'IV. Madhavakara' },
+    { left: 'A. Item 1', right: 'I. Value 1' },
+    { left: 'B. Item 2', right: 'II. Value 2' },
+    { left: 'C. Item 3', right: 'III. Value 3' },
+    { left: 'D. Item 4', right: 'IV. Value 4' },
   ]);
 
-  // CSV Bulk Upload State
-  const [csvInput, setCsvInput] = useState<string>('');
-  const [csvValidationResult, setCsvValidationResult] = useState<any>(null);
-  const [isUploadingCsv, setIsUploadingCsv] = useState<boolean>(false);
+  // Bulk Upload State
+  const [uploadFileName, setUploadFileName] = useState<string>('');
+  const [uploadParseResult, setUploadParseResult] = useState<SpreadsheetParseResult | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
 
   const loadCloudQuestions = async () => {
     setLoading(true);
@@ -119,95 +123,82 @@ export const QuestionManagement: React.FC = () => {
     }, 3500);
   };
 
-  // Pre-fill options when question type changes
-  const handleTypeChange = (type: QuestionType) => {
-    setQType(type);
-    if (type === 'assertion_reason') {
-      setOptions([...STANDARD_AR_OPTIONS]);
-      if (!stem) setStem('Assertion (A) & Reason (R): In light of the statements, select the correct option.');
-    } else if (type === 'statement_type') {
-      setOptions([...STANDARD_STATEMENT_OPTIONS]);
-      if (!stem) setStem('Statement Type: Consider the statements regarding Ayurvedic principles and choose the correct code:');
-    } else if (type === 'match_the_pair') {
-      setOptions([
-        'A-I, B-II, C-III, D-IV',
-        'A-II, B-I, C-IV, D-III',
-        'A-III, B-IV, C-I, D-II',
-        'A-IV, B-III, C-II, D-I',
-      ]);
-      if (!stem) setStem('Match List-I with List-II and select the correct option using the codes below:');
-    } else {
-      setOptions(['', '', '', '']);
-    }
-  };
-
-  const handleResetForm = () => {
+  // Reset Form
+  const resetFormFields = () => {
     setQType('standard');
+    setChapterName('Charaka Samhita > Sutrasthana > Chapter 1');
+    setRefSource('');
+    setDifficulty(1);
     setStem('');
     setOptions(['', '', '', '']);
     setCorrectAnswer(0);
     setExplanation('');
-    setRefSource('');
     setAssertionText('');
     setReasonText('');
     setStatement1('');
     setStatement2('');
-    setMatchPairs([
-      { left: '', right: '' },
-      { left: '', right: '' },
-      { left: '', right: '' },
-      { left: '', right: '' },
-    ]);
+    setEditingQuestion(null);
   };
 
-  // Submit manual question
+  // Pre-fill Edit Modal with existing Question Data
+  const handleStartEdit = (q: Question) => {
+    setEditingQuestion(q);
+    setQType(q.questionType || 'standard');
+    setChapterName(q.chapterName || String(q.ch || 'Charaka Samhita > Sutrasthana > Chapter 1'));
+    setRefSource(q.r || '');
+    setDifficulty((q.d ?? 1) as Difficulty);
+    setStem(q.stem || '');
+    setOptions(
+      q.o && q.o.length >= 4
+        ? [...q.o]
+        : [q.o?.[0] || '', q.o?.[1] || '', q.o?.[2] || '', q.o?.[3] || '']
+    );
+    setCorrectAnswer(q.c ?? 0);
+    setExplanation(q.explanation || (q as any).exp || '');
+    setAssertionText(q.assertionText || '');
+    setReasonText(q.reasonText || '');
+    setStatement1(q.statement1 || '');
+    setStatement2(q.statement2 || '');
+    if (q.matchPairs && q.matchPairs.length > 0) {
+      setMatchPairs(q.matchPairs);
+    }
+    setIsAddFormOpen(false);
+  };
+
+  // Save (Create or Update) Question
   const handleSaveQuestion = async () => {
-    if (!chapterName.trim()) {
-      alert('Please specify the Chapter Mapping (e.g. Charaka Samhita > Sutrasthana > Chapter 1).');
+    if (!stem.trim()) {
+      alert('Please enter Question Text / Stem.');
       return;
     }
-    if (!stem.trim()) {
-      alert('Please enter the Question Stem / Prompt.');
+    if (!chapterName.trim()) {
+      alert('Please enter Chapter Mapping (e.g. Charaka Samhita > Sutrasthana > Chapter 1).');
       return;
     }
 
     if (qType === 'assertion_reason') {
-      if (!assertionText.trim() || !reasonText.trim()) {
-        alert('Please provide both Assertion (A) and Reason (R).');
+      if (!assertionText.trim() && !stem.includes('A:')) {
+        alert('Please enter the Assertion (A) text.');
         return;
       }
     }
 
-    if (qType === 'statement_type') {
-      if (!statement1.trim() || !statement2.trim()) {
-        alert('Please provide both Statement I and Statement II.');
-        return;
-      }
-    }
-
-    if (qType === 'match_the_pair') {
-      const validPairs = matchPairs.filter((p) => p.left.trim() && p.right.trim());
-      if (validPairs.length < 2) {
-        alert('Please fill at least 2 pairs for Match the Pair.');
-        return;
-      }
-    }
-
-    if (options.some((o) => !o.trim())) {
-      alert('Please fill all 4 options (A, B, C, D).');
+    const cleanOptions = options.map((o) => o.trim());
+    if (cleanOptions.filter(Boolean).length < 2) {
+      alert('Please provide at least options A and B.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const questionData: Omit<Question, 'id'> = {
+      const payload: Omit<Question, 'id'> = {
         ch: chapterName.trim(),
         chapterName: chapterName.trim(),
         questionType: qType,
         d: difficulty,
         c: correctAnswer,
         stem: stem.trim(),
-        o: options.map((o) => o.trim()),
+        o: cleanOptions,
         r: refSource.trim() || undefined,
         explanation: explanation.trim() || undefined,
         assertionText: qType === 'assertion_reason' ? assertionText.trim() : undefined,
@@ -217,13 +208,24 @@ export const QuestionManagement: React.FC = () => {
         matchPairs: qType === 'match_the_pair' ? matchPairs : undefined,
       };
 
-      await backend.addQuestion(questionData);
-      await loadCloudQuestions();
-      if (refreshQuestions) refreshQuestions();
+      if (editingQuestion) {
+        // UPDATE EXISTING QUESTION
+        const updated = await backend.updateQuestion(editingQuestion.id, payload);
+        setQuestions((prev) =>
+          prev.map((item) => (String(item.id) === String(editingQuestion.id) ? updated : item))
+        );
+        showToast('Question updated successfully in Cloud DB!');
+        setEditingQuestion(null);
+      } else {
+        // CREATE NEW QUESTION
+        const created = await backend.addQuestion(payload);
+        setQuestions((prev) => [created, ...prev]);
+        showToast('New question created and saved to Cloud DB!');
+        setIsAddFormOpen(false);
+      }
 
-      showToast('Question successfully created and saved to Cloud Database!');
-      handleResetForm();
-      setIsAddFormOpen(false);
+      if (refreshQuestions) refreshQuestions();
+      resetFormFields();
     } catch (e: any) {
       alert(e.message || 'Failed to save question.');
     } finally {
@@ -231,18 +233,17 @@ export const QuestionManagement: React.FC = () => {
     }
   };
 
-  // Delete question
+  // Delete Question
   const handleDeleteQuestion = async (id: string | number) => {
     const confirmed =
       Platform.OS === 'web'
-        ? window.confirm('Are you sure you want to delete this question from the cloud question bank?')
+        ? window.confirm('Are you sure you want to delete this question from Cloud DB?')
         : true;
-
     if (!confirmed) return;
 
     try {
       await backend.deleteQuestion(id);
-      await loadCloudQuestions();
+      setQuestions((prev) => prev.filter((q) => String(q.id) !== String(id)));
       if (refreshQuestions) refreshQuestions();
       showToast('Question deleted successfully.');
     } catch (e) {
@@ -250,91 +251,70 @@ export const QuestionManagement: React.FC = () => {
     }
   };
 
-  // CSV Validation
-  const handleValidateCsv = () => {
-    if (!csvInput.trim()) {
-      alert('Please paste or upload CSV content first.');
-      return;
-    }
-    const result = parseQuestionsCsv(csvInput);
-    setCsvValidationResult(result);
-  };
-
-  // CSV Upload Execution
-  const handleExecuteCsvUpload = async () => {
-    if (!csvValidationResult || csvValidationResult.validQuestions.length === 0) {
-      alert('No valid questions found to import.');
-      return;
-    }
-
-    setIsUploadingCsv(true);
-    try {
-      const res = await backend.batchAddQuestions(csvValidationResult.validQuestions);
-      await loadCloudQuestions();
-      if (refreshQuestions) refreshQuestions();
-
-      showToast(`Successfully imported ${res.added} questions into the cloud database!`);
-      setCsvInput('');
-      setCsvValidationResult(null);
-      setIsCsvModalOpen(false);
-    } catch (e: any) {
-      alert(e.message || 'Failed to upload questions.');
-    } finally {
-      setIsUploadingCsv(false);
-    }
-  };
-
-  // Handle local file picking for CSV on web
-  const handleFileSelectWeb = (event: any) => {
+  // Handle File Selection for Excel (.xlsx, .xls) and CSV (.csv)
+  const handleFilePicked = (event: any) => {
     const file = event.target?.files?.[0];
     if (!file) return;
 
+    setUploadFileName(file.name);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const content = e.target?.result as string;
-      if (content) {
-        setCsvInput(content);
-        const result = parseQuestionsCsv(content);
-        setCsvValidationResult(result);
+      const buffer = e.target?.result as ArrayBuffer;
+      if (buffer) {
+        try {
+          const result = parseSpreadsheetBuffer(buffer);
+          setUploadParseResult(result);
+        } catch (err: any) {
+          alert('Failed to parse file: ' + err.message);
+        }
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
-  // Filtered Questions
+  // Confirm and batch upload questions to Cloud DB
+  const handleConfirmBatchUpload = async () => {
+    if (!uploadParseResult || uploadParseResult.validQuestions.length === 0) {
+      alert('No valid questions available to upload.');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const res = await backend.batchAddQuestions(uploadParseResult.validQuestions);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+
+      showToast(`Successfully uploaded ${res.added} questions to Cloud DB!`);
+      setUploadParseResult(null);
+      setUploadFileName('');
+      setIsUploadModalOpen(false);
+    } catch (e: any) {
+      alert(e.message || 'Failed to upload questions.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Filtered & Paginated questions
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
-      // Type filter
       if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
-      // Chapter filter
-      if (
-        selectedChapterFilter !== 'all' &&
-        q.chapterName !== selectedChapterFilter &&
-        q.ch !== selectedChapterFilter
-      ) {
-        return false;
-      }
-      // Search query
       if (searchQuery.trim()) {
-        const qText = `${q.stem} ${q.chapterName} ${q.r || ''} ${q.explanation || ''}`.toLowerCase();
-        return qText.includes(searchQuery.toLowerCase().trim());
+        const text = `${q.stem} ${q.chapterName || ''} ${q.r || ''} ${q.explanation || ''}`.toLowerCase();
+        return text.includes(searchQuery.toLowerCase().trim());
       }
       return true;
     });
-  }, [questions, selectedTypeFilter, selectedChapterFilter, searchQuery]);
+  }, [questions, selectedTypeFilter, searchQuery]);
 
-  // Unique chapters in question bank
-  const uniqueChapters = useMemo(() => {
-    const set = new Set<string>();
-    questions.forEach((q) => {
-      if (q.chapterName) set.add(q.chapterName);
-    });
-    return Array.from(set).sort();
-  }, [questions]);
+  const displayedQuestions = useMemo(() => {
+    return filteredQuestions.slice(0, visibleCount);
+  }, [filteredQuestions, visibleCount]);
 
-  // Type Breakdown
+  // Breakdown metrics
   const typeCounts = useMemo(() => {
     const counts = {
       total: questions.length,
@@ -363,11 +343,11 @@ export const QuestionManagement: React.FC = () => {
         </View>
       ) : null}
 
-      {/* Metric Cards Banner */}
+      {/* Metrics Row */}
       <View style={styles.metricsRow}>
         <View style={styles.metricCard}>
           <Text style={styles.metricLabel}>Total Questions</Text>
-          <Text style={styles.metricNumber}>{typeCounts.total}</Text>
+          <Text style={[styles.metricNumber, { color: THEME.colors.ink }]}>{typeCounts.total}</Text>
           <Text style={styles.metricSub}>Live in Cloud DB</Text>
         </View>
 
@@ -392,86 +372,284 @@ export const QuestionManagement: React.FC = () => {
         </View>
       </View>
 
-      {/* Action Header */}
-      <View style={styles.actionsBar}>
-        <View style={styles.actionLeft}>
+      {/* Action Toolbar */}
+      <View style={styles.toolbarRow}>
+        <View style={styles.toolbarLeft}>
+          {/* Add New Question */}
           <TouchableOpacity
-            style={[styles.primaryActionBtn, isAddFormOpen && styles.primaryActionBtnActive]}
+            style={[styles.btnPrimary, isAddFormOpen && styles.btnPrimaryActive]}
             onPress={() => {
-              setIsAddFormOpen(!isAddFormOpen);
-              if (isCsvModalOpen) setIsCsvModalOpen(false);
+              if (isAddFormOpen) {
+                setIsAddFormOpen(false);
+              } else {
+                resetFormFields();
+                setIsAddFormOpen(true);
+                setIsUploadModalOpen(false);
+              }
             }}
             activeOpacity={0.8}
           >
             <Plus size={16} color="#FFF" />
-            <Text style={styles.primaryActionBtnText}>
-              {isAddFormOpen ? 'Close Form' : '+ Add New Question'}
-            </Text>
+            <Text style={styles.btnPrimaryText}>{isAddFormOpen ? 'Close Form' : '+ Add New Question'}</Text>
           </TouchableOpacity>
 
+          {/* Upload Excel / CSV */}
           <TouchableOpacity
-            style={styles.secondaryActionBtn}
+            style={styles.btnUpload}
             onPress={() => {
-              setIsCsvModalOpen(!isCsvModalOpen);
+              setIsUploadModalOpen(!isUploadModalOpen);
               if (isAddFormOpen) setIsAddFormOpen(false);
             }}
             activeOpacity={0.8}
           >
-            <Upload size={16} color={THEME.colors.brandInk} />
-            <Text style={styles.secondaryActionBtnText}>Bulk Upload CSV</Text>
+            <Upload size={16} color={THEME.colors.brandDark} />
+            <Text style={styles.btnUploadText}>Upload Excel / CSV</Text>
+          </TouchableOpacity>
+
+          {/* Download Sample Template Dropdown / Action */}
+          <TouchableOpacity
+            style={styles.btnTemplate}
+            onPress={() => downloadSampleTemplate('xlsx')}
+            activeOpacity={0.8}
+            accessibilityLabel="Download Excel Template"
+          >
+            <Download size={15} color="#166534" />
+            <Text style={styles.btnTemplateText}>Download Excel Template (.xlsx)</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.ghostActionBtn}
-            onPress={loadCloudQuestions}
+            style={styles.btnTemplateGhost}
+            onPress={() => downloadSampleTemplate('csv')}
             activeOpacity={0.7}
+            accessibilityLabel="Download CSV Template"
           >
+            <Download size={14} color={THEME.colors.muted} />
+            <Text style={styles.btnTemplateGhostText}>Template (.csv)</Text>
+          </TouchableOpacity>
+
+          {/* Sync Cloud */}
+          <TouchableOpacity style={styles.btnGhost} onPress={loadCloudQuestions} activeOpacity={0.7}>
             <RefreshCw size={14} color={THEME.colors.muted} />
-            <Text style={styles.ghostActionBtnText}>Sync Cloud</Text>
+            <Text style={styles.btnGhostText}>Sync Cloud</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {/* ============================================================== */}
-      {/* 1. MANUAL QUESTION ENTRY FORM                                  */}
+      {/* 1. BULK UPLOAD MODAL / PANEL (.XLSX / .XLS / .CSV)             */}
       {/* ============================================================== */}
-      {isAddFormOpen && (
-        <View style={styles.formCard}>
-          <View style={styles.formHeader}>
-            <View>
-              <Text style={styles.formTitle}>Add New Question to Cloud Database</Text>
-              <Text style={styles.formSubtitle}>
-                Select Question Type to configure dynamic inputs (A/R, Match, or Statements)
-              </Text>
+      {isUploadModalOpen && (
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <FileSpreadsheet size={22} color={THEME.colors.brand} />
+              <View>
+                <Text style={styles.modalTitle}>Bulk Upload Questions (Excel / CSV)</Text>
+                <Text style={styles.modalSubtitle}>
+                  Supports .xlsx, .xls, and .csv with strict UTF-8 Hindi &amp; Sanskrit Devanagari preservation.
+                </Text>
+              </View>
             </View>
-            <TouchableOpacity onPress={() => setIsAddFormOpen(false)}>
+            <TouchableOpacity onPress={() => setIsUploadModalOpen(false)}>
+              <X size={20} color={THEME.colors.muted} />
+            </TouchableOpacity>
+          </View>
+
+          {/* File Picker Box */}
+          <View style={styles.dropZone}>
+            <Upload size={32} color={THEME.colors.brand} />
+            <Text style={styles.dropZoneTitle}>Select your Question Spreadsheet</Text>
+            <Text style={styles.dropZoneSub}>Choose an .xlsx, .xls, or .csv file from your computer</Text>
+
+            {Platform.OS === 'web' && (
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFilePicked}
+                style={{
+                  marginTop: 12,
+                  padding: '8px 14px',
+                  borderRadius: 6,
+                  border: '1px solid #CBD5E1',
+                  backgroundColor: '#FFF',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              />
+            )}
+
+            {uploadFileName ? (
+              <View style={styles.selectedFilePill}>
+                <CheckCircle2 size={14} color="#15803D" />
+                <Text style={styles.selectedFileName}>{uploadFileName}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Validation & Preview Summary */}
+          {uploadParseResult && (
+            <View style={styles.validationCard}>
+              <View style={styles.validationStatsRow}>
+                <View style={styles.statBox}>
+                  <Text style={styles.statNum}>{uploadParseResult.totalRows}</Text>
+                  <Text style={styles.statLabel}>Total Rows</Text>
+                </View>
+
+                <View style={styles.statBox}>
+                  <Text style={[styles.statNum, { color: '#15803D' }]}>
+                    {uploadParseResult.validQuestions.length}
+                  </Text>
+                  <Text style={styles.statLabel}>Valid Questions</Text>
+                </View>
+
+                <View style={styles.statBox}>
+                  <Text
+                    style={[
+                      styles.statNum,
+                      { color: uploadParseResult.errors.length > 0 ? '#DC2626' : '#15803D' },
+                    ]}
+                  >
+                    {uploadParseResult.errors.length}
+                  </Text>
+                  <Text style={styles.statLabel}>Row Errors</Text>
+                </View>
+              </View>
+
+              {/* Error messages if any */}
+              {uploadParseResult.errors.length > 0 && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorTitle}>
+                    Issues found in {uploadParseResult.errors.length} rows:
+                  </Text>
+                  <ScrollView style={{ maxHeight: 110 }}>
+                    {uploadParseResult.errors.slice(0, 10).map((err, idx) => (
+                      <Text key={idx} style={styles.errorTextItem}>
+                        • Row {err.row}: {err.error}
+                      </Text>
+                    ))}
+                    {uploadParseResult.errors.length > 10 && (
+                      <Text style={styles.errorTextItem}>
+                        ...and {uploadParseResult.errors.length - 10} more rows.
+                      </Text>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Sample Preview of Valid Questions */}
+              {uploadParseResult.validQuestions.length > 0 && (
+                <View style={styles.previewContainer}>
+                  <Text style={styles.previewHeading}>
+                    Preview Sample ({Math.min(3, uploadParseResult.validQuestions.length)} of{' '}
+                    {uploadParseResult.validQuestions.length} questions):
+                  </Text>
+                  {uploadParseResult.validQuestions.slice(0, 3).map((q, qIdx) => (
+                    <View key={qIdx} style={styles.sampleCard}>
+                      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                        <Text style={styles.sampleBadge}>{q.chapterName}</Text>
+                        <Text style={styles.sampleRefBadge}>{q.r}</Text>
+                      </View>
+                      <Text style={styles.sampleStem}>{q.stem}</Text>
+                      <View style={styles.sampleOptionsRow}>
+                        {q.o.map((opt, oIdx) => (
+                          <Text
+                            key={oIdx}
+                            style={[
+                              styles.sampleOption,
+                              q.c === oIdx && styles.sampleOptionCorrect,
+                            ]}
+                          >
+                            {String.fromCharCode(65 + oIdx)}. {opt}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Confirmation Button */}
+              {uploadParseResult.validQuestions.length > 0 && (
+                <TouchableOpacity
+                  style={[styles.btnConfirmUpload, isUploading && { opacity: 0.6 }]}
+                  onPress={handleConfirmBatchUpload}
+                  disabled={isUploading}
+                >
+                  {isUploading ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Upload size={16} color="#FFF" />
+                  )}
+                  <Text style={styles.btnConfirmUploadText}>
+                    {isUploading
+                      ? 'Uploading to Cloud DB...'
+                      : `Confirm & Upload ${uploadParseResult.validQuestions.length} Questions to Cloud DB`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* ============================================================== */}
+      {/* 2. ADD OR EDIT QUESTION MODAL / FORM                           */}
+      {/* ============================================================== */}
+      {(isAddFormOpen || editingQuestion) && (
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {editingQuestion ? (
+                <Pencil size={20} color={THEME.colors.brand} />
+              ) : (
+                <Plus size={20} color={THEME.colors.brand} />
+              )}
+              <View>
+                <Text style={styles.modalTitle}>
+                  {editingQuestion ? `Edit Question (#${editingQuestion.id})` : 'Add New Question to Cloud DB'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  {editingQuestion
+                    ? 'Modify question text, bilingual Devanagari/Hindi, options, correct answer, or chapter.'
+                    : 'Fill details below to add a new question to the cloud database.'}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setIsAddFormOpen(false);
+                setEditingQuestion(null);
+                resetFormFields();
+              }}
+            >
               <X size={20} color={THEME.colors.muted} />
             </TouchableOpacity>
           </View>
 
           {/* Question Type Selector */}
-          <Text style={styles.fieldLabel}>Question Type *</Text>
-          <View style={styles.typeSelectorRow}>
-            {(['standard', 'assertion_reason', 'match_the_pair', 'statement_type'] as QuestionType[]).map((t) => (
-              <TouchableOpacity
-                key={t}
-                style={[styles.typePill, qType === t && styles.typePillActive]}
-                onPress={() => handleTypeChange(t)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.typePillText, qType === t && styles.typePillTextActive]}>
-                  {QUESTION_TYPE_LABELS[t]}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <Text style={styles.label}>Question Type</Text>
+          <View style={styles.pillRow}>
+            {(['standard', 'assertion_reason', 'match_the_pair', 'statement_type'] as QuestionType[]).map(
+              (type) => (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.typePill, qType === type && styles.typePillActive]}
+                  onPress={() => setQType(type)}
+                >
+                  <Text style={[styles.typePillText, qType === type && styles.typePillTextActive]}>
+                    {QUESTION_TYPE_LABELS[type]}
+                  </Text>
+                </TouchableOpacity>
+              )
+            )}
           </View>
 
-          {/* Universal Field: Chapter Mapping */}
-          <View style={styles.formGrid2}>
+          {/* Chapter & Reference */}
+          <View style={styles.row2}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Chapter Mapping (Breadcrumb) *</Text>
+              <Text style={styles.label}>Chapter Mapping (Subject &gt; Sthana &gt; Chapter) *</Text>
               <TextInput
-                style={styles.input}
+                style={styles.textInput}
                 value={chapterName}
                 onChangeText={setChapterName}
                 placeholder="e.g. Charaka Samhita > Sutrasthana > Chapter 1"
@@ -480,22 +658,22 @@ export const QuestionManagement: React.FC = () => {
             </View>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Reference Book / Shloka Citation</Text>
+              <Text style={styles.label}>Reference / Shloka Citation</Text>
               <TextInput
-                style={styles.input}
+                style={styles.textInput}
                 value={refSource}
                 onChangeText={setRefSource}
-                placeholder="e.g. Charaka Sutra 1/46"
+                placeholder="e.g. Charaka Sutra 1/46, सत्त्वमात्मा शरीरं च..."
                 placeholderTextColor={THEME.colors.muted}
               />
             </View>
           </View>
 
           {/* Difficulty & Correct Answer */}
-          <View style={styles.formGrid2}>
+          <View style={styles.row2}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Difficulty Level</Text>
-              <View style={styles.diffSelectorRow}>
+              <Text style={styles.label}>Difficulty Level</Text>
+              <View style={styles.pillRow}>
                 {[
                   { val: 0, label: 'Easy' },
                   { val: 1, label: 'Medium' },
@@ -503,10 +681,10 @@ export const QuestionManagement: React.FC = () => {
                 ].map((item) => (
                   <TouchableOpacity
                     key={item.val}
-                    style={[styles.diffPill, difficulty === item.val && styles.diffPillActive]}
+                    style={[styles.typePill, difficulty === item.val && styles.typePillActive]}
                     onPress={() => setDifficulty(item.val as Difficulty)}
                   >
-                    <Text style={[styles.diffPillText, difficulty === item.val && styles.diffPillTextActive]}>
+                    <Text style={[styles.typePillText, difficulty === item.val && styles.typePillTextActive]}>
                       {item.label}
                     </Text>
                   </TouchableOpacity>
@@ -515,15 +693,20 @@ export const QuestionManagement: React.FC = () => {
             </View>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Correct Answer Option *</Text>
-              <View style={styles.diffSelectorRow}>
+              <Text style={styles.label}>Correct Answer Option *</Text>
+              <View style={styles.pillRow}>
                 {['A', 'B', 'C', 'D'].map((letter, idx) => (
                   <TouchableOpacity
                     key={letter}
-                    style={[styles.diffPill, correctAnswer === idx && styles.correctPillActive]}
+                    style={[styles.typePill, correctAnswer === idx && styles.correctPillActive]}
                     onPress={() => setCorrectAnswer(idx)}
                   >
-                    <Text style={[styles.diffPillText, correctAnswer === idx && styles.correctPillTextActive]}>
+                    <Text
+                      style={[
+                        styles.typePillText,
+                        correctAnswer === idx && styles.correctPillTextActive,
+                      ]}
+                    >
                       Option {letter}
                     </Text>
                   </TouchableOpacity>
@@ -532,201 +715,101 @@ export const QuestionManagement: React.FC = () => {
             </View>
           </View>
 
-          {/* ========================================================== */}
-          {/* DYNAMIC CONDITIONAL INPUTS ACCORDING TO QUESTION TYPE       */}
-          {/* ========================================================== */}
-
-          {/* Dynamic 1: Assertion & Reason */}
-          {qType === 'assertion_reason' && (
-            <View style={styles.conditionalCard}>
-              <View style={styles.conditionalBadge}>
-                <Layers size={14} color="#854D0E" />
-                <Text style={styles.conditionalBadgeText}>Assertion & Reason Specific Fields</Text>
-              </View>
-
-              <Text style={styles.fieldLabel}>Assertion (A) Text *</Text>
-              <TextInput
-                style={[styles.input, styles.textareaSmall]}
-                value={assertionText}
-                onChangeText={setAssertionText}
-                placeholder="Enter the Assertion statement (A)..."
-                placeholderTextColor={THEME.colors.muted}
-                multiline
-              />
-
-              <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Reason (R) Text *</Text>
-              <TextInput
-                style={[styles.input, styles.textareaSmall]}
-                value={reasonText}
-                onChangeText={setReasonText}
-                placeholder="Enter the Reason statement (R)..."
-                placeholderTextColor={THEME.colors.muted}
-                multiline
-              />
-            </View>
-          )}
-
-          {/* Dynamic 2: Match the Pair */}
-          {qType === 'match_the_pair' && (
-            <View style={styles.conditionalCard}>
-              <View style={styles.conditionalBadge}>
-                <Layers size={14} color="#1E40AF" />
-                <Text style={[styles.conditionalBadgeText, { color: '#1E40AF' }]}>
-                  Two-Column Matching Pairs (Column I & Column II)
-                </Text>
-              </View>
-
-              {matchPairs.map((pair, idx) => (
-                <View key={idx} style={styles.matchPairRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.columnHeader}>Column I ({String.fromCharCode(65 + idx)})</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={pair.left}
-                      onChangeText={(val) => {
-                        const copy = [...matchPairs];
-                        copy[idx].left = val;
-                        setMatchPairs(copy);
-                      }}
-                      placeholder={`Item ${String.fromCharCode(65 + idx)}`}
-                      placeholderTextColor={THEME.colors.muted}
-                    />
-                  </View>
-
-                  <View style={styles.matchArrow}>
-                    <ArrowRight size={16} color={THEME.colors.muted} />
-                  </View>
-
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.columnHeader}>
-                      Column II ({['I', 'II', 'III', 'IV'][idx]})
-                    </Text>
-                    <TextInput
-                      style={styles.input}
-                      value={pair.right}
-                      onChangeText={(val) => {
-                        const copy = [...matchPairs];
-                        copy[idx].right = val;
-                        setMatchPairs(copy);
-                      }}
-                      placeholder={`Match for ${['I', 'II', 'III', 'IV'][idx]}`}
-                      placeholderTextColor={THEME.colors.muted}
-                    />
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Dynamic 3: Statement Type */}
-          {qType === 'statement_type' && (
-            <View style={styles.conditionalCard}>
-              <View style={styles.conditionalBadge}>
-                <Layers size={14} color="#4338CA" />
-                <Text style={[styles.conditionalBadgeText, { color: '#4338CA' }]}>
-                  Dual Statement Configuration
-                </Text>
-              </View>
-
-              <Text style={styles.fieldLabel}>Statement I *</Text>
-              <TextInput
-                style={[styles.input, styles.textareaSmall]}
-                value={statement1}
-                onChangeText={setStatement1}
-                placeholder="Enter Statement I..."
-                placeholderTextColor={THEME.colors.muted}
-                multiline
-              />
-
-              <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Statement II *</Text>
-              <TextInput
-                style={[styles.input, styles.textareaSmall]}
-                value={statement2}
-                onChangeText={setStatement2}
-                placeholder="Enter Statement II..."
-                placeholderTextColor={THEME.colors.muted}
-                multiline
-              />
-            </View>
-          )}
-
-          {/* Question Stem / Prompt */}
-          <Text style={styles.fieldLabel}>Question Stem / Prompt *</Text>
+          {/* Question Text (Stem) */}
+          <Text style={styles.label}>Question Stem / Text (Bilingual English + Devanagari/Hindi) *</Text>
           <TextInput
-            style={[styles.input, styles.textareaMedium]}
+            style={[styles.textInput, styles.textareaStem]}
             value={stem}
             onChangeText={setStem}
-            placeholder={
-              qType === 'standard'
-                ? 'Type the question prompt...'
-                : 'Enter the introductory or concluding prompt for this question...'
-            }
+            placeholder="Enter question text in English and Hindi/Sanskrit..."
             placeholderTextColor={THEME.colors.muted}
             multiline
           />
 
-          {/* 4 Options */}
-          <Text style={styles.fieldLabel}>Answer Choices (Options A, B, C, D) *</Text>
-          {options.map((opt, idx) => {
-            const letter = String.fromCharCode(65 + idx);
-            const isCorrect = correctAnswer === idx;
+          {/* Assertion / Reason Fields */}
+          {qType === 'assertion_reason' && (
+            <View style={styles.conditionalCard}>
+              <Text style={styles.conditionalTitle}>Assertion &amp; Reason Text</Text>
+              <Text style={styles.subLabel}>Assertion (A):</Text>
+              <TextInput
+                style={[styles.textInput, styles.textareaSmall]}
+                value={assertionText}
+                onChangeText={setAssertionText}
+                placeholder="Assertion (A) statement..."
+                placeholderTextColor={THEME.colors.muted}
+                multiline
+              />
+              <Text style={[styles.subLabel, { marginTop: 8 }]}>Reason (R):</Text>
+              <TextInput
+                style={[styles.textInput, styles.textareaSmall]}
+                value={reasonText}
+                onChangeText={setReasonText}
+                placeholder="Reason (R) statement..."
+                placeholderTextColor={THEME.colors.muted}
+                multiline
+              />
+            </View>
+          )}
 
-            return (
-              <View key={idx} style={styles.optionInputRow}>
-                <TouchableOpacity
-                  style={[styles.optionRadio, isCorrect && styles.optionRadioSelected]}
-                  onPress={() => setCorrectAnswer(idx)}
-                >
-                  <Text style={[styles.optionRadioText, isCorrect && styles.optionRadioTextSelected]}>
-                    {letter}
-                  </Text>
-                </TouchableOpacity>
-
-                <TextInput
-                  style={[styles.input, { flex: 1 }, isCorrect && styles.inputCorrectBorder]}
-                  value={opt}
-                  onChangeText={(val) => {
-                    const copy = [...options];
-                    copy[idx] = val;
-                    setOptions(copy);
-                  }}
-                  placeholder={`Option ${letter}`}
-                  placeholderTextColor={THEME.colors.muted}
-                />
+          {/* Options (A, B, C, D) */}
+          <Text style={styles.label}>Options (A, B, C, D)</Text>
+          {['A', 'B', 'C', 'D'].map((letter, idx) => (
+            <View key={letter} style={styles.optionInputRow}>
+              <View style={[styles.optionPrefixBadge, correctAnswer === idx && styles.optionPrefixActive]}>
+                <Text style={[styles.optionPrefixText, correctAnswer === idx && styles.optionPrefixTextActive]}>
+                  {letter}
+                </Text>
               </View>
-            );
-          })}
+              <TextInput
+                style={[styles.textInput, { flex: 1 }]}
+                value={options[idx] || ''}
+                onChangeText={(val) => {
+                  const copy = [...options];
+                  copy[idx] = val;
+                  setOptions(copy);
+                }}
+                placeholder={`Option ${letter} text...`}
+                placeholderTextColor={THEME.colors.muted}
+              />
+            </View>
+          ))}
 
-          {/* Detailed Explanation */}
-          <Text style={styles.fieldLabel}>Authoritative Explanation (for Learning Mode)</Text>
+          {/* Explanation */}
+          <Text style={styles.label}>Detailed Explanation &amp; Rationale</Text>
           <TextInput
-            style={[styles.input, styles.textareaMedium]}
+            style={[styles.textInput, styles.textareaSmall]}
             value={explanation}
             onChangeText={setExplanation}
-            placeholder="Explain why the answer is correct with Sanskrit shloka citation or Ayurvedic clinical commentary..."
+            placeholder="Detailed explanation, commentary (e.g. Chakrapanidatta), or mnemonic..."
             placeholderTextColor={THEME.colors.muted}
             multiline
           />
 
           {/* Form Actions */}
-          <View style={styles.formFooter}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={handleResetForm}>
-              <Text style={styles.cancelBtnText}>Reset Form</Text>
+          <View style={styles.formButtonRow}>
+            <TouchableOpacity
+              style={styles.btnCancel}
+              onPress={() => {
+                setIsAddFormOpen(false);
+                setEditingQuestion(null);
+                resetFormFields();
+              }}
+            >
+              <Text style={styles.btnCancelText}>Cancel</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.saveBtn, submitting && { opacity: 0.6 }]}
+              style={[styles.btnSave, submitting && { opacity: 0.6 }]}
               onPress={handleSaveQuestion}
               disabled={submitting}
-              activeOpacity={0.8}
             >
               {submitting ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
-                <CheckCircle2 size={16} color="#FFF" />
+                <Check size={16} color="#FFF" />
               )}
-              <Text style={styles.saveBtnText}>
-                {submitting ? 'Saving Question...' : 'Save Question to Cloud'}
+              <Text style={styles.btnSaveText}>
+                {editingQuestion ? 'Save Changes' : 'Save & Publish to Cloud DB'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -734,150 +817,18 @@ export const QuestionManagement: React.FC = () => {
       )}
 
       {/* ============================================================== */}
-      {/* 2. BULK UPLOAD CSV MODAL / SECTION                             */}
+      {/* 3. QUESTIONS LIST & FILTERS                                    */}
       {/* ============================================================== */}
-      {isCsvModalOpen && (
-        <View style={styles.csvModalCard}>
-          <View style={styles.formHeader}>
-            <View>
-              <Text style={styles.formTitle}>Bulk Upload Questions via CSV</Text>
-              <Text style={styles.formSubtitle}>
-                Paste exported CSV from Google Sheets or load the ready-to-test Ayurvedic template.
-              </Text>
-            </View>
-            <TouchableOpacity onPress={() => setIsCsvModalOpen(false)}>
-              <X size={20} color={THEME.colors.muted} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Sample CSV Buttons */}
-          <View style={styles.csvHelperRow}>
-            <TouchableOpacity
-              style={styles.templateBtn}
-              onPress={() => {
-                const sample = generateSampleCsv();
-                setCsvInput(sample);
-                const res = parseQuestionsCsv(sample);
-                setCsvValidationResult(res);
-              }}
-            >
-              <FileText size={14} color={THEME.colors.brand} />
-              <Text style={styles.templateBtnText}>Load Sample CSV Template (4 Types)</Text>
-            </TouchableOpacity>
-
-            {Platform.OS === 'web' && (
-              <View style={styles.filePickerWrapper}>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileSelectWeb}
-                  style={{ fontSize: 13, color: THEME.colors.brandInk }}
-                />
-              </View>
-            )}
-          </View>
-
-          {/* CSV Input Area */}
-          <Text style={styles.fieldLabel}>CSV Data Content</Text>
-          <TextInput
-            style={[styles.input, styles.csvTextarea]}
-            value={csvInput}
-            onChangeText={(txt) => {
-              setCsvInput(txt);
-              if (csvValidationResult) setCsvValidationResult(null);
-            }}
-            placeholder="Type,Chapter,Stem,OptionA,OptionB,OptionC,OptionD,Answer,Explanation,Reference..."
-            placeholderTextColor={THEME.colors.muted}
-            multiline
-          />
-
-          {/* Validate Button */}
-          <View style={styles.csvActionsRow}>
-            <TouchableOpacity style={styles.validateBtn} onPress={handleValidateCsv}>
-              <CheckCircle2 size={14} color={THEME.colors.brandInk} />
-              <Text style={styles.validateBtnText}>Validate CSV Format</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* CSV Validation Feedback */}
-          {csvValidationResult && (
-            <View style={styles.validationFeedbackCard}>
-              <View style={styles.validationMetricsRow}>
-                <View style={styles.vMetricItem}>
-                  <Text style={styles.vMetricNum}>{csvValidationResult.totalRows}</Text>
-                  <Text style={styles.vMetricLabel}>Total Rows</Text>
-                </View>
-
-                <View style={styles.vMetricItem}>
-                  <Text style={[styles.vMetricNum, { color: THEME.colors.brand }]}>
-                    {csvValidationResult.validQuestions.length}
-                  </Text>
-                  <Text style={styles.vMetricLabel}>Valid Questions</Text>
-                </View>
-
-                <View style={styles.vMetricItem}>
-                  <Text
-                    style={[
-                      styles.vMetricNum,
-                      { color: csvValidationResult.errors.length > 0 ? '#DC2626' : THEME.colors.ok },
-                    ]}
-                  >
-                    {csvValidationResult.errors.length}
-                  </Text>
-                  <Text style={styles.vMetricLabel}>Row Errors</Text>
-                </View>
-              </View>
-
-              {/* Error messages if any */}
-              {csvValidationResult.errors.length > 0 && (
-                <View style={styles.errorListBox}>
-                  <Text style={styles.errorListTitle}>Found {csvValidationResult.errors.length} errors:</Text>
-                  {csvValidationResult.errors.map((err: any, idx: number) => (
-                    <Text key={idx} style={styles.errorItemText}>
-                      • Row {err.row}: {err.error}
-                    </Text>
-                  ))}
-                </View>
-              )}
-
-              {/* Import Action */}
-              {csvValidationResult.validQuestions.length > 0 && (
-                <TouchableOpacity
-                  style={[styles.importBtn, isUploadingCsv && { opacity: 0.6 }]}
-                  onPress={handleExecuteCsvUpload}
-                  disabled={isUploadingCsv}
-                >
-                  {isUploadingCsv ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Upload size={16} color="#FFF" />
-                  )}
-                  <Text style={styles.importBtnText}>
-                    {isUploadingCsv
-                      ? 'Importing...'
-                      : `Import ${csvValidationResult.validQuestions.length} Valid Questions into Cloud DB`}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* ============================================================== */}
-      {/* 3. CLOUD QUESTIONS LIVE TABLE & FILTERS                        */}
-      {/* ============================================================== */}
-      <View style={styles.tableCard}>
-        {/* Table Filters & Search */}
+      <View style={styles.cardContainer}>
+        {/* Search & Type Filter */}
         <View style={styles.filterSection}>
-          {/* Search bar */}
           <View style={styles.searchBar}>
             <Search size={16} color={THEME.colors.muted} />
             <TextInput
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search by stem, chapter, or reference citation..."
+              placeholder="Search 5,952 questions by stem, chapter, or reference..."
               placeholderTextColor={THEME.colors.muted}
             />
             {searchQuery ? (
@@ -888,59 +839,56 @@ export const QuestionManagement: React.FC = () => {
           </View>
 
           {/* Type Filter Pills */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeFilterScroll}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPillScroll}>
             {[
               { id: 'all', label: `All (${questions.length})` },
               { id: 'standard', label: `Standard (${typeCounts.standard})` },
               { id: 'assertion_reason', label: `Assertion / Reason (${typeCounts.assertion_reason})` },
               { id: 'match_the_pair', label: `Match Pair (${typeCounts.match_the_pair})` },
               { id: 'statement_type', label: `Statement (${typeCounts.statement_type})` },
-            ].map((filter) => (
+            ].map((f) => (
               <TouchableOpacity
-                key={filter.id}
-                style={[
-                  styles.filterPill,
-                  selectedTypeFilter === filter.id && styles.filterPillActive,
-                ]}
-                onPress={() => setSelectedTypeFilter(filter.id)}
+                key={f.id}
+                style={[styles.filterChip, selectedTypeFilter === f.id && styles.filterChipActive]}
+                onPress={() => setSelectedTypeFilter(f.id)}
               >
                 <Text
                   style={[
-                    styles.filterPillText,
-                    selectedTypeFilter === filter.id && styles.filterPillTextActive,
+                    styles.filterChipText,
+                    selectedTypeFilter === f.id && styles.filterChipTextActive,
                   ]}
                 >
-                  {filter.label}
+                  {f.label}
                 </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
 
-        {/* Question Counter Header */}
-        <View style={styles.tableHeaderRow}>
-          <Text style={styles.tableHeaderTitle}>
-            Cloud Question Bank ({filteredQuestions.length} displayed)
+        {/* Counter Header */}
+        <View style={styles.tableHeader}>
+          <Text style={styles.tableTitle}>
+            Cloud Question Bank ({filteredQuestions.length} questions match)
           </Text>
-          <Text style={styles.tableHeaderSub}>
-            Live dynamic syllabus questions fetched from Cloud DB
+          <Text style={styles.tableSubtitle}>
+            Showing {Math.min(visibleCount, filteredQuestions.length)} of {filteredQuestions.length}
           </Text>
         </View>
 
-        {/* Loading / Empty / List */}
+        {/* Questions Render Loop */}
         {loading ? (
           <View style={styles.emptyState}>
             <ActivityIndicator size="large" color={THEME.colors.brand} />
-            <Text style={styles.emptyStateText}>Loading cloud questions...</Text>
+            <Text style={styles.emptyText}>Loading Cloud Questions...</Text>
           </View>
         ) : filteredQuestions.length === 0 ? (
           <View style={styles.emptyState}>
             <HelpCircle size={32} color={THEME.colors.muted} />
-            <Text style={styles.emptyStateText}>No questions found matching your filter.</Text>
+            <Text style={styles.emptyText}>No questions match your filter.</Text>
           </View>
         ) : (
           <View style={styles.questionsList}>
-            {filteredQuestions.map((q, idx) => {
+            {displayedQuestions.map((q) => {
               const typeColor =
                 q.questionType === 'assertion_reason'
                   ? '#854D0E'
@@ -960,20 +908,22 @@ export const QuestionManagement: React.FC = () => {
                   : '#E6F4EA';
 
               return (
-                <View key={q.id} style={styles.questionItem}>
-                  {/* Top Meta Row */}
-                  <View style={styles.qMetaRow}>
-                    <View style={styles.qBadges}>
+                <View key={q.id} style={styles.questionCard}>
+                  {/* Top Badges & Action Buttons */}
+                  <View style={styles.cardHeaderRow}>
+                    <View style={styles.badgeWrapper}>
                       <View style={[styles.qTypeBadge, { backgroundColor: typeBg }]}>
                         <Text style={[styles.qTypeBadgeText, { color: typeColor }]}>
                           {QUESTION_TYPE_LABELS[q.questionType] || 'Standard MCQ'}
                         </Text>
                       </View>
 
+                      {/* Chapter Badge (High Contrast Fix) */}
                       <View style={styles.qChapterBadge}>
                         <Text style={styles.qChapterBadgeText}>{q.chapterName || String(q.ch)}</Text>
                       </View>
 
+                      {/* Reference Badge (Wrap Fix to prevent horizontal overflow) */}
                       {q.r ? (
                         <View style={styles.qRefBadge}>
                           <Text style={styles.qRefBadgeText}>{q.r}</Text>
@@ -981,82 +931,63 @@ export const QuestionManagement: React.FC = () => {
                       ) : null}
                     </View>
 
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => handleDeleteQuestion(q.id)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Trash2 size={16} color="#DC2626" />
-                    </TouchableOpacity>
+                    {/* Action Buttons: Edit (Pencil) & Delete (Trash) */}
+                    <View style={styles.actionsCluster}>
+                      <TouchableOpacity
+                        style={styles.btnEdit}
+                        onPress={() => handleStartEdit(q)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Edit Question"
+                      >
+                        <Pencil size={15} color={THEME.colors.brand} />
+                        <Text style={styles.btnEditText}>Edit</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.btnDelete}
+                        onPress={() => handleDeleteQuestion(q.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Delete Question"
+                      >
+                        <Trash2 size={15} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
-                  {/* Question Stem */}
-                  <Text style={styles.qStemText}>{q.stem}</Text>
+                  {/* Question Stem Text */}
+                  <Text style={styles.stemText}>{q.stem}</Text>
 
-                  {/* Assertion / Reason Preview */}
-                  {q.questionType === 'assertion_reason' && (
-                    <View style={styles.arPreviewBox}>
-                      <Text style={styles.arPreviewItem}>
-                        <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Assertion (A): </Text>
-                        {q.assertionText}
-                      </Text>
-                      <Text style={[styles.arPreviewItem, { marginTop: 4 }]}>
-                        <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Reason (R): </Text>
-                        {q.reasonText}
-                      </Text>
+                  {/* Assertion / Reason Details */}
+                  {q.questionType === 'assertion_reason' && (q.assertionText || q.reasonText) && (
+                    <View style={styles.arBox}>
+                      {q.assertionText ? (
+                        <Text style={styles.arItem}>
+                          <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Assertion (A): </Text>
+                          {q.assertionText}
+                        </Text>
+                      ) : null}
+                      {q.reasonText ? (
+                        <Text style={[styles.arItem, { marginTop: 4 }]}>
+                          <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Reason (R): </Text>
+                          {q.reasonText}
+                        </Text>
+                      ) : null}
                     </View>
                   )}
 
-                  {/* Match the Pair Preview */}
-                  {q.questionType === 'match_the_pair' && q.matchPairs && (
-                    <View style={styles.matchPreviewBox}>
-                      {q.matchPairs.map((p, pIdx) => (
-                        <View key={pIdx} style={styles.matchPreviewRow}>
-                          <Text style={styles.matchPreviewCol1}>{p.left}</Text>
-                          <ArrowRight size={12} color={THEME.colors.muted} />
-                          <Text style={styles.matchPreviewCol2}>{p.right}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {/* Statement Type Preview */}
-                  {q.questionType === 'statement_type' && (
-                    <View style={styles.arPreviewBox}>
-                      <Text style={styles.arPreviewItem}>
-                        <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Statement I: </Text>
-                        {q.statement1}
-                      </Text>
-                      <Text style={[styles.arPreviewItem, { marginTop: 4 }]}>
-                        <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Statement II: </Text>
-                        {q.statement2}
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Options Preview */}
-                  <View style={styles.optionsPreviewGrid}>
+                  {/* Options List */}
+                  <View style={styles.optionsGrid}>
                     {q.o.map((opt, optIdx) => {
                       const isCorrect = q.c === optIdx;
                       return (
                         <View
                           key={optIdx}
-                          style={[styles.optPreviewItem, isCorrect && styles.optPreviewItemCorrect]}
+                          style={[styles.optCard, isCorrect && styles.optCardCorrect]}
                         >
-                          <Text
-                            style={[
-                              styles.optPreviewLetter,
-                              isCorrect && styles.optPreviewLetterCorrect,
-                            ]}
-                          >
+                          <Text style={[styles.optLetter, isCorrect && styles.optLetterCorrect]}>
                             {String.fromCharCode(65 + optIdx)}.
                           </Text>
-                          <Text
-                            style={[
-                              styles.optPreviewText,
-                              isCorrect && styles.optPreviewTextCorrect,
-                            ]}
-                          >
+                          <Text style={[styles.optText, isCorrect && styles.optTextCorrect]}>
                             {opt}
                           </Text>
                         </View>
@@ -1064,16 +995,28 @@ export const QuestionManagement: React.FC = () => {
                     })}
                   </View>
 
-                  {/* Explanation Preview */}
-                  {q.explanation ? (
+                  {/* Explanation */}
+                  {q.explanation && (
                     <View style={styles.explanationBox}>
                       <Text style={styles.explanationTitle}>Explanation: </Text>
                       <Text style={styles.explanationText}>{q.explanation}</Text>
                     </View>
-                  ) : null}
+                  )}
                 </View>
               );
             })}
+
+            {/* Pagination / Load More */}
+            {filteredQuestions.length > visibleCount && (
+              <TouchableOpacity
+                style={styles.btnLoadMore}
+                onPress={() => setVisibleCount((prev) => prev + 50)}
+              >
+                <Text style={styles.btnLoadMoreText}>
+                  Load More ({filteredQuestions.length - visibleCount} remaining)
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -1131,14 +1074,13 @@ const styles = StyleSheet.create({
   metricNumber: {
     fontSize: 24,
     fontWeight: '700',
-    color: THEME.colors.brandInk,
     marginVertical: 4,
   },
   metricSub: {
     fontSize: 11,
     color: THEME.colors.muted,
   },
-  actionsBar: {
+  toolbarRow: {
     marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1146,13 +1088,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
-  actionLeft: {
+  toolbarLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     flexWrap: 'wrap',
   },
-  primaryActionBtn: {
+  btnPrimary: {
     backgroundColor: THEME.colors.brand,
     paddingVertical: 9,
     paddingHorizontal: 16,
@@ -1161,15 +1103,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  primaryActionBtnActive: {
+  btnPrimaryActive: {
     backgroundColor: '#164339',
   },
-  primaryActionBtnText: {
+  btnPrimaryText: {
     color: '#FFF',
     fontWeight: '700',
     fontSize: 13,
   },
-  secondaryActionBtn: {
+  btnUpload: {
     backgroundColor: '#FFF',
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -1180,32 +1122,65 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  secondaryActionBtnText: {
-    color: THEME.colors.brandInk,
-    fontWeight: '600',
+  btnUploadText: {
+    color: THEME.colors.brand,
+    fontWeight: '700',
     fontSize: 13,
   },
-  ghostActionBtn: {
+  btnTemplate: {
+    backgroundColor: '#F0FDF4',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  ghostActionBtnText: {
-    color: THEME.colors.muted,
-    fontSize: 13,
+  btnTemplateText: {
+    color: '#15803D',
+    fontWeight: '600',
+    fontSize: 12,
   },
-  formCard: {
+  btnTemplateGhost: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  btnTemplateGhostText: {
+    color: THEME.colors.muted,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  btnGhost: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  btnGhostText: {
+    color: THEME.colors.muted,
+    fontSize: 12,
+  },
+  modalCard: {
     backgroundColor: '#FFF',
     borderRadius: 12,
     padding: 20,
     borderWidth: 1,
     borderColor: THEME.colors.line,
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  formHeader: {
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
@@ -1214,32 +1189,194 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.line,
   },
-  formTitle: {
+  modalTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: THEME.colors.brandInk,
+    color: THEME.colors.ink,
   },
-  formSubtitle: {
-    fontSize: 13,
+  modalSubtitle: {
+    fontSize: 12,
     color: THEME.colors.muted,
     marginTop: 2,
   },
-  fieldLabel: {
+  dropZone: {
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  dropZoneTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+    marginTop: 8,
+  },
+  dropZoneSub: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  selectedFilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    marginTop: 10,
+  },
+  selectedFileName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#15803D',
+  },
+  validationCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  validationStatsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 14,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  statNum: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+    marginTop: 2,
+  },
+  errorBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+    marginBottom: 6,
+  },
+  errorTextItem: {
+    fontSize: 11,
+    color: '#991B1B',
+    lineHeight: 16,
+  },
+  previewContainer: {
+    marginBottom: 14,
+  },
+  previewHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+    marginBottom: 8,
+  },
+  sampleCard: {
+    backgroundColor: '#FFF',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+  },
+  sampleBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#1E40AF',
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sampleRefBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#854D0E',
+    backgroundColor: '#FEF9C3',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sampleStem: {
+    fontSize: 12,
+    color: THEME.colors.ink,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  sampleOptionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sampleOption: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+  },
+  sampleOptionCorrect: {
+    color: '#15803D',
+    fontWeight: '700',
+  },
+  btnConfirmUpload: {
+    backgroundColor: THEME.colors.brand,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  btnConfirmUploadText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  label: {
     fontSize: 13,
     fontWeight: '600',
-    color: THEME.colors.brandInk,
+    color: THEME.colors.ink,
     marginBottom: 6,
     marginTop: 12,
   },
-  typeSelectorRow: {
+  subLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.colors.muted,
+    marginBottom: 4,
+  },
+  pillRow: {
     flexDirection: 'row',
     gap: 8,
     flexWrap: 'wrap',
-    marginBottom: 8,
   },
   typePill: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: THEME.colors.line,
@@ -1250,157 +1387,105 @@ const styles = StyleSheet.create({
     borderColor: THEME.colors.brand,
   },
   typePillText: {
-    fontSize: 13,
+    fontSize: 12,
+    color: THEME.colors.ink,
     fontWeight: '600',
-    color: THEME.colors.brandInk,
   },
   typePillTextActive: {
     color: '#FFF',
   },
-  formGrid2: {
+  correctPillActive: {
+    backgroundColor: '#15803D',
+    borderColor: '#15803D',
+  },
+  correctPillTextActive: {
+    color: '#FFF',
+  },
+  row2: {
     flexDirection: 'row',
     gap: 12,
+    flexWrap: 'wrap',
   },
-  input: {
-    backgroundColor: '#FBFBFA',
+  textInput: {
+    backgroundColor: '#FFF',
     borderWidth: 1,
     borderColor: THEME.colors.line,
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 14,
+    paddingVertical: 8,
+    fontSize: 13,
     color: THEME.colors.ink,
   },
-  inputCorrectBorder: {
-    borderColor: THEME.colors.brand,
-    borderWidth: 1.5,
-    backgroundColor: '#F2F8F5',
+  textareaStem: {
+    height: 75,
+    textAlignVertical: 'top',
   },
   textareaSmall: {
-    minHeight: 60,
+    height: 60,
     textAlignVertical: 'top',
-  },
-  textareaMedium: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  diffSelectorRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  diffPill: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.colors.line,
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-  },
-  diffPillActive: {
-    backgroundColor: THEME.colors.brandInk,
-    borderColor: THEME.colors.brandInk,
-  },
-  diffPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: THEME.colors.brandInk,
-  },
-  diffPillTextActive: {
-    color: '#FFF',
-  },
-  correctPillActive: {
-    backgroundColor: THEME.colors.brand,
-    borderColor: THEME.colors.brand,
-  },
-  correctPillTextActive: {
-    color: '#FFF',
-    fontWeight: '700',
   },
   conditionalCard: {
-    backgroundColor: '#FAFAF7',
+    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 14,
-    marginTop: 14,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+  },
+  conditionalTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.brand,
     marginBottom: 6,
   },
-  conditionalBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  conditionalBadgeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#854D0E',
-  },
-  matchPairRow: {
+  optionInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginBottom: 8,
   },
-  columnHeader: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.colors.muted,
-    marginBottom: 4,
-  },
-  matchArrow: {
-    marginTop: 16,
-  },
-  optionInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  optionRadio: {
+  optionPrefixBadge: {
     width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: THEME.colors.line,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
   },
-  optionRadioSelected: {
-    borderColor: THEME.colors.brand,
-    backgroundColor: THEME.colors.brand,
+  optionPrefixActive: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
   },
-  optionRadioText: {
+  optionPrefixText: {
     fontSize: 13,
     fontWeight: '700',
-    color: THEME.colors.muted,
+    color: THEME.colors.ink,
   },
-  optionRadioTextSelected: {
-    color: '#FFF',
+  optionPrefixTextActive: {
+    color: '#15803D',
   },
-  formFooter: {
+  formButtonRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 12,
+    gap: 10,
     marginTop: 20,
-    paddingTop: 16,
+    paddingTop: 14,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.line,
   },
-  cancelBtn: {
+  btnCancel: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
   },
-  cancelBtnText: {
+  btnCancelText: {
     fontSize: 13,
     color: THEME.colors.muted,
     fontWeight: '600',
   },
-  saveBtn: {
+  btnSave: {
     backgroundColor: THEME.colors.brand,
     paddingVertical: 10,
     paddingHorizontal: 20,
@@ -1409,143 +1494,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  saveBtnText: {
+  btnSaveText: {
     color: '#FFF',
     fontSize: 14,
     fontWeight: '700',
   },
-  csvModalCard: {
+  cardContainer: {
     backgroundColor: '#FFF',
     borderRadius: 12,
-    padding: 20,
     borderWidth: 1,
     borderColor: THEME.colors.line,
-    marginBottom: 20,
-  },
-  csvHelperRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 12,
-  },
-  templateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  templateBtnText: {
-    fontSize: 12,
-    color: THEME.colors.brand,
-    fontWeight: '600',
-  },
-  filePickerWrapper: {
-    padding: 4,
-  },
-  csvTextarea: {
-    minHeight: 140,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-    fontSize: 12,
-    textAlignVertical: 'top',
-  },
-  csvActionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    marginTop: 10,
-  },
-  validateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 6,
-  },
-  validateBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: THEME.colors.brandInk,
-  },
-  validationFeedbackCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 14,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  validationMetricsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 10,
-  },
-  vMetricItem: {
-    alignItems: 'center',
-  },
-  vMetricNum: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: THEME.colors.brandInk,
-  },
-  vMetricLabel: {
-    fontSize: 11,
-    color: THEME.colors.muted,
-  },
-  errorListBox: {
-    backgroundColor: '#FEF2F2',
-    padding: 10,
-    borderRadius: 6,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  errorListTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#DC2626',
-    marginBottom: 4,
-  },
-  errorItemText: {
-    fontSize: 12,
-    color: '#991B1B',
-    marginBottom: 2,
-  },
-  importBtn: {
-    backgroundColor: THEME.colors.brand,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 12,
-  },
-  importBtnText: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  tableCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
     padding: 16,
-    borderWidth: 1,
-    borderColor: THEME.colors.line,
   },
   filterSection: {
     marginBottom: 16,
-    gap: 10,
   },
   searchBar: {
     flexDirection: 'row',
@@ -1555,85 +1517,90 @@ const styles = StyleSheet.create({
     borderColor: THEME.colors.line,
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    height: 42,
     gap: 8,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
     color: THEME.colors.ink,
+    height: '100%',
   },
-  typeFilterScroll: {
-    flexDirection: 'row',
+  filterPillScroll: {
+    marginTop: 10,
   },
-  filterPill: {
+  filterChip: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 20,
     backgroundColor: '#F3F4F6',
     marginRight: 8,
   },
-  filterPillActive: {
+  filterChipActive: {
     backgroundColor: THEME.colors.brand,
   },
-  filterPillText: {
+  filterChipText: {
     fontSize: 12,
-    fontWeight: '600',
     color: THEME.colors.muted,
+    fontWeight: '600',
   },
-  filterPillTextActive: {
+  filterChipTextActive: {
     color: '#FFF',
   },
-  tableHeaderRow: {
+  tableHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.line,
     marginBottom: 12,
   },
-  tableHeaderTitle: {
-    fontSize: 15,
+  tableTitle: {
+    fontSize: 14,
     fontWeight: '700',
-    color: THEME.colors.brandInk,
+    color: THEME.colors.ink,
   },
-  tableHeaderSub: {
+  tableSubtitle: {
     fontSize: 12,
     color: THEME.colors.muted,
-    marginTop: 2,
   },
   emptyState: {
-    padding: 30,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 40,
     gap: 8,
   },
-  emptyStateText: {
-    fontSize: 14,
+  emptyText: {
+    fontSize: 13,
     color: THEME.colors.muted,
   },
   questionsList: {
     gap: 12,
   },
-  questionItem: {
-    backgroundColor: '#FCFCFB',
+  questionCard: {
+    backgroundColor: '#FFF',
     borderRadius: 10,
-    padding: 14,
     borderWidth: 1,
     borderColor: THEME.colors.line,
+    padding: 14,
   },
-  qMetaRow: {
+  cardHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
-  qBadges: {
+  badgeWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
+    marginRight: 8,
   },
   qTypeBadge: {
-    paddingVertical: 2,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 4,
   },
@@ -1642,123 +1609,145 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   qChapterBadge: {
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 2,
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 4,
   },
   qChapterBadgeText: {
     fontSize: 11,
-    color: THEME.colors.brandInk,
+    color: '#16241F',
     fontWeight: '600',
   },
   qRefBadge: {
     backgroundColor: '#FEF3C7',
-    paddingVertical: 2,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 4,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   qRefBadgeText: {
     fontSize: 11,
     color: '#92400E',
     fontWeight: '600',
   },
-  deleteBtn: {
-    padding: 4,
-  },
-  qStemText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.colors.ink,
-    lineHeight: 20,
-    marginBottom: 10,
-  },
-  arPreviewBox: {
-    backgroundColor: '#F9FAFB',
-    padding: 10,
-    borderRadius: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#854D0E',
-    marginBottom: 10,
-  },
-  arPreviewItem: {
-    fontSize: 13,
-    color: THEME.colors.ink,
-    lineHeight: 18,
-  },
-  matchPreviewBox: {
-    backgroundColor: '#F9FAFB',
-    padding: 10,
-    borderRadius: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#1E40AF',
-    marginBottom: 10,
-    gap: 4,
-  },
-  matchPreviewRow: {
+  actionsCluster: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  matchPreviewCol1: {
+  btnEdit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  btnEditText: {
     fontSize: 12,
     fontWeight: '600',
+    color: THEME.colors.brand,
+  },
+  btnDelete: {
+    padding: 5,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 6,
+  },
+  stemText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: THEME.colors.ink,
-    flex: 1,
-  },
-  matchPreviewCol2: {
-    fontSize: 12,
-    color: THEME.colors.muted,
-    flex: 1,
-  },
-  optionsPreviewGrid: {
-    gap: 4,
+    lineHeight: 20,
     marginBottom: 8,
   },
-  optPreviewItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    paddingVertical: 2,
-  },
-  optPreviewItemCorrect: {
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 6,
+  arBox: {
+    backgroundColor: '#FEFCE8',
+    borderLeftWidth: 3,
+    borderLeftColor: '#EAB308',
+    padding: 8,
     borderRadius: 4,
+    marginBottom: 8,
   },
-  optPreviewLetter: {
+  arItem: {
+    fontSize: 12,
+    color: '#713F12',
+    lineHeight: 18,
+  },
+  optionsGrid: {
+    gap: 6,
+    marginVertical: 4,
+  },
+  optCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+  },
+  optCardCorrect: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#6EE7B7',
+  },
+  optLetter: {
     fontSize: 12,
     fontWeight: '700',
     color: THEME.colors.muted,
+    marginRight: 8,
+    width: 20,
   },
-  optPreviewLetterCorrect: {
-    color: THEME.colors.brand,
+  optLetterCorrect: {
+    color: '#065F46',
   },
-  optPreviewText: {
+  optText: {
     fontSize: 12,
     color: THEME.colors.ink,
     flex: 1,
   },
-  optPreviewTextCorrect: {
+  optTextCorrect: {
+    color: '#065F46',
     fontWeight: '600',
-    color: THEME.colors.brand,
   },
   explanationBox: {
-    backgroundColor: '#F5F5F3',
+    marginTop: 8,
+    backgroundColor: '#F0FDF4',
     padding: 8,
     borderRadius: 6,
-    flexDirection: 'row',
-    marginTop: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.colors.brand,
   },
   explanationTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: THEME.colors.brandInk,
+    color: THEME.colors.brand,
   },
   explanationText: {
     fontSize: 11,
-    color: THEME.colors.muted,
-    flex: 1,
+    color: '#166534',
+    marginTop: 2,
     lineHeight: 16,
+  },
+  btnLoadMore: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  btnLoadMoreText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.brand,
   },
 });

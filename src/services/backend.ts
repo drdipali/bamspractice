@@ -235,6 +235,8 @@ class BackendService {
   private passwords: Record<string, string> = {};
   private currentUser: UserRecord | null = null;
   private questions: Question[] = [];
+  private editedQuestions: Record<string, Question> = {};
+  private deletedQuestionIds: Set<string> = new Set();
   private isInitialized = false;
 
   private async initialize() {
@@ -299,16 +301,41 @@ class BackendService {
 
       // 4. Cloud Questions Collection
       const customStored = await AsyncStorage.getItem('bams_custom_questions_v1');
+      const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1');
+      const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1');
+
       let customQuestions: Question[] = [];
       if (customStored) {
         try {
           customQuestions = JSON.parse(customStored);
         } catch {}
       }
+
+      if (editedStored) {
+        try {
+          this.editedQuestions = JSON.parse(editedStored);
+        } catch {}
+      }
+
+      if (deletedStored) {
+        try {
+          this.deletedQuestionIds = new Set(JSON.parse(deletedStored));
+        } catch {}
+      }
+
       // Remove legacy bulky key if present
       await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
 
-      this.questions = [...customQuestions, ...INITIAL_SEED_QUESTIONS];
+      // Apply overrides and deletions
+      const baseQuestions = INITIAL_SEED_QUESTIONS
+        .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
+        .map((q) => (this.editedQuestions[String(q.id)] ? this.editedQuestions[String(q.id)] : q));
+
+      const activeCustom = customQuestions
+        .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
+        .map((q) => (this.editedQuestions[String(q.id)] ? this.editedQuestions[String(q.id)] : q));
+
+      this.questions = [...activeCustom, ...baseQuestions];
     } catch (e) {
       console.warn('Backend initialization error:', e);
       this.users = [...SEED_USERS];
@@ -634,13 +661,20 @@ class BackendService {
 
   async deleteQuestion(id: string | number): Promise<void> {
     await this.initialize();
-    this.questions = this.questions.filter((q) => q.id !== id);
+    const strId = String(id);
+    this.deletedQuestionIds.add(strId);
+    this.questions = this.questions.filter((q) => String(q.id) !== strId);
+    delete this.editedQuestions[strId];
+
+    await AsyncStorage.setItem('bams_deleted_questions_v1', JSON.stringify(Array.from(this.deletedQuestionIds)));
+    await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
     await this.persistCustomQuestions();
   }
 
   async updateQuestion(id: string | number, patch: Partial<Question>): Promise<Question> {
     await this.initialize();
-    const index = this.questions.findIndex((q) => q.id === id);
+    const strId = String(id);
+    const index = this.questions.findIndex((q) => String(q.id) === strId);
     if (index === -1) {
       throw new Error(`Question with id ${id} not found.`);
     }
@@ -648,10 +682,14 @@ class BackendService {
     const updated: Question = {
       ...this.questions[index],
       ...patch,
-      ch: patch.chapterName || this.questions[index].chapterName,
+      ch: patch.chapterName || this.questions[index].chapterName || this.questions[index].ch,
+      chapterName: patch.chapterName || this.questions[index].chapterName,
     };
 
     this.questions[index] = updated;
+    this.editedQuestions[strId] = updated;
+
+    await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
     await this.persistCustomQuestions();
 
     return updated;
