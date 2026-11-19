@@ -41,6 +41,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { GeminiService } from '../../services/gemini';
 import { AISettingsModal } from './AISettingsModal';
+import { Portal } from '../common/Portal';
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   standard: 'Standard MCQ',
@@ -114,6 +115,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [isAiRephrased, setIsAiRephrased] = useState<boolean>(false);
   const [aiCustomInstruction, setAiCustomInstruction] = useState<string>('');
   const [aiActionLabel, setAiActionLabel] = useState<string>('AI Rephrased');
+  const [aiError, setAiError] = useState<string | null>(null);
   const [originalBeforeAI, setOriginalBeforeAI] = useState<{
     qType: QuestionType;
     stem: string;
@@ -205,6 +207,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setIsAiRephrasing(false);
     setAiCustomInstruction('');
     setAiActionLabel('AI Rephrased');
+    setAiError(null);
   };
 
   // Pre-fill Edit Modal with existing Question Data
@@ -234,13 +237,17 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setIsAiRephrasing(false);
     setAiCustomInstruction('');
     setAiActionLabel('AI Rephrased');
+    setAiError(null);
     setIsAddFormOpen(false);
   };
 
   // Interactive AI Assistant handler
   const handleRunAI = async (customInstruction?: string, actionName?: string) => {
+    setAiError(null);
     const key = await GeminiService.getApiKey();
     if (!key) {
+      const msg = 'API Key missing. Please click "AI Settings" in the header to paste your Gemini API key.';
+      setAiError(msg);
       const openSettings = confirm(
         'Gemini API Key is not configured.\n\nWould you like to open AI Settings now to paste your free Gemini API key?'
       );
@@ -255,7 +262,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
 
     if (!stem.trim()) {
-      alert('Please enter some question text first before asking AI.');
+      setAiError('Please enter question stem text before running AI.');
       return;
     }
 
@@ -264,22 +271,22 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     setIsAiRephrasing(true);
 
-    // Snapshot full original state before AI mutation (for 1-click Undo)
-    if (!originalBeforeAI) {
-      setOriginalBeforeAI({
-        qType,
-        stem,
-        options: [...options],
-        correctAnswer,
-        explanation,
-        assertionText,
-        reasonText,
-        statement1,
-        statement2,
-      });
-    }
-
     try {
+      // Snapshot full original state before AI mutation (for 1-click Undo)
+      if (!originalBeforeAI) {
+        setOriginalBeforeAI({
+          qType,
+          stem,
+          options: [...options],
+          correctAnswer,
+          explanation,
+          assertionText,
+          reasonText,
+          statement1,
+          statement2,
+        });
+      }
+
       const result = await GeminiService.transformQuestion({
         questionType: qType,
         questionText: stem,
@@ -340,12 +347,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         actionName || (instructionToUse ? `AI: "${instructionToUse.slice(0, 22)}..."` : 'AI Rephrased')
       );
       setAiCustomInstruction('');
+      setAiError(null);
       showToast('✨ Question transformed with Gemini AI! Review and click Save Changes.');
     } catch (err: any) {
       console.warn('AI Transformation error:', err);
-      alert('Gemini AI processing failed:\n' + (err.message || 'Unknown error occurred.'));
+      const errMsg = err.message || 'Unknown error occurred while contacting Gemini API.';
+      setAiError(errMsg);
     } finally {
-      setIsAiRephrasing(false);
+      setIsAiRephrasing(false); // ALWAYS RESET LOADING STATE
     }
   };
 
@@ -694,8 +703,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       {/* 1. BULK UPLOAD FIXED CENTERED MODAL (.XLSX / .XLS / .CSV)      */}
       {/* ============================================================== */}
       {isUploadModalOpen && (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalDialog}>
+        <Portal>
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalDialog}>
             <View style={styles.modalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <FileSpreadsheet size={22} color={THEME.colors.brand} />
@@ -857,14 +867,16 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             </View>
           </View>
         </View>
+        </Portal>
       )}
 
       {/* ============================================================== */}
       {/* 2. ADD OR EDIT QUESTION FIXED CENTERED POPUP MODAL             */}
       {/* ============================================================== */}
       {(isAddFormOpen || editingQuestion) && (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalDialog}>
+        <Portal>
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalDialog}>
             <View style={styles.modalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {editingQuestion ? (
@@ -1101,6 +1113,20 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                {/* Visible Red Error Alert if AI fails */}
+                {aiError && (
+                  <View style={styles.aiErrorBox}>
+                    <AlertCircle size={15} color="#DC2626" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.aiErrorTitle}>AI Assistant Error</Text>
+                      <Text style={styles.aiErrorText}>{aiError}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setAiError(null)} style={styles.aiErrorCloseBtn}>
+                      <X size={14} color="#DC2626" />
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
 
               {/* Question Text (Stem) */}
@@ -1204,6 +1230,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             </View>
           </View>
         </View>
+        </Portal>
       )}
 
       {/* ============================================================== */}
@@ -1622,25 +1649,28 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    width: '100vw' as any,
+    height: '100vh' as any,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    zIndex: 10000,
+    zIndex: 99999,
+    display: 'flex' as any,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
   },
   modalDialog: {
     width: '100%',
-    maxWidth: 720,
+    maxWidth: 780,
     maxHeight: '90vh' as any,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    elevation: 12,
-    display: 'flex',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 28,
+    elevation: 16,
+    display: 'flex' as any,
     flexDirection: 'column',
   },
   modalHeader: {
@@ -1652,6 +1682,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.line,
     backgroundColor: '#FAFAFA',
+    flexShrink: 0,
   },
   modalTitle: {
     fontSize: 16,
@@ -1666,7 +1697,8 @@ const styles = StyleSheet.create({
   modalBody: {
     paddingHorizontal: 20,
     paddingVertical: 14,
-    maxHeight: '70vh' as any,
+    flex: 1,
+    maxHeight: 'calc(90vh - 130px)' as any,
   },
   modalFooter: {
     flexDirection: 'row',
@@ -1678,6 +1710,7 @@ const styles = StyleSheet.create({
     borderTopColor: THEME.colors.line,
     gap: 10,
     backgroundColor: '#F8FAFC',
+    flexShrink: 0,
   },
   dropZone: {
     borderWidth: 2,
@@ -2003,6 +2036,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#1F5A4D',
+  },
+  aiErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  aiErrorTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  aiErrorText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    lineHeight: 15,
+  },
+  aiErrorCloseBtn: {
+    padding: 2,
   },
   pillRow: {
     flexDirection: 'row',

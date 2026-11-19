@@ -29,6 +29,7 @@ import {
   SUPPORTED_GEMINI_MODELS,
   DEFAULT_GEMINI_MODEL,
 } from '../../services/gemini';
+import { Portal } from '../common/Portal';
 
 interface AISettingsModalProps {
   isOpen: boolean;
@@ -130,8 +131,9 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   };
 
   return (
-    <View style={styles.modalBackdrop}>
-      <View style={styles.modalDialog}>
+    <Portal>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalDialog}>
         {/* Header */}
         <View style={styles.modalHeader}>
           <View style={styles.headerLeft}>
@@ -350,6 +352,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
         </View>
       </View>
     </View>
+  </Portal>
   );
 };
 
@@ -360,8 +363,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    width: '100vw' as any,
+    height: '100vh' as any,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    zIndex: 10000,
+    zIndex: 99999,
     display: 'flex' as any,
     alignItems: 'center',
     justifyContent: 'center',

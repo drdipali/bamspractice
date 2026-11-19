@@ -3,13 +3,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const GEMINI_API_KEY_STORAGE = 'bams_gemini_api_key_v1';
 const GEMINI_MODEL_STORAGE = 'bams_gemini_model_v1';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export const SUPPORTED_GEMINI_MODELS = [
-  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (Fastest & Recommended)' },
-  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (High Accuracy)' },
-  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (Balanced)' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended & Fast)' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
   { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fallback)' },
 ];
 
@@ -134,7 +133,7 @@ export class GeminiService {
   }
 
   /**
-   * Test the connection to the Gemini API with a minimal ping
+   * Test the connection to the Gemini API with a minimal ping and 15s timeout
    */
   static async testConnection(
     overrideKey?: string,
@@ -142,7 +141,7 @@ export class GeminiService {
   ): Promise<{ success: boolean; message: string; modelUsed?: string }> {
     const apiKey = overrideKey?.trim() || (await this.getApiKey());
     if (!apiKey) {
-      return { success: false, message: 'Please enter a Gemini API Key first.' };
+      return { success: false, message: 'API Key missing. Please paste your Gemini API key.' };
     }
 
     const model = overrideModel || (await this.getModel());
@@ -150,12 +149,16 @@ export class GeminiService {
       apiKey
     )}`;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
         body: JSON.stringify({
           contents: [
             {
@@ -168,6 +171,8 @@ export class GeminiService {
           },
         }),
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -195,6 +200,13 @@ export class GeminiService {
         modelUsed: model,
       };
     } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        return {
+          success: false,
+          message: 'Connection timed out after 15 seconds. Please check your network.',
+        };
+      }
       return {
         success: false,
         message: `Connection failed: ${err.message || 'Network error'}`,
@@ -203,15 +215,49 @@ export class GeminiService {
   }
 
   /**
+   * Helper to safely extract and parse JSON from Gemini's response,
+   * stripping any markdown code fences (```json ... ```) or extra prose.
+   */
+  private static parseJsonSafely(rawText: string): any {
+    if (!rawText || !rawText.trim()) {
+      throw new Error('Received an empty response from Gemini AI.');
+    }
+
+    let cleaned = rawText.trim();
+    // Strip leading ```json or ```
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '');
+    // Strip trailing ```
+    cleaned = cleaned.replace(/\s*```$/i, '');
+    cleaned = cleaned.trim();
+
+    try {
+      return JSON.parse(cleaned);
+    } catch (initialErr: any) {
+      // If direct parse failed, attempt to isolate the outermost JSON object { ... }
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          return JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+        } catch {
+          // fall through to error
+        }
+      }
+      throw new Error(`Failed to parse AI output as JSON: ${initialErr.message}`);
+    }
+  }
+
+  /**
    * Full Interactive AI Assistant Transformation
    * Handles custom instructions, format conversions (Statement I & II, Assertion-Reason, Direct MCQ),
    * and bilingual Hindi polishing.
+   * Features a 15-second network timeout and exhaustive error diagnostics.
    */
   static async transformQuestion(params: AIQuestionParams): Promise<AIQuestionResult> {
     const apiKey = await this.getApiKey();
     if (!apiKey) {
       throw new Error(
-        'Gemini API Key is not set. Please click "AI Settings" in the header to enter your API key.'
+        'Gemini API Key missing. Please click "AI Settings" in the header to enter your API key.'
       );
     }
 
@@ -219,9 +265,9 @@ export class GeminiService {
     const candidateModels = [
       preferredModel,
       DEFAULT_GEMINI_MODEL,
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
       'gemini-2.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
       'gemini-1.5-flash',
     ];
 
@@ -282,7 +328,9 @@ Return ONLY a valid JSON object with the following keys:
 }`;
 
     const userPayload = {
-      userInstruction: params.customInstruction?.trim() || 'Polish and rephrase this MCQ into clear, exam-grade English and natural Hindi.',
+      userInstruction:
+        params.customInstruction?.trim() ||
+        'Polish and rephrase this MCQ into clear, exam-grade English and natural Hindi.',
       currentQuestionType: params.questionType,
       chapter: params.chapter || '',
       referenceShloka: params.reference || '',
@@ -305,6 +353,9 @@ Return ONLY a valid JSON object with the following keys:
     let lastError: any = null;
 
     for (const model of uniqueModels) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
           apiKey
@@ -315,6 +366,7 @@ Return ONLY a valid JSON object with the following keys:
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: controller.signal,
           body: JSON.stringify({
             system_instruction: {
               parts: [{ text: systemInstruction }],
@@ -323,7 +375,11 @@ Return ONLY a valid JSON object with the following keys:
               {
                 parts: [
                   {
-                    text: `Transform this Ayurveda MCQ according to the instruction:\n\n${JSON.stringify(userPayload, null, 2)}`,
+                    text: `Transform this Ayurveda MCQ according to the instruction:\n\n${JSON.stringify(
+                      userPayload,
+                      null,
+                      2
+                    )}`,
                   },
                 ],
               },
@@ -335,39 +391,42 @@ Return ONLY a valid JSON object with the following keys:
           }),
         });
 
+        clearTimeout(timeoutId);
+
         if (!response.ok) {
           const errBody = await response.json().catch(() => ({}));
-          const errMsg = errBody?.error?.message || `HTTP ${response.status}`;
+          const errMsg = errBody?.error?.message || `HTTP ${response.status} ${response.statusText}`;
+
+          // If model not found or deprecated, try next model in fallback list
           if (response.status === 404 || errMsg.toLowerCase().includes('not found')) {
-            console.warn(`Model ${model} not available, falling back to next model...`);
+            console.warn(`Model ${model} not found, falling back to next model...`);
             lastError = new Error(`Model ${model}: ${errMsg}`);
             continue;
           }
-          throw new Error(`Gemini API error (${model}): ${errMsg}`);
+
+          // If invalid API key, quota exceeded, or permission error, throw immediately
+          throw new Error(`Gemini API (${model}): ${errMsg}`);
         }
 
         const data = await response.json();
         const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (!rawText) {
-          throw new Error('Gemini API returned an empty candidate.');
+          throw new Error('Gemini API returned an empty response candidate.');
         }
 
-        const cleaned = rawText
-          .trim()
-          .replace(/^```json\s*/i, '')
-          .replace(/^```\s*/i, '')
-          .replace(/\s*```$/i, '')
-          .trim();
-
-        const parsed = JSON.parse(cleaned);
+        const parsed = this.parseJsonSafely(rawText);
 
         if (!parsed.questionText) {
-          throw new Error('AI output missing "questionText" key.');
+          throw new Error('AI output missing required "questionText" key.');
         }
 
         let parsedCorrectAnswer = params.correctAnswer;
-        if (typeof parsed.correctAnswer === 'number' && parsed.correctAnswer >= 0 && parsed.correctAnswer <= 3) {
+        if (
+          typeof parsed.correctAnswer === 'number' &&
+          parsed.correctAnswer >= 0 &&
+          parsed.correctAnswer <= 3
+        ) {
           parsedCorrectAnswer = parsed.correctAnswer;
         } else if (typeof parsed.correctAnswer === 'string') {
           const letter = parsed.correctAnswer.trim().toUpperCase();
@@ -391,8 +450,25 @@ Return ONLY a valid JSON object with the following keys:
           statement2: parsed.statement2 ? String(parsed.statement2).trim() : undefined,
         };
       } catch (err: any) {
-        lastError = err;
-        console.warn(`Attempt with ${model} failed:`, err.message);
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          lastError = new Error(
+            `Gemini API request timed out after 15 seconds on model "${model}". Please check your internet connection or API quota.`
+          );
+        } else {
+          lastError = err;
+        }
+
+        // If error is an invalid API key, do not keep trying other models since the key is rejected
+        if (
+          lastError.message?.toLowerCase().includes('api key not valid') ||
+          lastError.message?.toLowerCase().includes('api_key_invalid') ||
+          lastError.message?.toLowerCase().includes('permission')
+        ) {
+          throw lastError;
+        }
+
+        console.warn(`Attempt with ${model} failed:`, lastError.message);
       }
     }
 
