@@ -4,12 +4,13 @@ const GEMINI_API_KEY_STORAGE = 'bams_gemini_api_key_v1';
 const GEMINI_MODEL_STORAGE = 'bams_gemini_model_v1';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const FALLBACK_GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 export const SUPPORTED_GEMINI_MODELS = [
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended & Fast)' },
+  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (Fast Fallback)' },
   { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
   { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
-  { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fallback)' },
 ];
 
 export interface AIQuestionParams {
@@ -104,14 +105,25 @@ export class GeminiService {
   }
 
   /**
-   * Retrieve the preferred Gemini model
+   * Retrieve the preferred Gemini model, automatically migrating any legacy 1.5 models to gemini-2.5-flash
    */
   static async getModel(): Promise<string> {
-    if (this.cachedModel) return this.cachedModel;
+    if (this.cachedModel) {
+      if (this.cachedModel.includes('1.5') || this.cachedModel.includes('gemini-1.5')) {
+        this.cachedModel = DEFAULT_GEMINI_MODEL;
+      }
+      return this.cachedModel;
+    }
     try {
       const stored = await AsyncStorage.getItem(GEMINI_MODEL_STORAGE);
       if (stored && stored.trim()) {
-        this.cachedModel = stored.trim();
+        const trimmed = stored.trim();
+        if (trimmed.includes('1.5') || trimmed.includes('gemini-1.5')) {
+          this.cachedModel = DEFAULT_GEMINI_MODEL;
+          await AsyncStorage.setItem(GEMINI_MODEL_STORAGE, DEFAULT_GEMINI_MODEL);
+          return DEFAULT_GEMINI_MODEL;
+        }
+        this.cachedModel = trimmed;
         return this.cachedModel;
       }
     } catch (e) {
@@ -124,9 +136,10 @@ export class GeminiService {
    * Set the preferred Gemini model
    */
   static async setModel(model: string): Promise<void> {
-    this.cachedModel = model;
+    const cleanModel = model.includes('1.5') ? DEFAULT_GEMINI_MODEL : model;
+    this.cachedModel = cleanModel;
     try {
-      await AsyncStorage.setItem(GEMINI_MODEL_STORAGE, model);
+      await AsyncStorage.setItem(GEMINI_MODEL_STORAGE, cleanModel);
     } catch (e) {
       console.warn('Could not persist Gemini Model:', e);
     }
@@ -144,7 +157,10 @@ export class GeminiService {
       return { success: false, message: 'API Key missing. Please paste your Gemini API key.' };
     }
 
-    const model = overrideModel || (await this.getModel());
+    let model = overrideModel || (await this.getModel());
+    if (model.includes('1.5') || model.includes('gemini-1.5')) {
+      model = DEFAULT_GEMINI_MODEL;
+    }
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
       apiKey
     )}`;
@@ -261,15 +277,20 @@ export class GeminiService {
       );
     }
 
-    const preferredModel = await this.getModel();
+    let preferredModel = await this.getModel();
+    if (preferredModel.includes('1.5') || preferredModel.includes('gemini-1.5')) {
+      preferredModel = DEFAULT_GEMINI_MODEL;
+    }
+
     const candidateModels = [
       preferredModel,
       DEFAULT_GEMINI_MODEL,
+      FALLBACK_GEMINI_MODEL,
       'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
       'gemini-3.5-flash-lite',
       'gemini-3.8-flash',
-      'gemini-1.5-flash',
-    ];
+    ].filter((m) => !m.includes('1.5'));
 
     const uniqueModels = Array.from(new Set(candidateModels));
 
