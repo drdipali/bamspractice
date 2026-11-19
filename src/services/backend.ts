@@ -298,13 +298,17 @@ class BackendService {
       }
 
       // 4. Cloud Questions Collection
-      const storedQuestions = await AsyncStorage.getItem(QUESTIONS_STORAGE_KEY);
-      if (storedQuestions) {
-        this.questions = JSON.parse(storedQuestions);
-      } else {
-        this.questions = [...INITIAL_SEED_QUESTIONS];
-        await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+      const customStored = await AsyncStorage.getItem('bams_custom_questions_v1');
+      let customQuestions: Question[] = [];
+      if (customStored) {
+        try {
+          customQuestions = JSON.parse(customStored);
+        } catch {}
       }
+      // Remove legacy bulky key if present
+      await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
+
+      this.questions = [...customQuestions, ...INITIAL_SEED_QUESTIONS];
     } catch (e) {
       console.warn('Backend initialization error:', e);
       this.users = [...SEED_USERS];
@@ -573,10 +577,15 @@ class BackendService {
     return Array.from(set).sort();
   }
 
+  private async persistCustomQuestions(): Promise<void> {
+    const custom = this.questions.filter((q) => !q.id.toString().startsWith('q_ca_'));
+    await AsyncStorage.setItem('bams_custom_questions_v1', JSON.stringify(custom));
+  }
+
   async addQuestion(questionData: Omit<Question, 'id'>): Promise<Question> {
     await this.initialize();
 
-    const id = `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const id = `q_custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newQuestion: Question = {
       id,
       ...questionData,
@@ -586,7 +595,7 @@ class BackendService {
     };
 
     this.questions.unshift(newQuestion);
-    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+    await this.persistCustomQuestions();
 
     return newQuestion;
   }
@@ -605,7 +614,7 @@ class BackendService {
         return;
       }
 
-      const id = `q_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+      const id = `q_custom_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
       addedQuestions.push({
         id,
         ...qData,
@@ -617,7 +626,7 @@ class BackendService {
 
     if (addedQuestions.length > 0) {
       this.questions = [...addedQuestions, ...this.questions];
-      await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+      await this.persistCustomQuestions();
     }
 
     return { added: addedQuestions.length, errors };
@@ -626,7 +635,7 @@ class BackendService {
   async deleteQuestion(id: string | number): Promise<void> {
     await this.initialize();
     this.questions = this.questions.filter((q) => q.id !== id);
-    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+    await this.persistCustomQuestions();
   }
 
   async updateQuestion(id: string | number, patch: Partial<Question>): Promise<Question> {
@@ -643,7 +652,7 @@ class BackendService {
     };
 
     this.questions[index] = updated;
-    await AsyncStorage.setItem(QUESTIONS_STORAGE_KEY, JSON.stringify(this.questions));
+    await this.persistCustomQuestions();
 
     return updated;
   }
