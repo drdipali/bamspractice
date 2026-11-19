@@ -694,6 +694,11 @@ class BackendService {
 
     return updated;
   }
+
+  async getEditedQuestionIds(): Promise<string[]> {
+    await this.initialize();
+    return Object.keys(this.editedQuestions);
+  }
 }
 
 export const backend = new BackendService();

@@ -152,7 +152,7 @@ export const WelcomeScreen: React.FC = () => {
                 <Phone
                   size={13}
                   color={
-                    loginMethod === 'mobile' ? THEME.colors.brandInk : THEME.colors.muted
+                    loginMethod === 'mobile' ? THEME.colors.brand : THEME.colors.muted
                   }
                 />
                 <Text
@@ -178,7 +178,7 @@ export const WelcomeScreen: React.FC = () => {
                 <Mail
                   size={13}
                   color={
-                    loginMethod === 'email' ? THEME.colors.brandInk : THEME.colors.muted
+                    loginMethod === 'email' ? THEME.colors.brand : THEME.colors.muted
                   }
                 />
                 <Text
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   methodPillTextActive: {
-    color: THEME.colors.brandInk,
+    color: THEME.colors.brand,
     fontWeight: '700',
   },
   errorBox: {
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
   countryCodeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: THEME.colors.brandInk,
+    color: THEME.colors.ink,
   },
   inputIcon: {
     marginRight: 8,
