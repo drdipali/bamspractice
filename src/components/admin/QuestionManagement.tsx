@@ -28,6 +28,7 @@ import {
   Compass,
   Sparkles,
   RotateCcw,
+  Send,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -47,6 +48,33 @@ const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   match_the_pair: 'Match the Pair',
   statement_type: 'Statement Type',
 };
+
+const AI_QUICK_CHIPS = [
+  {
+    label: 'Convert to Statement I & II',
+    instruction:
+      'Convert this question into NTA AIAPGET Statement I & Statement II format with bilingual English and Hindi/Sanskrit, standard options A-D, and correct answer index.',
+    actionName: 'Statement I & II Conversion',
+  },
+  {
+    label: 'Convert to Assertion–Reason',
+    instruction:
+      'Convert this question into NTA AIAPGET Assertion (A) and Reason (R) format with bilingual English and Hindi/Sanskrit, standard options A-D, and correct answer index.',
+    actionName: 'Assertion–Reason Conversion',
+  },
+  {
+    label: 'Convert to Direct MCQ',
+    instruction:
+      'Convert this question into a direct single-best-answer standard MCQ with 4 plausible choices A-D in English and Devanagari Hindi.',
+    actionName: 'Direct MCQ Conversion',
+  },
+  {
+    label: 'Fix Bilingual Hindi',
+    instruction:
+      'Fix and enhance the bilingual Sanskrit / Devanagari Hindi translation, correcting spelling of classical Ayurvedic terms and maintaining exam-grade precision.',
+    actionName: 'Bilingual Hindi Polishing',
+  },
+];
 
 const STANDARD_AR_OPTIONS = [
   'Both (A) and (R) are true and (R) is the correct explanation of (A) / (A) और (R) दोनों सही हैं और (R), (A) की सही व्याख्या है',
@@ -81,12 +109,21 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
 
-  // AI Rephrase state
+  // AI Interactive Assistant state
   const [isAiRephrasing, setIsAiRephrasing] = useState<boolean>(false);
   const [isAiRephrased, setIsAiRephrased] = useState<boolean>(false);
+  const [aiCustomInstruction, setAiCustomInstruction] = useState<string>('');
+  const [aiActionLabel, setAiActionLabel] = useState<string>('AI Rephrased');
   const [originalBeforeAI, setOriginalBeforeAI] = useState<{
+    qType: QuestionType;
     stem: string;
     options: string[];
+    correctAnswer: number;
+    explanation: string;
+    assertionText: string;
+    reasonText: string;
+    statement1: string;
+    statement2: string;
   } | null>(null);
   const [internalAISettingsOpen, setInternalAISettingsOpen] = useState<boolean>(false);
 
@@ -166,6 +203,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setOriginalBeforeAI(null);
     setIsAiRephrased(false);
     setIsAiRephrasing(false);
+    setAiCustomInstruction('');
+    setAiActionLabel('AI Rephrased');
   };
 
   // Pre-fill Edit Modal with existing Question Data
@@ -193,11 +232,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setOriginalBeforeAI(null);
     setIsAiRephrased(false);
     setIsAiRephrasing(false);
+    setAiCustomInstruction('');
+    setAiActionLabel('AI Rephrased');
     setIsAddFormOpen(false);
   };
 
-  // Rephrase MCQ using Google Gemini API
-  const handleRephraseWithAI = async () => {
+  // Interactive AI Assistant handler
+  const handleRunAI = async (customInstruction?: string, actionName?: string) => {
     const key = await GeminiService.getApiKey();
     if (!key) {
       const openSettings = confirm(
@@ -214,36 +255,95 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
 
     if (!stem.trim()) {
-      alert('Please enter some question text first before rephrasing with AI.');
+      alert('Please enter some question text first before asking AI.');
       return;
     }
 
+    const instructionToUse =
+      customInstruction !== undefined ? customInstruction.trim() : aiCustomInstruction.trim();
+
     setIsAiRephrasing(true);
-    // Preserve current state for Undo
-    setOriginalBeforeAI({
-      stem,
-      options: [...options],
-    });
+
+    // Snapshot full original state before AI mutation (for 1-click Undo)
+    if (!originalBeforeAI) {
+      setOriginalBeforeAI({
+        qType,
+        stem,
+        options: [...options],
+        correctAnswer,
+        explanation,
+        assertionText,
+        reasonText,
+        statement1,
+        statement2,
+      });
+    }
 
     try {
-      const result = await GeminiService.rephraseQuestion({
+      const result = await GeminiService.transformQuestion({
+        questionType: qType,
         questionText: stem,
         optionA: options[0] || '',
         optionB: options[1] || '',
         optionC: options[2] || '',
         optionD: options[3] || '',
+        correctAnswer: correctAnswer,
+        explanation: explanation,
         reference: refSource,
-        questionType: qType,
         chapter: chapterName,
+        assertionText: assertionText,
+        reasonText: reasonText,
+        statement1: statement1,
+        statement2: statement2,
+        customInstruction: instructionToUse,
       });
+
+      // Update question type if converted
+      if (
+        result.questionType &&
+        ['standard', 'assertion_reason', 'match_the_pair', 'statement_type'].includes(
+          result.questionType
+        )
+      ) {
+        setQType(result.questionType as QuestionType);
+      }
 
       setStem(result.questionText);
       setOptions([result.optionA, result.optionB, result.optionC, result.optionD]);
+
+      if (
+        typeof result.correctAnswer === 'number' &&
+        result.correctAnswer >= 0 &&
+        result.correctAnswer <= 3
+      ) {
+        setCorrectAnswer(result.correctAnswer);
+      }
+
+      if (result.explanation !== undefined) {
+        setExplanation(result.explanation);
+      }
+      if (result.assertionText !== undefined) {
+        setAssertionText(result.assertionText);
+      }
+      if (result.reasonText !== undefined) {
+        setReasonText(result.reasonText);
+      }
+      if (result.statement1 !== undefined) {
+        setStatement1(result.statement1);
+      }
+      if (result.statement2 !== undefined) {
+        setStatement2(result.statement2);
+      }
+
       setIsAiRephrased(true);
-      showToast('✨ Question polished with Gemini AI! Review and click Save Changes.');
+      setAiActionLabel(
+        actionName || (instructionToUse ? `AI: "${instructionToUse.slice(0, 22)}..."` : 'AI Rephrased')
+      );
+      setAiCustomInstruction('');
+      showToast('✨ Question transformed with Gemini AI! Review and click Save Changes.');
     } catch (err: any) {
-      console.warn('AI Rephrasing error:', err);
-      alert('Gemini AI Rephrase failed:\n' + (err.message || 'Unknown error occurred.'));
+      console.warn('AI Transformation error:', err);
+      alert('Gemini AI processing failed:\n' + (err.message || 'Unknown error occurred.'));
     } finally {
       setIsAiRephrasing(false);
     }
@@ -251,11 +351,19 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   const handleUndoAI = () => {
     if (originalBeforeAI) {
+      setQType(originalBeforeAI.qType);
       setStem(originalBeforeAI.stem);
       setOptions(originalBeforeAI.options);
+      setCorrectAnswer(originalBeforeAI.correctAnswer);
+      setExplanation(originalBeforeAI.explanation);
+      setAssertionText(originalBeforeAI.assertionText);
+      setReasonText(originalBeforeAI.reasonText);
+      setStatement1(originalBeforeAI.statement1);
+      setStatement2(originalBeforeAI.statement2);
       setOriginalBeforeAI(null);
       setIsAiRephrased(false);
-      showToast('Reverted back to original question text.');
+      setAiActionLabel('AI Rephrased');
+      showToast('Reverted back to original question data.');
     }
   };
 
@@ -880,51 +988,119 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 </View>
               </View>
 
-              {/* AI Rephrase Action Bar */}
-              <View style={styles.aiActionRow}>
-                <View style={styles.aiActionLeft}>
+              {/* Interactive AI Assistant Container */}
+              <View style={styles.aiAssistantContainer}>
+                {/* Header Row: Title & Undo Button / Status */}
+                <View style={styles.aiAssistantHeader}>
+                  <View style={styles.aiAssistantHeaderLeft}>
+                    <Sparkles size={16} color="#1F5A4D" />
+                    <Text style={styles.aiAssistantTitle}>Interactive AI Assistant (Gemini)</Text>
+                    {isAiRephrased && (
+                      <View style={styles.aiRephrasedBadge}>
+                        <CheckCircle2 size={13} color="#15803D" />
+                        <Text style={styles.aiRephrasedBadgeText}>
+                          {aiActionLabel} — Review &amp; Save
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {originalBeforeAI && (
+                    <TouchableOpacity
+                      style={styles.btnUndoAI}
+                      onPress={handleUndoAI}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Undo AI changes"
+                    >
+                      <RotateCcw size={12} color="#1F5A4D" />
+                      <Text style={styles.btnUndoAIText}>Undo AI</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Instruction Input Box + Send Button + Rephrase with AI Button */}
+                <View style={styles.aiInputRow}>
+                  <View style={styles.aiInputWrapper}>
+                    <TextInput
+                      style={styles.aiTextInput}
+                      value={aiCustomInstruction}
+                      onChangeText={setAiCustomInstruction}
+                      placeholder="Tell AI what to change, e.g., 'Convert to Statement I & II type' or 'Fix Hindi translation'..."
+                      placeholderTextColor="#94A3B8"
+                      onSubmitEditing={() => {
+                        if (aiCustomInstruction.trim() && !isAiRephrasing) {
+                          handleRunAI(aiCustomInstruction);
+                        }
+                      }}
+                      editable={!isAiRephrasing}
+                    />
+                    {aiCustomInstruction.trim() ? (
+                      <TouchableOpacity
+                        style={styles.aiInputClearBtn}
+                        onPress={() => setAiCustomInstruction('')}
+                      >
+                        <X size={14} color="#94A3B8" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {/* Send Button */}
+                  <TouchableOpacity
+                    style={[
+                      styles.btnAiSend,
+                      (!aiCustomInstruction.trim() || isAiRephrasing) && styles.btnAiSendDisabled,
+                    ]}
+                    onPress={() => handleRunAI(aiCustomInstruction)}
+                    disabled={!aiCustomInstruction.trim() || isAiRephrasing}
+                    activeOpacity={0.8}
+                  >
+                    <Send size={13} color="#FFF" />
+                    <Text style={styles.btnAiSendText}>Send</Text>
+                  </TouchableOpacity>
+
+                  {/* General "Rephrase with AI" button */}
                   <TouchableOpacity
                     style={[
                       styles.btnRephraseAI,
                       isAiRephrasing && styles.btnRephraseAIDisabled,
                     ]}
-                    onPress={handleRephraseWithAI}
+                    onPress={() => handleRunAI('', 'AI Polished')}
                     disabled={isAiRephrasing}
                     activeOpacity={0.8}
                   >
                     {isAiRephrasing ? (
                       <>
                         <ActivityIndicator size="small" color="#FFF" />
-                        <Text style={styles.btnRephraseAIText}>Polishing with Gemini AI...</Text>
+                        <Text style={styles.btnRephraseAIText}>Processing...</Text>
                       </>
                     ) : (
                       <>
-                        <Sparkles size={14} color="#FFF" />
+                        <Sparkles size={13} color="#FFF" />
                         <Text style={styles.btnRephraseAIText}>✨ Rephrase with AI</Text>
                       </>
                     )}
                   </TouchableOpacity>
-
-                  {isAiRephrased && (
-                    <View style={styles.aiRephrasedBadge}>
-                      <CheckCircle2 size={13} color="#15803D" />
-                      <Text style={styles.aiRephrasedBadgeText}>
-                        AI Rephrased — Review &amp; Save
-                      </Text>
-                    </View>
-                  )}
                 </View>
 
-                {originalBeforeAI && (
-                  <TouchableOpacity
-                    style={styles.btnUndoAI}
-                    onPress={handleUndoAI}
-                    activeOpacity={0.7}
-                  >
-                    <RotateCcw size={12} color="#1F5A4D" />
-                    <Text style={styles.btnUndoAIText}>Undo AI</Text>
-                  </TouchableOpacity>
-                )}
+                {/* 1-Click AIAPGET Quick-Action Conversion Chips */}
+                <View style={styles.aiChipsRow}>
+                  <Text style={styles.aiChipsLabel}>Quick AIAPGET Conversions:</Text>
+                  {AI_QUICK_CHIPS.map((chip) => (
+                    <TouchableOpacity
+                      key={chip.label}
+                      style={[
+                        styles.aiQuickChip,
+                        isAiRephrasing && { opacity: 0.5 },
+                      ]}
+                      onPress={() => handleRunAI(chip.instruction, chip.actionName)}
+                      disabled={isAiRephrasing}
+                      activeOpacity={0.7}
+                    >
+                      <Sparkles size={11} color="#1F5A4D" />
+                      <Text style={styles.aiQuickChipText}>{chip.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
 
               {/* Question Text (Stem) */}
@@ -1673,53 +1849,40 @@ const styles = StyleSheet.create({
     color: THEME.colors.muted,
     marginBottom: 4,
   },
-  aiActionRow: {
+  aiAssistantContainer: {
+    marginTop: 14,
+    marginBottom: 8,
+    padding: 12,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 10,
+    gap: 10,
+  },
+  aiAssistantHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 14,
-    marginBottom: 6,
-    padding: 10,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 8,
   },
-  aiActionLeft: {
+  aiAssistantHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
   },
-  btnRephraseAI: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#1F5A4D',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  btnRephraseAIDisabled: {
-    opacity: 0.65,
-  },
-  btnRephraseAIText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  aiAssistantTitle: {
+    fontSize: 13,
     fontWeight: '700',
+    color: '#1F5A4D',
   },
   aiRephrasedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: '#DCFCE7',
-    paddingVertical: 4,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 6,
     borderWidth: 1,
@@ -1745,6 +1908,101 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: THEME.colors.ink,
+  },
+  aiInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  aiInputWrapper: {
+    flex: 1,
+    minWidth: 240,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  aiTextInput: {
+    flex: 1,
+    fontSize: 12,
+    color: THEME.colors.ink,
+    height: '100%',
+  },
+  aiInputClearBtn: {
+    padding: 4,
+  },
+  btnAiSend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: THEME.colors.brand,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    height: 38,
+  },
+  btnAiSendDisabled: {
+    opacity: 0.5,
+  },
+  btnAiSendText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  btnRephraseAI: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#166534',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    height: 38,
+  },
+  btnRephraseAIDisabled: {
+    opacity: 0.65,
+  },
+  btnRephraseAIText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  aiChipsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  aiChipsLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+    marginRight: 2,
+  },
+  aiQuickChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  aiQuickChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1F5A4D',
   },
   pillRow: {
     flexDirection: 'row',
