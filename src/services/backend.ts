@@ -3,6 +3,7 @@ import { UserRecord, QuizAttemptRecord } from '../types/auth';
 import { Chapter, Question } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
 import { ALL_CHAPTERS } from '../constants/syllabusData';
+import { normalizeQuestionStem } from '../utils/spreadsheetHelper';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -657,6 +658,103 @@ class BackendService {
     }
 
     return { added: addedQuestions.length, errors };
+  }
+
+  /**
+   * Imports or synchronizes questions from Google Sheets with full duplicate detection.
+   * Mode 'skip': Only inserts new questions; duplicates are skipped.
+   * Mode 'overwrite': Overwrites/updates matching existing questions and inserts new questions.
+   */
+  async syncGoogleSheetQuestions(
+    incomingQuestions: Omit<Question, 'id'>[],
+    duplicateAction: 'skip' | 'overwrite' = 'skip'
+  ): Promise<{
+    addedCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    totalIncoming: number;
+    affectedIds: string[];
+  }> {
+    await this.initialize();
+
+    // Map existing questions by normalized stem
+    const existingStemMap = new Map<string, Question>();
+    this.questions.forEach((q) => {
+      const key = normalizeQuestionStem(q.stem);
+      if (key && !existingStemMap.has(key)) {
+        existingStemMap.set(key, q);
+      }
+    });
+
+    const toInsert: Question[] = [];
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const affectedIds: string[] = [];
+    const now = new Date().toISOString();
+
+    incomingQuestions.forEach((qData, idx) => {
+      if (!qData.stem || !qData.o || qData.o.length < 2) return;
+
+      const key = normalizeQuestionStem(qData.stem);
+      const existing = key ? existingStemMap.get(key) : undefined;
+
+      if (existing) {
+        if (duplicateAction === 'skip') {
+          skippedCount++;
+        } else {
+          // Overwrite existing question with updated sheet data
+          const strId = String(existing.id);
+          const updated: Question = {
+            ...existing,
+            ...qData,
+            id: existing.id,
+            ch: qData.chapterName || existing.chapterName || existing.ch,
+            chapterName: qData.chapterName || existing.chapterName,
+          };
+
+          const qIdx = this.questions.findIndex((q) => String(q.id) === strId);
+          if (qIdx !== -1) {
+            this.questions[qIdx] = updated;
+          }
+          this.editedQuestions[strId] = updated;
+          affectedIds.push(strId);
+          updatedCount++;
+        }
+      } else {
+        // Brand new question to insert
+        const newId = `q_custom_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+        const newQ: Question = {
+          id: newId,
+          ...qData,
+          ch: qData.chapterName || 'Charaka Samhita > Sutrasthana > Chapter 1',
+          chapterName: qData.chapterName || 'Charaka Samhita > Sutrasthana > Chapter 1',
+          createdAt: now,
+        };
+        toInsert.push(newQ);
+        affectedIds.push(newId);
+
+        if (key) {
+          existingStemMap.set(key, newQ);
+        }
+      }
+    });
+
+    if (toInsert.length > 0) {
+      this.questions = [...toInsert, ...this.questions];
+    }
+
+    if (toInsert.length > 0 || updatedCount > 0) {
+      await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
+      await this.persistCustomQuestions();
+    }
+
+    return {
+      addedCount: toInsert.length,
+      updatedCount,
+      skippedCount,
+      totalIncoming: incomingQuestions.length,
+      affectedIds,
+    };
   }
 
   async deleteQuestion(id: string | number): Promise<void> {

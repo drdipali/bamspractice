@@ -7,6 +7,185 @@ export interface SpreadsheetParseResult {
   totalRows: number;
 }
 
+export interface GoogleSheetPreviewStats {
+  totalRows: number;
+  validCount: number;
+  newCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  validQuestions: Omit<Question, 'id'>[];
+  duplicateQuestions: { incomingIndex: number; stem: string; existingId: string | number }[];
+  errors: { row: number; error: string; rawSnippet?: string }[];
+}
+
+/**
+ * Normalizes question stem text for accurate duplicate detection across languages,
+ * removing whitespace, newlines, and punctuation while strictly preserving Sanskrit,
+ * Devanagari Hindi and English Unicode alphanumeric characters.
+ */
+export function normalizeQuestionStem(text: string): string {
+  if (!text) return '';
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .slice(0, 160);
+}
+
+/**
+ * Converts any standard Google Sheet URL (edit, share, pubhtml, export) into
+ * a direct Google CSV export URL with strict UTF-8 output.
+ */
+export function extractGoogleSheetCsvUrl(rawUrl: string): {
+  csvUrl: string;
+  sheetId: string;
+  gid: string;
+} | null {
+  const url = (rawUrl || '').trim();
+  if (!url) return null;
+
+  // 1. Check if already a direct published web CSV url
+  if (url.includes('/spreadsheets/d/e/')) {
+    if (url.includes('pub?output=csv')) {
+      return { csvUrl: url, sheetId: 'pub_web', gid: '0' };
+    }
+    if (url.includes('/pub')) {
+      const fixed = url.replace(/\/pub(\?.*)?$/, '/pub?output=csv');
+      return { csvUrl: fixed, sheetId: 'pub_web', gid: '0' };
+    }
+  }
+
+  // 2. Standard Google Sheet URL
+  const sheetIdMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!sheetIdMatch || !sheetIdMatch[1]) {
+    // If user provided a raw CSV link directly
+    if (url.startsWith('http') && (url.includes('.csv') || url.includes('format=csv') || url.includes('output=csv'))) {
+      return { csvUrl: url, sheetId: 'custom', gid: '0' };
+    }
+    return null;
+  }
+
+  const sheetId = sheetIdMatch[1];
+
+  // 3. Extract GID (sheet tab id)
+  const gidMatch = url.match(/[#?&]gid=([0-9]+)/);
+  const gid = gidMatch ? gidMatch[1] : '0';
+
+  const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  return { csvUrl, sheetId, gid };
+}
+
+/**
+ * Live-fetches CSV data from Google Sheets with strict UTF-8 charset,
+ * 25-second timeout, and clear error diagnostics if permissions or CORS fail.
+ */
+export async function fetchGoogleSheetCsv(sheetUrl: string): Promise<string> {
+  const extracted = extractGoogleSheetCsvUrl(sheetUrl);
+  if (!extracted) {
+    throw new Error(
+      'Invalid Google Sheet link. Please paste a valid Google Sheet URL (e.g. https://docs.google.com/spreadsheets/d/SHEET_ID/edit).'
+    );
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const res = await fetch(extracted.csvUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/csv,text/plain,application/octet-stream;charset=utf-8',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403 || res.status === 404) {
+        throw new Error(
+          `Permission Denied (HTTP ${res.status}): This Google Sheet is private or requires sign-in. In Google Sheets, click "Share" (top-right) and set General access to "Anyone with the link can view". Alternatively, use File → Share → Publish to web → Comma-separated values (.csv) and paste that link here.`
+        );
+      }
+      throw new Error(`Google returned HTTP ${res.status} (${res.statusText}) when downloading sheet.`);
+    }
+
+    const text = await res.text();
+
+    if (!text || !text.trim()) {
+      throw new Error('The downloaded Google Sheet appears to be empty.');
+    }
+
+    // Google Sheets redirects to an HTML login page if private
+    if (text.includes('<!DOCTYPE html>') || text.includes('<html') || text.includes('accounts.google.com')) {
+      throw new Error(
+        'Google returned an HTML login page instead of CSV data. Please set sheet sharing to "Anyone with the link can view" (or File → Share → Publish to web → CSV).'
+      );
+    }
+
+    return text;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error(
+        'Connection timed out after 25 seconds while downloading the Google Sheet. Please check your internet connection or verify the sheet URL.'
+      );
+    }
+    if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
+      throw new Error(
+        'Browser network/CORS error: Unable to download the sheet directly. Please ensure the Google Sheet is shared as "Anyone with the link can view" or published via File → Share → Publish to web → CSV.'
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Previews Google Sheet parsed questions against existing Cloud DB questions,
+ * isolating duplicates and identifying brand new additions.
+ */
+export function calculateGoogleSheetPreview(
+  parsed: SpreadsheetParseResult,
+  existingQuestions: Question[]
+): GoogleSheetPreviewStats {
+  const existingStemMap = new Map<string, Question>();
+  existingQuestions.forEach((q) => {
+    const key = normalizeQuestionStem(q.stem);
+    if (key && !existingStemMap.has(key)) {
+      existingStemMap.set(key, q);
+    }
+  });
+
+  const duplicateQuestions: { incomingIndex: number; stem: string; existingId: string | number }[] = [];
+  let newCount = 0;
+
+  parsed.validQuestions.forEach((q, idx) => {
+    const key = normalizeQuestionStem(q.stem);
+    const existing = key ? existingStemMap.get(key) : undefined;
+    if (existing) {
+      duplicateQuestions.push({
+        incomingIndex: idx + 1,
+        stem: q.stem,
+        existingId: existing.id,
+      });
+    } else {
+      newCount++;
+    }
+  });
+
+  return {
+    totalRows: parsed.totalRows,
+    validCount: parsed.validQuestions.length,
+    newCount,
+    duplicateCount: duplicateQuestions.length,
+    errorCount: parsed.errors.length,
+    validQuestions: parsed.validQuestions,
+    duplicateQuestions,
+    errors: parsed.errors,
+  };
+}
+
 const STANDARD_AR_OPTIONS = [
   'Both (A) and (R) are true and (R) is the correct explanation of (A) / (A) और (R) दोनों सही हैं और (R), (A) की सही व्याख्या है',
   'Both (A) and (R) are true but (R) is NOT the correct explanation of (A) / (A) और (R) दोनों सही हैं परंतु (R), (A) की सही व्याख्या नहीं है',
@@ -142,18 +321,22 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
         fullChapterName = chapter;
       }
     } else if (effectiveRef) {
-      // Try resolving chapter from reference text like "ca.su 1/1" or "Charaka Sutra 25/40"
+      // Try resolving chapter from reference text like "ca.su 1/1", "च.सू - 1/58", "ca.su 30 /33", "Charaka Sutra 25/40"
       const lowerRef = effectiveRef.toLowerCase();
       let refSthana = 'Sutrasthana';
-      if (/nidan|निदान/.test(lowerRef)) refSthana = 'Nidanasthana';
-      else if (/viman|विमान/.test(lowerRef)) refSthana = 'Vimanasthana';
-      else if (/sharir|शारीर/.test(lowerRef)) refSthana = 'Sharirasthana';
-      else if (/indriya|इन्द्रिय/.test(lowerRef)) refSthana = 'Indriyasthana';
-      else if (/chikitsa|चिकित्सा/.test(lowerRef)) refSthana = 'Chikitsasthana';
-      else if (/kalpa|कल्प/.test(lowerRef)) refSthana = 'Kalpasthana';
-      else if (/siddhi|सिद्धि/.test(lowerRef)) refSthana = 'Siddhisthana';
+      if (/nidan|निदान|ca\.?\s*ni|च\.?\s*नि/i.test(lowerRef)) refSthana = 'Nidanasthana';
+      else if (/viman|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(lowerRef)) refSthana = 'Vimanasthana';
+      else if (/sharir|शारीर|ca\.?\s*sha|च\.?\s*शा/i.test(lowerRef)) refSthana = 'Sharirasthana';
+      else if (/indriya|इन्द्रिय|ca\.?\s*in|च\.?\s*इन्/i.test(lowerRef)) refSthana = 'Indriyasthana';
+      else if (/chikitsa|चिकित्सा|ca\.?\s*chi|च\.?\s*चि/i.test(lowerRef)) refSthana = 'Chikitsasthana';
+      else if (/kalpa|कल्प|ca\.?\s*kal|च\.?\s*कल्/i.test(lowerRef)) refSthana = 'Kalpasthana';
+      else if (/siddhi|सिद्धि|ca\.?\s*si|च\.?\s*सि/i.test(lowerRef)) refSthana = 'Siddhisthana';
+      else if (/sutra|सूत्र|ca\.?\s*su|च\.?\s*सू/i.test(lowerRef)) refSthana = 'Sutrasthana';
 
-      const chMatch = effectiveRef.match(/(\d{1,2})\s*\/\s*\d+/) || effectiveRef.match(/chapter\s*(\d{1,2})/i);
+      const chMatch =
+        effectiveRef.match(/(?:ca\.?\s*\w+|च\.?\s*\w+)?\s*[-–]?\s*(\d{1,2})\s*[\/:]\s*\d+/i) ||
+        effectiveRef.match(/(\d{1,2})\s*[\/:]\s*\d+/) ||
+        effectiveRef.match(/chapter\s*(\d{1,2})/i);
       const chNum = chMatch ? chMatch[1] : '1';
       fullChapterName = `Charaka Samhita > ${refSthana} > Chapter ${chNum}`;
     } else {

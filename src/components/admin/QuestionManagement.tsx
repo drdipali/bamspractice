@@ -41,6 +41,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { GeminiService } from '../../services/gemini';
 import { AISettingsModal } from './AISettingsModal';
+import { GoogleSheetSyncModal } from './GoogleSheetSyncModal';
 import { Portal } from '../common/Portal';
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
@@ -106,6 +107,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Modals & form state
   const [isAddFormOpen, setIsAddFormOpen] = useState<boolean>(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [isGoogleSheetModalOpen, setIsGoogleSheetModalOpen] = useState<boolean>(false);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
@@ -521,6 +523,27 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
   };
 
+  // Google Sheet Direct Sync callback
+  const handleGoogleSheetImportSuccess = async (result: {
+    addedCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    affectedIds: string[];
+  }) => {
+    await loadCloudQuestions();
+    if (refreshQuestions) refreshQuestions();
+
+    if (result.affectedIds && result.affectedIds.length > 0) {
+      setEditedIds((prev) => new Set([...prev, ...result.affectedIds]));
+    }
+
+    const msg =
+      result.updatedCount > 0
+        ? `Successfully imported ${result.addedCount} new questions (${result.updatedCount} updated, ${result.skippedCount} skipped) from Google Sheet!`
+        : `Successfully imported ${result.addedCount} questions (${result.skippedCount} skipped) from Google Sheet!`;
+    showToast(msg);
+  };
+
   // Jump to specific Question #
   const handleJumpToQuestion = () => {
     const num = parseInt(jumpNumber.trim(), 10);
@@ -655,6 +678,18 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           >
             <Upload size={16} color={THEME.colors.brandDark} />
             <Text style={styles.btnUploadText}>Upload Excel / CSV</Text>
+          </TouchableOpacity>
+
+          {/* Import from Google Sheet */}
+          <TouchableOpacity
+            style={styles.btnGoogleSheet}
+            onPress={() => {
+              setIsGoogleSheetModalOpen(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <FileSpreadsheet size={16} color="#047857" />
+            <Text style={styles.btnGoogleSheetText}>Import from Google Sheet</Text>
           </TouchableOpacity>
 
           {/* Download Sample Template Dropdown / Action */}
@@ -1494,6 +1529,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         isOpen={internalAISettingsOpen}
         onClose={() => setInternalAISettingsOpen(false)}
       />
+
+      <GoogleSheetSyncModal
+        isOpen={isGoogleSheetModalOpen}
+        onClose={() => setIsGoogleSheetModalOpen(false)}
+        onImportSuccess={handleGoogleSheetImportSuccess}
+        existingQuestions={questions}
+      />
     </View>
   );
 };
@@ -1599,6 +1641,22 @@ const styles = StyleSheet.create({
   },
   btnUploadText: {
     color: THEME.colors.brand,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  btnGoogleSheet: {
+    backgroundColor: '#ECFDF5',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnGoogleSheetText: {
+    color: '#047857',
     fontWeight: '700',
     fontSize: 13,
   },
