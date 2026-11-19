@@ -15,13 +15,10 @@ import {
   Lock,
   Mail,
   Phone,
-  Shield,
   Eye,
   EyeOff,
   AlertCircle,
-  Sparkles,
   ArrowRight,
-  GraduationCap,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { useApp } from '../../context/AppContext';
@@ -29,7 +26,7 @@ import { useApp } from '../../context/AppContext';
 export const WelcomeScreen: React.FC = () => {
   const { logIn, signUp } = useApp();
   const [isSignUp, setIsSignUp] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'email' | 'mobile'>('mobile');
+  const [loginMethod, setLoginMethod] = useState<'mobile' | 'email'>('mobile');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -82,13 +79,6 @@ export const WelcomeScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillQuickCredentials = (demoEmail: string, demoPhone: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPhone(demoPhone);
-    setPassword(demoPass);
-    setErrorMessage('');
   };
 
   return (
@@ -254,7 +244,7 @@ export const WelcomeScreen: React.FC = () => {
                       setEmail(val);
                       if (errorMessage) setErrorMessage('');
                     }}
-                    placeholder="e.g. vaidya@ayurveda.edu"
+                    placeholder="e.g. student@bams.com"
                     placeholderTextColor={THEME.colors.muted}
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -276,7 +266,7 @@ export const WelcomeScreen: React.FC = () => {
                     setPassword(val);
                     if (errorMessage) setErrorMessage('');
                   }}
-                  placeholder="Minimum 6 characters"
+                  placeholder="Enter password"
                   placeholderTextColor={THEME.colors.muted}
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
@@ -316,44 +306,6 @@ export const WelcomeScreen: React.FC = () => {
                 </>
               )}
             </TouchableOpacity>
-          </View>
-
-          {/* Demo Credentials Helper */}
-          <View style={styles.demoSection}>
-            <View style={styles.demoHeader}>
-              <Sparkles size={14} color={THEME.colors.accent} />
-              <Text style={styles.demoTitle}>Quick 1-Tap Demo Logins:</Text>
-            </View>
-
-            <View style={styles.demoBtnRow}>
-              <TouchableOpacity
-                style={styles.demoChip}
-                onPress={() =>
-                  fillQuickCredentials('admin@bams.com', '9876543210', 'admin123')
-                }
-                activeOpacity={0.7}
-              >
-                <Shield size={13} color={THEME.colors.brand} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.demoChipText}>Admin Portal</Text>
-                  <Text style={styles.demoSubText}>+91 98765 43210 · admin@bams.com</Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.demoChip}
-                onPress={() =>
-                  fillQuickCredentials('sharma.ayur@bams.com', '9820012345', 'student123')
-                }
-                activeOpacity={0.7}
-              >
-                <GraduationCap size={13} color={THEME.colors.accent} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.demoChipText}>Student (Vaidya Sharma)</Text>
-                  <Text style={styles.demoSubText}>+91 98200 12345 · sharma.ayur@bams.com</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
 
@@ -576,49 +528,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: THEME.colors.brandInk,
-  },
-  demoSection: {
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: THEME.colors.line,
-    gap: 10,
-  },
-  demoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  demoTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  demoBtnRow: {
-    gap: 8,
-  },
-  demoChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: THEME.colors.bg,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: THEME.radius.sm,
-    borderWidth: 1,
-    borderColor: THEME.colors.line,
-  },
-  demoChipText: {
-    fontSize: 12,
-    color: THEME.colors.ink,
-    fontWeight: '600',
-  },
-  demoSubText: {
-    fontSize: 10,
-    color: THEME.colors.muted,
-    marginTop: 1,
   },
   footerNote: {
     fontSize: 12,

@@ -19,7 +19,8 @@ const SEED_USERS: UserRecord[] = [
   {
     id: 'user_admin_001',
     email: 'admin@bams.com',
-    phone: '9876543210',
+    phone: '7798660051',
+    role: 'admin',
     createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date().toISOString(),
     quizCount: 2,
@@ -133,8 +134,8 @@ const SEED_USERS: UserRecord[] = [
 // In-memory passwords for local cloud engine
 const PASSWORDS_KEY = 'bams_cloud_passwords_v1';
 const DEFAULT_PASSWORDS: Record<string, string> = {
-  'admin@bams.com': 'admin123',
-  '9876543210': 'admin123',
+  'admin@bams.com': 'iamthebest@999',
+  '7798660051': 'iamthebest@999',
   'sharma.ayur@bams.com': 'student123',
   '9820012345': 'student123',
   'priya.bams@bams.com': 'student123',
@@ -142,6 +143,18 @@ const DEFAULT_PASSWORDS: Record<string, string> = {
   'rahul.vaidya@bams.com': 'student123',
   '9840054321': 'student123',
 };
+
+/**
+ * Checks whether a user possesses Administrator privileges
+ * (matching admin role, admin email, or designated mobile number 7798660051).
+ */
+export function isUserAdmin(user: UserRecord | null): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.email.toLowerCase() === 'admin@bams.com') return true;
+  if (user.phone && user.phone.replace(/[^0-9]/g, '').slice(-10) === '7798660051') return true;
+  return false;
+}
 
 /**
  * Builds Chapter objects containing all 1,179 classical BAMS syllabus chapters,
@@ -246,6 +259,34 @@ class BackendService {
         await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords));
       }
 
+      // Ensure Admin user and password are consistently kept up-to-date
+      let admin = this.users.find(
+        (u) =>
+          u.role === 'admin' ||
+          u.email.toLowerCase() === 'admin@bams.com' ||
+          (u.phone && u.phone.replace(/[^0-9]/g, '').slice(-10) === '7798660051')
+      );
+      if (admin) {
+        admin.phone = '7798660051';
+        admin.role = 'admin';
+      } else {
+        admin = {
+          id: 'user_admin_001',
+          email: 'admin@bams.com',
+          phone: '7798660051',
+          role: 'admin',
+          createdAt: new Date().toISOString(),
+          lastActive: new Date().toISOString(),
+          quizCount: 2,
+          quizzes: [],
+        };
+        this.users.unshift(admin);
+      }
+      this.passwords['admin@bams.com'] = 'iamthebest@999';
+      this.passwords['7798660051'] = 'iamthebest@999';
+      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
+      await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords));
+
       // 3. Current Session
       const storedSession = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
       if (storedSession) {
@@ -285,6 +326,9 @@ class BackendService {
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
       throw new Error('Please enter a valid email address.');
     }
+    if (normalizedEmail === 'admin@bams.com') {
+      throw new Error('This email is reserved for System Administration. Please Log In directly.');
+    }
     if (!password || password.length < 6) {
       throw new Error('Password must be at least 6 characters long.');
     }
@@ -292,6 +336,9 @@ class BackendService {
     const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : undefined;
     if (cleanPhone && cleanPhone.length < 10) {
       throw new Error('Please enter a valid 10-digit mobile number.');
+    }
+    if (cleanPhone && cleanPhone.slice(-10) === '7798660051') {
+      throw new Error('This mobile number is reserved for System Administration. Please Log In directly.');
     }
 
     const existingEmail = this.users.find((u) => u.email.toLowerCase() === normalizedEmail);
@@ -344,8 +391,42 @@ class BackendService {
       throw new Error('Please enter your email or mobile number.');
     }
 
-    if (normalized === 'admin@bams.com' && !this.passwords['admin@bams.com']) {
-      this.passwords['admin@bams.com'] = 'admin123';
+    const isAdminLogin =
+      digitsOnly === '7798660051' ||
+      digitsOnly.slice(-10) === '7798660051' ||
+      normalized === 'admin@bams.com';
+
+    if (isAdminLogin) {
+      if (password !== 'iamthebest@999') {
+        throw new Error('Incorrect Admin password. Please try again.');
+      }
+      let admin = this.users.find(
+        (u) =>
+          u.role === 'admin' ||
+          u.email.toLowerCase() === 'admin@bams.com' ||
+          (u.phone && u.phone.replace(/[^0-9]/g, '').slice(-10) === '7798660051')
+      );
+      if (!admin) {
+        admin = {
+          id: 'user_admin_001',
+          email: 'admin@bams.com',
+          phone: '7798660051',
+          role: 'admin',
+          createdAt: new Date().toISOString(),
+          lastActive: new Date().toISOString(),
+          quizCount: 2,
+          quizzes: [],
+        };
+        this.users.unshift(admin);
+      }
+      admin.role = 'admin';
+      admin.phone = '7798660051';
+      admin.lastActive = new Date().toISOString();
+      this.currentUser = admin;
+
+      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
+      await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(admin));
+      return admin;
     }
 
     // Match by email or 10-digit mobile number

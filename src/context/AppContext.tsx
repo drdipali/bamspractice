@@ -23,7 +23,7 @@ import {
   savePracticeSets,
   saveBookmarks,
 } from '../utils/storage';
-import { backend } from '../services/backend';
+import { backend, isUserAdmin } from '../services/backend';
 
 export interface AppContextType {
   currentUser: UserRecord | null;
@@ -169,7 +169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const navigateToAdmin = () => {
-    if (currentUser?.email.toLowerCase() === 'admin@bams.com') {
+    if (isUserAdmin(currentUser)) {
       setView('admin');
     }
   };

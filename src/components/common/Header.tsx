@@ -4,6 +4,7 @@ import { LogOut, Shield, User } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { useApp } from '../../context/AppContext';
 import { Language } from '../../types';
+import { isUserAdmin } from '../../services/backend';
 import { SegmentedControl } from './SegmentedControl';
 
 interface HeaderProps {
@@ -25,7 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
     { value: 'both', label: 'Both' },
   ];
 
-  const isAdmin = currentUser?.email.toLowerCase() === 'admin@bams.com';
+  const isAdmin = isUserAdmin(currentUser);
 
   return (
     <View style={styles.headerContainer}>
@@ -54,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
               <View style={styles.userPill}>
                 <User size={12} color={THEME.colors.muted} />
                 <Text style={styles.userPillText} numberOfLines={1}>
-                  {currentUser.email}
+                  {isAdmin ? 'Admin' : (currentUser.phone ? `+91 ${currentUser.phone}` : currentUser.email)}
                 </Text>
               </View>
 

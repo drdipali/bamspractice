@@ -17,6 +17,7 @@ export interface UserRecord {
   id: string;
   email: string;
   phone?: string;
+  role?: 'admin' | 'student';
   createdAt: string;
   lastActive: string;
   quizCount: number;
