@@ -23,12 +23,15 @@ import {
   Calendar,
   Phone,
   X,
+  Sparkles,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { UserRecord } from '../../types/auth';
 import { backend } from '../../services/backend';
 import { useApp } from '../../context/AppContext';
 import { QuestionManagement } from './QuestionManagement';
+import { AISettingsModal } from './AISettingsModal';
+import { GeminiService } from '../../services/gemini';
 
 export const AdminDashboard: React.FC = () => {
   const { setView, currentUser } = useApp();
@@ -37,6 +40,15 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [isAISettingsOpen, setIsAISettingsOpen] = useState(false);
+  const [hasAIKey, setHasAIKey] = useState(false);
+
+  const checkAIKey = async () => {
+    try {
+      const key = await GeminiService.getApiKey();
+      setHasAIKey(!!key);
+    } catch {}
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -52,6 +64,7 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    checkAIKey();
   }, []);
 
   // Filtered users
@@ -135,6 +148,20 @@ export const AdminDashboard: React.FC = () => {
 
         <View style={styles.headerActions}>
           <TouchableOpacity
+            style={styles.aiSettingsBtn}
+            onPress={() => setIsAISettingsOpen(true)}
+            activeOpacity={0.7}
+          >
+            <Sparkles size={14} color="#D97706" />
+            <Text style={styles.aiSettingsBtnText}>AI Settings</Text>
+            {hasAIKey ? (
+              <View style={styles.aiKeyDotActive} />
+            ) : (
+              <View style={styles.aiKeyDotInactive} />
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={styles.refreshBtn}
             onPress={loadData}
             activeOpacity={0.7}
@@ -184,7 +211,7 @@ export const AdminDashboard: React.FC = () => {
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {activeTab === 'cms' ? (
-          <QuestionManagement />
+          <QuestionManagement onOpenAISettings={() => setIsAISettingsOpen(true)} />
         ) : (
           <>
             {/* Metric Summary Cards */}
@@ -373,6 +400,12 @@ export const AdminDashboard: React.FC = () => {
           </>
         )}
       </ScrollView>
+
+      <AISettingsModal
+        isOpen={isAISettingsOpen}
+        onClose={() => setIsAISettingsOpen(false)}
+        onKeySaved={checkAIKey}
+      />
     </View>
   );
 };
@@ -421,6 +454,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  aiSettingsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  aiSettingsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  aiKeyDotActive: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#15803D',
+  },
+  aiKeyDotInactive: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#D97706',
   },
   refreshBtn: {
     flexDirection: 'row',
