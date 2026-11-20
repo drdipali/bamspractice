@@ -297,39 +297,64 @@ export class GeminiService {
     const systemInstruction = `You are an expert BAMS / AIAPGET (All India AYUSH Post Graduate Entrance Test) Ayurveda examination author and editor.
 Your task is to transform, convert, or polish the provided MCQ according to the user's specific instruction or requested format conversion.
 
-RULES:
-1. Always maintain classical Ayurvedic medical accuracy according to Brihat Trayi (Charaka Samhita, Sushruta Samhita, Ashtanga Hridaya/Sangraha) and Laghu Trayi.
-2. Fix spelling of Sanskrit and Ayurvedic concepts (e.g. Charaka, Audbhida, Sharira, Dosha, Dhatu, Mala, Ojas, Agni, Srotas, Guna, Virya, Vipaka, Prabhava).
-3. Ensure high quality bilingual formatting (English + Devanagari Hindi) where applicable.
-4. If converting to "Statement I & II":
-   - Set questionType to "statement_type".
-   - Formulate two clear, high-yield Ayurvedic medical statements: "statement1" and "statement2" (both in English and Devanagari/Hindi).
-   - The questionText should introduce the two statements: "Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II के रूप में लेबल किया गया है।"
+CORE RULES:
+1. Classical Ayurvedic Accuracy: Always maintain authentic Ayurvedic textual accuracy according to Brihat Trayi (Charaka Samhita, Sushruta Samhita, Ashtanga Hridaya/Sangraha) and Laghu Trayi.
+2. Terminology & Spelling: Preserve and accurately spell classical Sanskrit/Ayurvedic terms with diacritics where applicable (e.g. Charaka, Audbhida, Sharira, Dosha, Dhatu, Mala, Ojas, Agni, Srotas, Guna, Virya, Vipaka, Prabhava).
+3. STRICT BILINGUAL FORMATTING (English + Devanagari Hindi):
+   - You MUST ALWAYS provide BOTH high-grade English AND natural, authentic Devanagari Hindi for all question stems, statements, options, and explanations.
+   - NEVER drop or omit English. NEVER drop or omit Hindi. Both must be present in every single field.
+
+4. MANDATORY BILINGUAL EXPLANATION:
+   - "explanation" MUST NEVER BE IN ENGLISH ONLY. It is strictly mandatory to provide a comprehensive BILINGUAL explanation in both English and natural Hindi:
+     1. English section: Thorough clinical and textual rationale, citing classical Samhita, Sthana, Adhyaya, and Shloka. If Statement question, clearly explain why Statement I is true or false, and why Statement II is true or false.
+     2. Hindi section: Immediately followed by "\\n\\nहिंदी व्याख्या:\\n" with a complete, natural, grammatically correct Devanagari Hindi explanation of the exact same concepts, classical Shlokas, and justifications.
+
+5. IF CONVERTING TO "Statement I & II":
+   - Set "questionType": "statement_type".
+   - DO NOT CUT, TRUNCATE, OR DISCARD the original question's medical concept or context.
+   - Formulate two complete, academically rigorous Ayurvedic medical statements derived directly from the classical reference:
+     "statement1": "Statement I: [Complete English statement] / कथन I: [पूर्ण हिंदी कथन]"
+     "statement2": "Statement II: [Complete English statement] / कथन II: [पूर्ण हिंदी कथन]"
+   - NEVER label statements as "A:" or "R:"! Mislabelling statements as Assertion/Reason is strictly prohibited.
+   - "questionText" MUST assemble the full question cleanly so that students see the complete question without anything cut off:
+     "Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।\\n\\nStatement I: [Complete English statement]\\nकथन I: [पूर्ण हिंदी कथन]\\n\\nStatement II: [Complete English statement]\\nकथन II: [पूर्ण हिंदी कथन]"
    - Rewrite Options A–D to the official NTA AIAPGET standard:
      Option A: "Both Statement I and Statement II are correct / दोनों कथन I और II सही हैं"
      Option B: "Both Statement I and Statement II are incorrect / दोनों कथन I और II गलत हैं"
      Option C: "Statement I is correct but Statement II is incorrect / कथन I सही है परंतु कथन II गलत है"
      Option D: "Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है"
-   - Compute and set "correctAnswer" (0 for A, 1 for B, 2 for C, 3 for D) based on the medical correctness of Statement I & II.
-5. If converting to "Assertion–Reason":
-   - Set questionType to "assertion_reason".
-   - Formulate "assertionText" (Assertion A) and "reasonText" (Reason R) (both in English and Devanagari/Hindi).
-   - The questionText should be: "Given below are two statements: one is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को कारण (R) कहा गया है।"
+   - Compute and set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D) based on the medical correctness of Statement I & II.
+   - In "explanation", provide a full bilingual explanation in English and Hindi detailing why Statement I is true/false AND why Statement II is true/false.
+
+6. IF CONVERTING TO "Assertion–Reason":
+   - Set "questionType": "assertion_reason".
+   - DO NOT CUT the clinical concept.
+   - Formulate "assertionText" and "reasonText", both bilingual:
+     "assertionText": "Assertion (A): [Complete English] / अभिकथन (A): [पूर्ण हिंदी]"
+     "reasonText": "Reason (R): [Complete English] / कारण (R): [पूर्ण हिंदी]"
+   - "questionText" MUST assemble:
+     "Given below are two statements: One is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को कारण (R) कहा गया है।\\n\\nAssertion (A): [English]\\nअभिकथन (A): [हिंदी]\\n\\nReason (R): [English]\\nकारण (R): [हिंदी]"
    - Rewrite Options A–D to the official NTA AIAPGET standard:
      Option A: "Both (A) and (R) are true and (R) is the correct explanation of (A) / (A) और (R) दोनों सही हैं और (R), (A) की सही व्याख्या है"
      Option B: "Both (A) and (R) are true but (R) is NOT the correct explanation of (A) / (A) और (R) दोनों सही हैं परंतु (R), (A) की सही व्याख्या नहीं है"
      Option C: "(A) is true but (R) is false / (A) सही है परंतु (R) सही नहीं है"
      Option D: "(A) is false but (R) is true / (A) सही नहीं है परंतु (R) सही है"
-   - Compute and set "correctAnswer" (0 for A, 1 for B, 2 for C, 3 for D).
-6. If converting to "Direct MCQ":
-   - Set questionType to "standard".
-   - Make questionText a direct, crisp exam question.
-   - Formulate 4 distinct options A, B, C, D with exactly 1 unambiguous correct answer.
    - Set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D).
-7. If fixing "Bilingual Hindi":
-   - Provide natural, authentic Devanagari Hindi translation alongside English in both questionText and all options A–D without changing the correct answer index or clinical meaning.
-8. If given a custom user instruction:
-   - Faithfully follow the instruction, updating all affected fields.
+   - In "explanation", provide complete bilingual explanation in English and Hindi.
+
+7. IF CONVERTING TO "Direct MCQ":
+   - Set "questionType": "standard".
+   - Formulate questionText as a direct, crisp exam question in both English and Devanagari Hindi.
+   - Formulate 4 distinct options A, B, C, D in both English and Devanagari Hindi with 1 unambiguous correct answer.
+   - Set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D).
+   - In "explanation", provide complete bilingual explanation in English and Hindi.
+
+8. IF FIXING "Bilingual Hindi":
+   - Provide natural, authentic Devanagari Hindi translation alongside English in questionText and all options A–D without changing the correct answer index or clinical meaning.
+   - Provide complete bilingual explanation in English and Hindi.
+
+9. CUSTOM USER INSTRUCTIONS:
+   - Faithfully follow the instruction, updating all affected fields while ALWAYS maintaining bilingual English + Devanagari Hindi in stems, statements, options, and explanations.
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object with the following keys:
@@ -456,19 +481,85 @@ Return ONLY a valid JSON object with the following keys:
           }
         }
 
+        let finalQuestionType = parsed.questionType || params.questionType;
+        let finalQuestionText = String(parsed.questionText || '').trim();
+        let s1 = parsed.statement1 ? String(parsed.statement1).trim() : undefined;
+        let s2 = parsed.statement2 ? String(parsed.statement2).trim() : undefined;
+        let aText = parsed.assertionText ? String(parsed.assertionText).trim() : undefined;
+        let rText = parsed.reasonText ? String(parsed.reasonText).trim() : undefined;
+        let finalExplanation = parsed.explanation ? String(parsed.explanation).trim() : params.explanation;
+
+        // Post-processing for Statement I & II Questions:
+        if (finalQuestionType === 'statement_type') {
+          // 1. Clean mislabelled A: or R: prefixes from statements
+          if (s1) {
+            s1 = s1.replace(/^(?:A\s*[:\.]|Assertion\s*\(?A\)?\s*[:\.]?)\s*/i, 'Statement I: ');
+            if (!s1.toLowerCase().startsWith('statement i')) {
+              s1 = `Statement I: ${s1}`;
+            }
+          }
+          if (s2) {
+            s2 = s2.replace(/^(?:R\s*[:\.]|Reason\s*\(?R\)?\s*[:\.]?)\s*/i, 'Statement II: ');
+            if (!s2.toLowerCase().startsWith('statement ii')) {
+              s2 = `Statement II: ${s2}`;
+            }
+          }
+
+          // 2. Clean mislabelled A: / R: from questionText
+          finalQuestionText = finalQuestionText
+            .replace(/(?:^|\n)\s*A:\s*/g, '\nStatement I: ')
+            .replace(/(?:^|\n)\s*R:\s*/g, '\nStatement II: ');
+
+          // 3. Extract s1 and s2 from questionText if they were not returned in their keys
+          if (!s1) {
+            const m1 = finalQuestionText.match(/Statement\s*I\s*[:\/]([\s\S]*?)(?=Statement\s*II|$)/i);
+            if (m1) s1 = `Statement I: ${m1[1].trim()}`;
+          }
+          if (!s2) {
+            const m2 = finalQuestionText.match(/Statement\s*II\s*[:\/]([\s\S]*?)$/i);
+            if (m2) s2 = `Statement II: ${m2[1].trim()}`;
+          }
+
+          // 4. Ensure questionText contains the complete full bilingual question without cutting anything
+          const stmtIntro =
+            'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+
+          if (s1 && s2) {
+            // If questionText doesn't already contain both statements cleanly
+            if (
+              !finalQuestionText.includes(s1.slice(0, 25)) ||
+              !finalQuestionText.includes(s2.slice(0, 25))
+            ) {
+              finalQuestionText = `${stmtIntro}\n\n${s1}\n\n${s2}`;
+            }
+          }
+        }
+
+        // Post-processing for Assertion-Reason Questions:
+        if (finalQuestionType === 'assertion_reason') {
+          if (!aText) {
+            const ma = finalQuestionText.match(/Assertion\s*\(?A\)?\s*[:\/]([\s\S]*?)(?=Reason\s*\(?R\)?|$)/i);
+            if (ma) aText = `Assertion (A): ${ma[1].trim()}`;
+          }
+          if (!rText) {
+            const mr = finalQuestionText.match(/Reason\s*\(?R\)?\s*[:\/]([\s\S]*?)$/i);
+            if (mr) rText = `Reason (R): ${mr[1].trim()}`;
+          }
+        }
+
         return {
-          questionType: parsed.questionType || params.questionType,
-          questionText: String(parsed.questionText).trim(),
+          questionType: finalQuestionType,
+          questionText: finalQuestionText,
           optionA: String(parsed.optionA ?? params.optionA).trim(),
           optionB: String(parsed.optionB ?? params.optionB).trim(),
           optionC: String(parsed.optionC ?? params.optionC).trim(),
           optionD: String(parsed.optionD ?? params.optionD).trim(),
           correctAnswer: parsedCorrectAnswer,
-          explanation: parsed.explanation ? String(parsed.explanation).trim() : params.explanation,
-          assertionText: parsed.assertionText ? String(parsed.assertionText).trim() : undefined,
-          reasonText: parsed.reasonText ? String(parsed.reasonText).trim() : undefined,
-          statement1: parsed.statement1 ? String(parsed.statement1).trim() : undefined,
-          statement2: parsed.statement2 ? String(parsed.statement2).trim() : undefined,
+          explanation: finalExplanation,
+          assertionText: aText,
+          reasonText: rText,
+          statement1: s1,
+          statement2: s2,
         };
       } catch (err: any) {
         clearTimeout(timeoutId);

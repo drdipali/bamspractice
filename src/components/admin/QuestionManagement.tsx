@@ -55,25 +55,25 @@ const AI_QUICK_CHIPS = [
   {
     label: 'Convert to Statement I & II',
     instruction:
-      'Convert this question into NTA AIAPGET Statement I & Statement II format with bilingual English and Hindi/Sanskrit, standard options A-D, and correct answer index.',
+      'Convert this question into NTA AIAPGET Statement I & Statement II format. DO NOT cut or shorten the question concepts. Formulate Statement I and Statement II with full bilingual text in BOTH English and Devanagari Hindi. NEVER label as A: or R:. Provide a full bilingual explanation in BOTH English and natural Hindi (हिंदी व्याख्या:) with classical Shloka citations explaining why Statement I and Statement II are true or false.',
     actionName: 'Statement I & II Conversion',
   },
   {
     label: 'Convert to Assertion–Reason',
     instruction:
-      'Convert this question into NTA AIAPGET Assertion (A) and Reason (R) format with bilingual English and Hindi/Sanskrit, standard options A-D, and correct answer index.',
+      'Convert this question into NTA AIAPGET Assertion (A) and Reason (R) format. DO NOT cut the core question concepts. Formulate Assertion (A) and Reason (R) with full bilingual text in BOTH English and Devanagari Hindi. Provide a full bilingual explanation in BOTH English and natural Hindi (हिंदी व्याख्या:) with classical Shloka citations.',
     actionName: 'Assertion–Reason Conversion',
   },
   {
     label: 'Convert to Direct MCQ',
     instruction:
-      'Convert this question into a direct single-best-answer standard MCQ with 4 plausible choices A-D in English and Devanagari Hindi.',
+      'Convert this question into a direct single-best-answer standard MCQ with 4 plausible choices A-D in English and Devanagari Hindi. Provide a full bilingual explanation in BOTH English and natural Hindi (हिंदी व्याख्या:).',
     actionName: 'Direct MCQ Conversion',
   },
   {
     label: 'Fix Bilingual Hindi',
     instruction:
-      'Fix and enhance the bilingual Sanskrit / Devanagari Hindi translation, correcting spelling of classical Ayurvedic terms and maintaining exam-grade precision.',
+      'Fix and polish bilingual English and Devanagari Hindi for Question Text, all Options A-D, and provide a full bilingual explanation in English and natural Hindi (हिंदी व्याख्या:). Keep the correct answer index unchanged.',
     actionName: 'Bilingual Hindi Polishing',
   },
 ];
@@ -227,10 +227,28 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     );
     setCorrectAnswer(q.c ?? 0);
     setExplanation(q.explanation || (q as any).exp || '');
-    setAssertionText(q.assertionText || '');
-    setReasonText(q.reasonText || '');
-    setStatement1(q.statement1 || '');
-    setStatement2(q.statement2 || '');
+
+    let aText = q.assertionText || '';
+    let rText = q.reasonText || '';
+    if (q.questionType === 'assertion_reason' && (!aText || !rText)) {
+      const ma = (q.stem || '').match(/Assertion\s*\(?A\)?\s*[:\/]([\s\S]*?)(?=Reason\s*\(?R\)?|$)/i);
+      const mr = (q.stem || '').match(/Reason\s*\(?R\)?\s*[:\/]([\s\S]*?)$/i);
+      if (ma && !aText) aText = ma[1].trim();
+      if (mr && !rText) rText = mr[1].trim();
+    }
+    setAssertionText(aText);
+    setReasonText(rText);
+
+    let s1 = q.statement1 || '';
+    let s2 = q.statement2 || '';
+    if (q.questionType === 'statement_type' && (!s1 || !s2)) {
+      const m1 = (q.stem || '').match(/Statement\s*I\s*[:\/]([\s\S]*?)(?=Statement\s*II|$)/i);
+      const m2 = (q.stem || '').match(/Statement\s*II\s*[:\/]([\s\S]*?)$/i);
+      if (m1 && !s1) s1 = `Statement I: ${m1[1].trim()}`;
+      if (m2 && !s2) s2 = `Statement II: ${m2[1].trim()}`;
+    }
+    setStatement1(s1);
+    setStatement2(s2);
     if (q.matchPairs && q.matchPairs.length > 0) {
       setMatchPairs(q.matchPairs);
     }
@@ -392,6 +410,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     if (qType === 'assertion_reason') {
       if (!assertionText.trim() && !stem.includes('A:')) {
         alert('Please enter the Assertion (A) text.');
+        return;
+      }
+    }
+
+    if (qType === 'statement_type') {
+      if (!statement1.trim() && !statement2.trim() && !stem.includes('Statement I')) {
+        alert('Please enter Statement I and Statement II.');
         return;
       }
     }
@@ -1184,7 +1209,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     style={[styles.textInput, styles.textareaSmall]}
                     value={assertionText}
                     onChangeText={setAssertionText}
-                    placeholder="Assertion (A) statement..."
+                    placeholder="Assertion (A) statement in English and Hindi..."
                     placeholderTextColor={THEME.colors.muted}
                     multiline
                   />
@@ -1193,7 +1218,58 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     style={[styles.textInput, styles.textareaSmall]}
                     value={reasonText}
                     onChangeText={setReasonText}
-                    placeholder="Reason (R) statement..."
+                    placeholder="Reason (R) statement in English and Hindi..."
+                    placeholderTextColor={THEME.colors.muted}
+                    multiline
+                  />
+                </View>
+              )}
+
+              {/* Statement I & II Fields */}
+              {qType === 'statement_type' && (
+                <View style={[styles.conditionalCard, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                  <Text style={[styles.conditionalTitle, { color: '#5B21B6' }]}>
+                    Statement I &amp; Statement II (Bilingual)
+                  </Text>
+                  <Text style={[styles.subLabel, { color: '#4C1D95' }]}>Statement I / कथन I (English + Devanagari Hindi):</Text>
+                  <TextInput
+                    style={[styles.textInput, styles.textareaSmall]}
+                    value={statement1}
+                    onChangeText={(val) => {
+                      setStatement1(val);
+                      if (val || statement2) {
+                        const intro =
+                          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+                        const s1Text = val.trim();
+                        const s2Text = statement2.trim();
+                        setStem(
+                          `${intro}\n\n${s1Text ? (s1Text.startsWith('Statement I') ? s1Text : `Statement I: ${s1Text}`) : ''}\n\n${s2Text ? (s2Text.startsWith('Statement II') ? s2Text : `Statement II: ${s2Text}`) : ''}`.trim()
+                        );
+                      }
+                    }}
+                    placeholder="Statement I in English and Devanagari Hindi..."
+                    placeholderTextColor={THEME.colors.muted}
+                    multiline
+                  />
+                  <Text style={[styles.subLabel, { marginTop: 8, color: '#4C1D95' }]}>
+                    Statement II / कथन II (English + Devanagari Hindi):
+                  </Text>
+                  <TextInput
+                    style={[styles.textInput, styles.textareaSmall]}
+                    value={statement2}
+                    onChangeText={(val) => {
+                      setStatement2(val);
+                      if (statement1 || val) {
+                        const intro =
+                          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+                        const s1Text = statement1.trim();
+                        const s2Text = val.trim();
+                        setStem(
+                          `${intro}\n\n${s1Text ? (s1Text.startsWith('Statement I') ? s1Text : `Statement I: ${s1Text}`) : ''}\n\n${s2Text ? (s2Text.startsWith('Statement II') ? s2Text : `Statement II: ${s2Text}`) : ''}`.trim()
+                        );
+                      }
+                    }}
+                    placeholder="Statement II in English and Devanagari Hindi..."
                     placeholderTextColor={THEME.colors.muted}
                     multiline
                   />
@@ -1474,6 +1550,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                         <Text style={[styles.arItem, { marginTop: 4 }]}>
                           <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Reason (R): </Text>
                           {q.reasonText}
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {/* Statement Type Details */}
+                  {q.questionType === 'statement_type' && (q.statement1 || q.statement2) && (
+                    <View style={[styles.arBox, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                      {q.statement1 ? (
+                        <Text style={styles.arItem}>
+                          <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement I: </Text>
+                          {q.statement1.replace(/^Statement I:\s*/i, '')}
+                        </Text>
+                      ) : null}
+                      {q.statement2 ? (
+                        <Text style={[styles.arItem, { marginTop: 4 }]}>
+                          <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement II: </Text>
+                          {q.statement2.replace(/^Statement II:\s*/i, '')}
                         </Text>
                       ) : null}
                     </View>
