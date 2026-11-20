@@ -21,6 +21,7 @@ import {
   Check,
   HelpCircle,
   Sparkles,
+  Upload,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question } from '../../types';
@@ -84,7 +85,7 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
 
   // Handle Fetch & Preview
   const handleFetchAndPreview = async () => {
-    const trimmed = sheetUrl.trim();
+    const trimmed = sheetUrl.trim().replace(/^["']|["']$/g, '');
     if (!trimmed) {
       setErrorMessage('Please paste your Google Sheet URL before clicking Fetch & Preview.');
       return;
@@ -95,7 +96,7 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
     setPreviewStats(null);
 
     try {
-      // 1. Live fetch CSV export from Google Sheets
+      // 1. Live fetch CSV export from Google Sheets across candidate endpoints
       const csvText = await fetchGoogleSheetCsv(trimmed);
 
       // 2. Parse using strict UTF-8 decoder
@@ -121,6 +122,38 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
     } finally {
       setIsFetching(false);
     }
+  };
+
+  // Handle direct file picking as an instant fallback
+  const handleLocalFilePicked = (event: any) => {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+
+    setErrorMessage(null);
+    setIsFetching(true);
+    setPreviewStats(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const buffer = e.target?.result as ArrayBuffer;
+      if (buffer) {
+        try {
+          const parsed = parseSpreadsheetBuffer(buffer);
+          if (parsed.validQuestions.length === 0) {
+            throw new Error(
+              'No valid questions found in this file. Please verify it contains Question Text, Options A-D, and Correct Answer.'
+            );
+          }
+          const stats = calculateGoogleSheetPreview(parsed, existingQuestions);
+          setPreviewStats(stats);
+        } catch (err: any) {
+          setErrorMessage('Failed to parse file: ' + err.message);
+        } finally {
+          setIsFetching(false);
+        }
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   // Handle Confirm & Import to Cloud DB
@@ -226,6 +259,42 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
                 </View>
                 <Text style={styles.checkboxLabel}>Save this Sheet URL as default for future syncs</Text>
               </TouchableOpacity>
+
+              {/* Direct File Fallback Option */}
+              <View style={styles.fileFallbackDivider}>
+                <View style={styles.fileFallbackLine} />
+                <Text style={styles.fileFallbackDividerText}>OR CHOOSE FILE INSTEAD</Text>
+                <View style={styles.fileFallbackLine} />
+              </View>
+
+              <View style={styles.fileFallbackBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Upload size={16} color="#047857" />
+                  <Text style={styles.fileFallbackBoxTitle}>Upload Downloaded CSV or Excel File</Text>
+                </View>
+                <Text style={styles.fileFallbackBoxSub}>
+                  If you have downloaded your Google Sheet (.csv or .xlsx), you can select it directly here:
+                </Text>
+
+                {Platform.OS === 'web' && (
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={handleLocalFilePicked}
+                    style={{
+                      marginTop: 6,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #CBD5E1',
+                      backgroundColor: '#FFFFFF',
+                      width: '100%',
+                      maxWidth: 320,
+                    }}
+                  />
+                )}
+              </View>
             </View>
 
             {/* Error Message Box with Troubleshooting Guide */}
@@ -238,15 +307,15 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
                     <Text style={styles.errorText}>{errorMessage}</Text>
 
                     <View style={styles.errorTipsCard}>
-                      <Text style={styles.errorTipsTitle}>How to fix permissions in Google Sheets:</Text>
+                      <Text style={styles.errorTipsTitle}>How to fix access in 2 easy ways:</Text>
                       <Text style={styles.errorTipItem}>
-                        1. In your Google Sheet, click the blue <Text style={{ fontWeight: '700' }}>"Share"</Text> button at the top-right.
+                        <Text style={{ fontWeight: '700' }}>Option 1 (Share Link):</Text> In your Google Sheet, click <Text style={{ fontWeight: '700' }}>"Share"</Text> (top-right) → under General access select <Text style={{ fontWeight: '700' }}>"Anyone with the link"</Text> (Viewer).
                       </Text>
                       <Text style={styles.errorTipItem}>
-                        2. Under <Text style={{ fontWeight: '700' }}>General access</Text>, change from "Restricted" to <Text style={{ fontWeight: '700' }}>"Anyone with the link"</Text> (Viewer).
+                        <Text style={{ fontWeight: '700' }}>Option 2 (Publish to Web):</Text> Click <Text style={{ fontWeight: '700' }}>File → Share → Publish to web</Text>, select <Text style={{ fontWeight: '700' }}>Comma-separated values (.csv)</Text>, and paste that published link above.
                       </Text>
                       <Text style={styles.errorTipItem}>
-                        3. <Text style={{ fontWeight: '700' }}>Alternative (100% reliable):</Text> In Google Sheets, click <Text style={{ fontWeight: '700' }}>File → Share → Publish to web</Text>, choose <Text style={{ fontWeight: '700' }}>Comma-separated values (.csv)</Text>, and paste that link here.
+                        <Text style={{ fontWeight: '700' }}>Option 3 (Direct File):</Text> Click <Text style={{ fontWeight: '700' }}>File → Download → Comma-separated values (.csv)</Text> in Google Sheets, then click the "Choose File" button above.
                       </Text>
                     </View>
                   </View>
@@ -602,6 +671,41 @@ const styles = StyleSheet.create({
   checkboxLabel: {
     fontSize: 12,
     color: THEME.colors.muted,
+  },
+  fileFallbackDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 14,
+  },
+  fileFallbackLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  fileFallbackDividerText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+    letterSpacing: 0.8,
+  },
+  fileFallbackBox: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    padding: 12,
+    gap: 6,
+  },
+  fileFallbackBoxTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  fileFallbackBoxSub: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+    lineHeight: 16,
   },
   errorBox: {
     backgroundColor: '#FEF2F2',

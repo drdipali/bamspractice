@@ -37,108 +37,190 @@ export function normalizeQuestionStem(text: string): string {
  * Converts any standard Google Sheet URL (edit, share, pubhtml, export) into
  * a direct Google CSV export URL with strict UTF-8 output.
  */
-export function extractGoogleSheetCsvUrl(rawUrl: string): {
-  csvUrl: string;
+/**
+ * Converts any standard Google Sheet URL (edit, share, pubhtml, export) into
+ * candidate Google CSV export URLs with strict UTF-8 output.
+ */
+export function extractGoogleSheetCsvCandidates(rawUrl: string): {
+  candidateUrls: string[];
   sheetId: string;
-  gid: string;
+  gid?: string;
+  isTruncated?: boolean;
 } | null {
   const url = (rawUrl || '').trim();
   if (!url) return null;
 
-  // 1. Check if already a direct published web CSV url
+  // 1. Direct published web link
+  // e.g. https://docs.google.com/spreadsheets/d/e/2PACX-.../pub?output=csv
   if (url.includes('/spreadsheets/d/e/')) {
-    if (url.includes('pub?output=csv')) {
-      return { csvUrl: url, sheetId: 'pub_web', gid: '0' };
+    let clean = url;
+    if (clean.includes('pub?output=csv')) {
+      return { candidateUrls: [clean], sheetId: 'pub_web' };
     }
-    if (url.includes('/pub')) {
-      const fixed = url.replace(/\/pub(\?.*)?$/, '/pub?output=csv');
-      return { csvUrl: fixed, sheetId: 'pub_web', gid: '0' };
+    if (clean.includes('/pub')) {
+      clean = clean.replace(/\/pub(\?.*)?$/, '/pub?output=csv');
+      return { candidateUrls: [clean], sheetId: 'pub_web' };
+    }
+    if (clean.includes('/pubhtml')) {
+      clean = clean.replace(/\/pubhtml(\?.*)?$/, '/pub?output=csv');
+      return { candidateUrls: [clean], sheetId: 'pub_web' };
     }
   }
 
   // 2. Standard Google Sheet URL
   const sheetIdMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!sheetIdMatch || !sheetIdMatch[1]) {
-    // If user provided a raw CSV link directly
     if (url.startsWith('http') && (url.includes('.csv') || url.includes('format=csv') || url.includes('output=csv'))) {
-      return { csvUrl: url, sheetId: 'custom', gid: '0' };
+      return { candidateUrls: [url], sheetId: 'custom' };
     }
     return null;
   }
 
   const sheetId = sheetIdMatch[1];
+  const isTruncated = sheetId.length < 28;
 
-  // 3. Extract GID (sheet tab id)
+  // Extract explicit GID if present in user URL
   const gidMatch = url.match(/[#?&]gid=([0-9]+)/);
-  const gid = gidMatch ? gidMatch[1] : '0';
+  const explicitGid = gidMatch ? gidMatch[1] : undefined;
 
-  const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-  return { csvUrl, sheetId, gid };
+  const candidateUrls: string[] = [];
+
+  // Candidate 1: Google Visualization API (Direct HTTP 200, CORS enabled, no 307 redirect, works on public sheets)
+  if (explicitGid) {
+    candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${explicitGid}`);
+  }
+  candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`);
+
+  // Candidate 2: Standard Google export endpoint (omit gid if not explicit so it defaults to active sheet)
+  if (explicitGid) {
+    candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${explicitGid}`);
+  }
+  candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`);
+
+  // Candidate 3: Standard Google export endpoint with gid=0
+  if (!explicitGid) {
+    candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`);
+  }
+
+  return {
+    candidateUrls: Array.from(new Set(candidateUrls)),
+    sheetId,
+    gid: explicitGid,
+    isTruncated,
+  };
+}
+
+export function extractGoogleSheetCsvUrl(rawUrl: string): {
+  csvUrl: string;
+  sheetId: string;
+  gid: string;
+} | null {
+  const result = extractGoogleSheetCsvCandidates(rawUrl);
+  if (!result || result.candidateUrls.length === 0) return null;
+  return {
+    csvUrl: result.candidateUrls[0],
+    sheetId: result.sheetId,
+    gid: result.gid || '0',
+  };
 }
 
 /**
- * Live-fetches CSV data from Google Sheets with strict UTF-8 charset,
- * 25-second timeout, and clear error diagnostics if permissions or CORS fail.
+ * Live-fetches CSV data from Google Sheets across prioritized candidate endpoints,
+ * supporting Visualization API, Export API, and Published web links with strict UTF-8 charset.
  */
 export async function fetchGoogleSheetCsv(sheetUrl: string): Promise<string> {
-  const extracted = extractGoogleSheetCsvUrl(sheetUrl);
-  if (!extracted) {
+  const result = extractGoogleSheetCsvCandidates(sheetUrl);
+  if (!result) {
     throw new Error(
       'Invalid Google Sheet link. Please paste a valid Google Sheet URL (e.g. https://docs.google.com/spreadsheets/d/SHEET_ID/edit).'
     );
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000);
-
-  try {
-    const res = await fetch(extracted.csvUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/csv,text/plain,application/octet-stream;charset=utf-8',
-      },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403 || res.status === 404) {
-        throw new Error(
-          `Permission Denied (HTTP ${res.status}): This Google Sheet is private or requires sign-in. In Google Sheets, click "Share" (top-right) and set General access to "Anyone with the link can view". Alternatively, use File → Share → Publish to web → Comma-separated values (.csv) and paste that link here.`
-        );
-      }
-      throw new Error(`Google returned HTTP ${res.status} (${res.statusText}) when downloading sheet.`);
-    }
-
-    const text = await res.text();
-
-    if (!text || !text.trim()) {
-      throw new Error('The downloaded Google Sheet appears to be empty.');
-    }
-
-    // Google Sheets redirects to an HTML login page if private
-    if (text.includes('<!DOCTYPE html>') || text.includes('<html') || text.includes('accounts.google.com')) {
-      throw new Error(
-        'Google returned an HTML login page instead of CSV data. Please set sheet sharing to "Anyone with the link can view" (or File → Share → Publish to web → CSV).'
-      );
-    }
-
-    return text;
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      throw new Error(
-        'Connection timed out after 25 seconds while downloading the Google Sheet. Please check your internet connection or verify the sheet URL.'
-      );
-    }
-    if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
-      throw new Error(
-        'Browser network/CORS error: Unable to download the sheet directly. Please ensure the Google Sheet is shared as "Anyone with the link can view" or published via File → Share → Publish to web → CSV.'
-      );
-    }
-    throw err;
+  if (result.isTruncated) {
+    throw new Error(
+      `The Google Sheet ID in the link appears incomplete or truncated ("${result.sheetId}"). Google Sheet IDs are normally ~44 characters long. Please ensure you copied the complete URL from your browser address bar.`
+    );
   }
+
+  let lastStatus = 0;
+  let lastStatusText = '';
+  let lastError: any = null;
+
+  for (const candidateUrl of result.candidateUrls) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 18000);
+
+    try {
+      const res = await fetch(candidateUrl, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          // If Google returned an HTML login page or service redirection
+          if (
+            text.includes('<!DOCTYPE html>') ||
+            text.includes('<html') ||
+            text.includes('accounts.google.com') ||
+            text.includes('serviceLogin')
+          ) {
+            lastStatus = 403;
+            continue;
+          }
+          // Valid CSV data found!
+          return text;
+        }
+      } else {
+        lastStatus = res.status;
+        lastStatusText = res.statusText || '';
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      lastError = err;
+    }
+  }
+
+  // If all candidate URLs failed
+  if (lastStatus === 400) {
+    throw new Error(
+      `Google could not open this sheet (HTTP 400 Bad Request). Common causes:
+1. The spreadsheet ID may be incomplete or invalid.
+2. The sheet is not shared publicly.
+Quick Fix: In your Google Sheet, click File → Share → Publish to web → Comma-separated values (.csv) and paste that link here, or download the CSV to your device and choose "Upload CSV / Excel File Instead".`
+    );
+  }
+
+  if (lastStatus === 401 || lastStatus === 403) {
+    throw new Error(
+      `Permission Denied (HTTP ${lastStatus}): This Google Sheet is private or requires sign-in. In Google Sheets, click "Share" (top-right) and set General access to "Anyone with the link can view". Alternatively, use File → Share → Publish to web → Comma-separated values (.csv) and paste that link here.`
+    );
+  }
+
+  if (lastStatus === 404) {
+    throw new Error(
+      `Google Sheet Not Found (HTTP 404): The requested spreadsheet does not exist or has been deleted. Please check your URL.`
+    );
+  }
+
+  if (lastError?.name === 'AbortError') {
+    throw new Error(
+      'Connection timed out after 18 seconds while downloading Google Sheet. Please check your internet connection or verify the sheet link.'
+    );
+  }
+
+  if (lastError?.message && lastError.message.toLowerCase().includes('failed to fetch')) {
+    throw new Error(
+      'Browser network/CORS restriction: Unable to download sheet directly. Please ensure the Google Sheet is shared as "Anyone with the link can view", or use File → Share → Publish to web → CSV and paste that link.'
+    );
+  }
+
+  throw new Error(
+    `Failed to access Google Sheet (HTTP ${lastStatus || 'Error'}${lastStatusText ? `: ${lastStatusText}` : ''}). Please ensure the sheet is shared as "Anyone with the link can view", or use File → Share → Publish to web → CSV.`
+  );
 }
 
 /**
