@@ -101,8 +101,8 @@ const STANDARD_STATEMENT_OPTIONS = [
  */
 export const isBrokenShiftedQuestion = (q: Question): boolean => {
   const stem = String(q.stem || '').trim();
-  const optA = String(q.options?.[0] || '').trim();
-  return (/^\d+\.?$/.test(stem) || stem.length < 10) && optA.length > 25;
+  const optA = String((q.o && q.o[0]) || (q as any).options?.[0] || '').trim();
+  return (/^\d+\.?$/.test(stem) || stem.length < 10) && optA.length > 20;
 };
 
 interface QuestionManagementProps {
@@ -1716,6 +1716,16 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     </View>
                   </View>
 
+                  {/* Shifted warning alert banner on card */}
+                  {isBroken && (
+                    <View style={styles.cardShiftedAlert}>
+                      <AlertTriangle size={13} color="#DC2626" />
+                      <Text style={styles.cardShiftedAlertText}>
+                        Shifted column detected: Stem is a serial number and Option A contains question text. Delete this row and re-run Google Drive Sync to re-import cleanly.
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Question Stem Text */}
                   <Text style={styles.stemText}>{q.stem}</Text>
 
@@ -2974,5 +2984,23 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#DC2626',
+  },
+  cardShiftedAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 8,
+  },
+  cardShiftedAlertText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    flex: 1,
+    lineHeight: 15,
   },
 });
