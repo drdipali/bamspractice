@@ -34,6 +34,7 @@ import {
   DEFAULT_GEMINI_MODEL,
   SUPPORTED_GROQ_MODELS,
   DEFAULT_GROQ_MODEL,
+  normalizeGroqModel,
 } from '../../services/gemini';
 import { Portal } from '../common/Portal';
 
@@ -92,7 +93,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
       setGroqApiKey(qKey);
       setSavedGroqKey(qKey);
-      setSelectedGroqModel(qModel || DEFAULT_GROQ_MODEL);
+      setSelectedGroqModel(normalizeGroqModel(qModel || DEFAULT_GROQ_MODEL));
 
       setTestResult(null);
       setSaveSuccess(false);
@@ -111,7 +112,10 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
     setTestResult(null);
     try {
       const keyToTest = activeProvider === 'groq' ? groqApiKey : geminiApiKey;
-      const modelToTest = activeProvider === 'groq' ? selectedGroqModel : selectedGeminiModel;
+      const modelToTest =
+        activeProvider === 'groq'
+          ? normalizeGroqModel(selectedGroqModel)
+          : selectedGeminiModel;
       const res = await GeminiService.testConnection(activeProvider, keyToTest, modelToTest);
       setTestResult(res);
     } catch (e: any) {
@@ -284,7 +288,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   >
                     Groq LPU Engine
                   </Text>
-                  <Text style={styles.providerDesc}>gpt-oss-120b &amp; qwen-3.8-27b</Text>
+                  <Text style={styles.providerDesc}>openai/gpt-oss-120b &amp; qwen3.8-27b</Text>
                   <View style={styles.providerRadioRow}>
                     <View
                       style={[

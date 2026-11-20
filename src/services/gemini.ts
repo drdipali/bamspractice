@@ -6,7 +6,7 @@ export const DEFAULT_AI_PROVIDER: AIProvider = 'gemini';
 
 export const SUPPORTED_AI_PROVIDERS: { id: AIProvider; label: string; desc: string }[] = [
   { id: 'gemini', label: 'Google Gemini', desc: 'gemini-2.5-flash / 3.8-flash' },
-  { id: 'groq', label: 'Groq (Free & Fast)', desc: 'gpt-oss-120b / qwen-3.8-27b' },
+  { id: 'groq', label: 'Groq (Free & Fast)', desc: 'openai/gpt-oss-120b / qwen3.8-27b' },
 ];
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
@@ -19,14 +19,40 @@ export const SUPPORTED_GEMINI_MODELS = [
   { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
 ];
 
-export const DEFAULT_GROQ_MODEL = 'gpt-oss-120b';
-export const FALLBACK_GROQ_MODEL = 'qwen-3.8-27b';
+export const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-120b';
+export const FALLBACK_GROQ_MODEL = 'qwen/qwen3.8-27b';
 
 export const SUPPORTED_GROQ_MODELS = [
-  { id: 'gpt-oss-120b', label: 'GPT-OSS 120B (Default for Exam-Grade MCQs)' },
-  { id: 'qwen-3.8-27b', label: 'Qwen 3.8 27B (High-Precision Hindi / Devanagari)' },
-  { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile (Fallback)' },
+  { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Default for Exam-Grade MCQs)' },
+  { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (High-Precision Hindi / Devanagari)' },
+  { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (Ultra-Fast Fallback)' },
 ];
+
+/**
+ * Normalizes legacy/unprefixed Groq model identifiers to their official prefixed forms
+ */
+export const normalizeGroqModel = (model: string): string => {
+  const m = String(model || '').trim();
+  if (m === 'gpt-oss-120b' || m === 'openai/gpt-oss-120b') {
+    return 'openai/gpt-oss-120b';
+  }
+  if (
+    m === 'qwen-3.8-27b' ||
+    m === 'qwen/qwen-3.8-27b' ||
+    m === 'qwen/qwen3.8-27b' ||
+    m === 'qwen3.8-27b'
+  ) {
+    return 'qwen/qwen3.8-27b';
+  }
+  if (
+    m === 'llama-3.3-70b-versatile' ||
+    m === 'openai/gpt-oss-20b' ||
+    m === 'gpt-oss-20b'
+  ) {
+    return 'openai/gpt-oss-20b';
+  }
+  return m || DEFAULT_GROQ_MODEL;
+};
 
 const STORAGE_KEYS = {
   PROVIDER: 'bams_ai_provider_v1',
@@ -258,14 +284,33 @@ export class GeminiService {
   }
 
   /**
-   * Retrieve the preferred Groq model
+   * Retrieve the preferred Groq model with automatic legacy ID migration
    */
   static async getGroqModel(): Promise<string> {
-    if (this.cachedGroqModel) return this.cachedGroqModel;
+    if (this.cachedGroqModel) {
+      const normalized = normalizeGroqModel(this.cachedGroqModel);
+      this.cachedGroqModel = normalized;
+      return normalized;
+    }
     try {
+      // Check window.localStorage directly on web for instant migration
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const direct = window.localStorage.getItem(STORAGE_KEYS.GROQ_MODEL);
+        if (direct) {
+          const norm = normalizeGroqModel(direct);
+          if (norm !== direct) {
+            window.localStorage.setItem(STORAGE_KEYS.GROQ_MODEL, norm);
+          }
+        }
+      }
+
       const stored = await AsyncStorage.getItem(STORAGE_KEYS.GROQ_MODEL);
       if (stored && stored.trim()) {
-        this.cachedGroqModel = stored.trim();
+        const normalized = normalizeGroqModel(stored.trim());
+        if (normalized !== stored.trim()) {
+          await AsyncStorage.setItem(STORAGE_KEYS.GROQ_MODEL, normalized);
+        }
+        this.cachedGroqModel = normalized;
         return this.cachedGroqModel;
       }
     } catch (e) {
@@ -278,9 +323,13 @@ export class GeminiService {
    * Set the preferred Groq model
    */
   static async setGroqModel(model: string): Promise<void> {
-    this.cachedGroqModel = model;
+    const normalized = normalizeGroqModel(model);
+    this.cachedGroqModel = normalized;
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.GROQ_MODEL, model);
+      await AsyncStorage.setItem(STORAGE_KEYS.GROQ_MODEL, normalized);
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(STORAGE_KEYS.GROQ_MODEL, normalized);
+      }
     } catch (e) {
       console.warn('Could not persist Groq Model:', e);
     }
@@ -325,7 +374,8 @@ export class GeminiService {
         return { success: false, message: 'Groq API Key missing. Please paste your Groq API key.' };
       }
 
-      const model = overrideModel || (await this.getGroqModel()) || DEFAULT_GROQ_MODEL;
+      const rawModel = overrideModel || (await this.getGroqModel()) || DEFAULT_GROQ_MODEL;
+      const model = normalizeGroqModel(rawModel);
       const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
 
       const controller = new AbortController();
@@ -719,9 +769,11 @@ Return ONLY a valid JSON object with the following keys:
         (params.customInstruction || '').toLowerCase().includes('devanagari');
 
       // Candidate models with smart prioritization:
-      const candidateGroqModels = isHindiTask
-        ? ['qwen-3.8-27b', preferredGroqModel, 'gpt-oss-120b', 'llama-3.3-70b-versatile']
-        : [preferredGroqModel, 'gpt-oss-120b', 'qwen-3.8-27b', 'llama-3.3-70b-versatile'];
+      const candidateGroqModels = (
+        isHindiTask
+          ? ['qwen/qwen3.8-27b', preferredGroqModel, 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']
+          : [preferredGroqModel, 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b']
+      ).map(normalizeGroqModel);
 
       const uniqueGroqModels = Array.from(new Set(candidateGroqModels));
       let lastGroqError: any = null;
