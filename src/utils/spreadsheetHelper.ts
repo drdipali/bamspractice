@@ -313,7 +313,15 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
     blankrows: false,
   });
 
-  if (rawRows.length < 1) {
+  return parseSpreadsheetRows(rawRows);
+}
+
+/**
+ * Parses a 2D array of string/cell values (from Excel, CSV, or Google Sheets API)
+ * with automatic header detection (named headers vs positional layout) and UTF-8 preservation.
+ */
+export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
+  if (!rawRows || rawRows.length < 1) {
     return {
       validQuestions: [],
       errors: [{ row: 1, error: 'Spreadsheet contains no data rows.' }],
