@@ -403,7 +403,10 @@ export const AdminDashboard: React.FC = () => {
 
       <AISettingsModal
         isOpen={isAISettingsOpen}
-        onClose={() => setIsAISettingsOpen(false)}
+        onClose={() => {
+          setIsAISettingsOpen(false);
+          checkAIKey();
+        }}
         onKeySaved={checkAIKey}
       />
     </View>

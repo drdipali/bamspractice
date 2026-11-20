@@ -40,7 +40,7 @@ import {
   SpreadsheetParseResult,
 } from '../../utils/spreadsheetHelper';
 import { useApp } from '../../context/AppContext';
-import { GeminiService } from '../../services/gemini';
+import { GeminiService, AIProvider } from '../../services/gemini';
 import { AISettingsModal } from './AISettingsModal';
 import { GoogleSheetSyncModal } from './GoogleSheetSyncModal';
 import { GoogleDriveSyncModal } from './GoogleDriveSyncModal';
@@ -133,6 +133,18 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     statement2: string;
   } | null>(null);
   const [internalAISettingsOpen, setInternalAISettingsOpen] = useState<boolean>(false);
+  const [activeAIProvider, setActiveAIProvider] = useState<AIProvider>('gemini');
+
+  const refreshAIProvider = async () => {
+    try {
+      const p = await GeminiService.getProvider();
+      setActiveAIProvider(p);
+    } catch {}
+  };
+
+  useEffect(() => {
+    refreshAIProvider();
+  }, []);
 
   // Progress Tracking: Set of Question IDs edited
   const [editedIds, setEditedIds] = useState<Set<string>>(new Set());
@@ -267,12 +279,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Interactive AI Assistant handler
   const handleRunAI = async (customInstruction?: string, actionName?: string) => {
     setAiError(null);
+    const provider = await GeminiService.getProvider();
+    setActiveAIProvider(provider);
+    const providerLabel = provider === 'groq' ? 'Groq Free' : 'Google Gemini';
     const key = await GeminiService.getApiKey();
     if (!key) {
-      const msg = 'API Key missing. Please click "AI Settings" in the header to paste your Gemini API key.';
+      const msg = `${providerLabel} API Key missing. Please click "AI Settings" in the header to paste your ${providerLabel} API key.`;
       setAiError(msg);
       const openSettings = confirm(
-        'Gemini API Key is not configured.\n\nWould you like to open AI Settings now to paste your free Gemini API key?'
+        `${providerLabel} API Key is not configured.\n\nWould you like to open AI Settings now to paste your free ${providerLabel} API key?`
       );
       if (openSettings) {
         if (onOpenAISettings) {
@@ -1102,7 +1117,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 <View style={styles.aiAssistantHeader}>
                   <View style={styles.aiAssistantHeaderLeft}>
                     <Sparkles size={16} color="#1F5A4D" />
-                    <Text style={styles.aiAssistantTitle}>Interactive AI Assistant (Gemini)</Text>
+                    <Text style={styles.aiAssistantTitle}>
+                      Interactive AI Assistant ({activeAIProvider === 'groq' ? 'Groq Free' : 'Gemini'})
+                    </Text>
                     {isAiRephrased && (
                       <View style={styles.aiRephrasedBadge}>
                         <CheckCircle2 size={13} color="#15803D" />
@@ -1657,7 +1674,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
       <AISettingsModal
         isOpen={internalAISettingsOpen}
-        onClose={() => setInternalAISettingsOpen(false)}
+        onClose={() => {
+          setInternalAISettingsOpen(false);
+          refreshAIProvider();
+        }}
+        onKeySaved={refreshAIProvider}
       />
 
       <GoogleSheetSyncModal
