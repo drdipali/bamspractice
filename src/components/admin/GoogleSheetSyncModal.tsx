@@ -195,7 +195,12 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
                 <FileSpreadsheet size={22} color="#047857" />
               </View>
               <View>
-                <Text style={styles.modalTitle}>Import from Google Sheet</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={styles.modalTitle}>Import from Google Sheet</Text>
+                  <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>v1.2 Online</Text>
+                  </View>
+                </View>
                 <Text style={styles.modalSubtitle}>
                   Direct Cloud DB sync with strict UTF-8 Hindi &amp; Sanskrit Devanagari preservation
                 </Text>

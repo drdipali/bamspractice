@@ -313,23 +313,63 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
     blankrows: false,
   });
 
-  if (rawRows.length < 2) {
+  if (rawRows.length < 1) {
     return {
       validQuestions: [],
-      errors: [{ row: 1, error: 'Spreadsheet must contain a header row and at least one data row.' }],
+      errors: [{ row: 1, error: 'Spreadsheet contains no data rows.' }],
       totalRows: 0,
     };
   }
 
-  // Detect header indices
-  const headerRow = rawRows[0].map((cell) =>
+  // 1. Detect if sheet has named headers in row 0 or row 1
+  const row0Clean = rawRows[0].map((cell) =>
     String(cell || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '')
   );
 
+  const hasNamedHeaderRow0 = row0Clean.some((h) =>
+    ['question', 'stem', 'questiontext', 'qtext', 'questionstem', 'prompt'].includes(h)
+  );
+
+  let startRow = 1;
+  let isPositional = false;
+  let posColMap = { stem: 1, optA: 2, optB: 3, optC: 4, optD: 5, ans: 6, ref: 7, qNum: 0 };
   const headerMap: Record<string, number> = {};
-  headerRow.forEach((h, idx) => {
-    headerMap[h] = idx;
-  });
+
+  if (hasNamedHeaderRow0) {
+    startRow = 1;
+    isPositional = false;
+    row0Clean.forEach((h, idx) => {
+      headerMap[h] = idx;
+    });
+  } else {
+    // Check row 1 in case row 0 was a document title
+    const row1Clean = rawRows.length > 1 ? rawRows[1].map((cell) =>
+      String(cell || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '')
+    ) : [];
+    const hasNamedHeaderRow1 = row1Clean.some((h) =>
+      ['question', 'stem', 'questiontext', 'qtext', 'questionstem', 'prompt'].includes(h)
+    );
+
+    if (hasNamedHeaderRow1) {
+      startRow = 2;
+      isPositional = false;
+      row1Clean.forEach((h, idx) => {
+        headerMap[h] = idx;
+      });
+    } else {
+      // Positional mode: Row 0 is the first data row!
+      isPositional = true;
+      startRow = 0;
+      const firstCell = String(rawRows[0][0] || '').trim();
+      // If first cell is a number (e.g. 1, 2) or short label <= 4 chars and row has >= 7 columns:
+      if (/^\d+$/.test(firstCell) || (firstCell.length <= 4 && rawRows[0].length >= 7)) {
+        posColMap = { stem: 1, optA: 2, optB: 3, optC: 4, optD: 5, ans: 6, ref: 7, qNum: 0 };
+      } else {
+        // [Stem, OptA, OptB, OptC, OptD, Ans, Ref]
+        posColMap = { stem: 0, optA: 1, optB: 2, optC: 3, optD: 4, ans: 5, ref: 6, qNum: -1 };
+      }
+    }
+  }
 
   const getCol = (row: any[], ...aliases: string[]): string => {
     for (const alias of aliases) {
@@ -345,7 +385,7 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
   const validQuestions: Omit<Question, 'id'>[] = [];
   const errors: { row: number; error: string; rawSnippet?: string }[] = [];
 
-  for (let r = 1; r < rawRows.length; r++) {
+  for (let r = startRow; r < rawRows.length; r++) {
     const row = rawRows[r];
     const rowNum = r + 1;
 
@@ -354,30 +394,69 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
       continue;
     }
 
-    // 1. Column extraction (supporting both unified and multi-column chapter fields)
-    const rawType = getCol(row, 'questiontype', 'type', 'qtype').toLowerCase();
-    const subject = getCol(row, 'subject', 'samhita', 'text');
-    const sthana = getCol(row, 'sthana', 'section', 'sth');
-    const chapter = getCol(row, 'chapter', 'chaptername', 'adhyaya', 'ch');
+    let stem = '';
+    let optA = '';
+    let optB = '';
+    let optC = '';
+    let optD = '';
+    let rawAnswer = '';
+    let reference = '';
+    let explanation = '';
+    let rawType = '';
+    let rawDiff = '';
+    let subject = '';
+    let sthana = '';
+    let chapter = '';
 
-    let stem = getCol(row, 'questiontext', 'stem', 'question', 'text', 'prompt');
-    const optA = getCol(row, 'optiona', 'opta', 'a', 'opt1');
-    const optB = getCol(row, 'optionb', 'optb', 'b', 'opt2');
-    const optC = getCol(row, 'optionc', 'optc', 'c', 'opt3');
-    const optD = getCol(row, 'optiond', 'optd', 'd', 'opt4');
-    const rawAnswer = getCol(row, 'correctanswer', 'answer', 'ans', 'correct');
-    const reference = getCol(row, 'reference', 'ref', 'referenceshloka', 'shloka', 'source');
-    const explanation = getCol(row, 'explanation', 'exp', 'solution', 'rationale');
-    const rawDiff = getCol(row, 'difficultylevel', 'difficulty', 'diff', 'level').toLowerCase();
+    if (isPositional) {
+      stem = String(row[posColMap.stem] || '').trim();
+      optA = String(row[posColMap.optA] || '').trim();
+      optB = String(row[posColMap.optB] || '').trim();
+      optC = String(row[posColMap.optC] || '').trim();
+      optD = String(row[posColMap.optD] || '').trim();
+      rawAnswer = String(row[posColMap.ans] || '').trim();
+      reference = String(row[posColMap.ref] || '').trim();
+      explanation = posColMap.ref + 1 < row.length ? String(row[posColMap.ref + 1] || '').trim() : '';
 
-    // Positional fallback if named headers were not recognized (e.g. Col 1 = stem, 2 = A, 3 = B, 4 = C, 5 = D, 6 = Ans, 7 = Ref)
-    const effectiveStem = stem || (row.length >= 6 ? String(row[1] || '').trim() : '');
-    const effectiveOptA = optA || (row.length >= 6 ? String(row[2] || '').trim() : '');
-    const effectiveOptB = optB || (row.length >= 6 ? String(row[3] || '').trim() : '');
-    const effectiveOptC = optC || (row.length >= 6 ? String(row[4] || '').trim() : '');
-    const effectiveOptD = optD || (row.length >= 6 ? String(row[5] || '').trim() : '');
-    const effectiveAns = rawAnswer || (row.length >= 7 ? String(row[6] || '').trim() : '');
-    const effectiveRef = reference || (row.length >= 8 ? String(row[7] || '').trim() : '');
+      // Skip non-question trailing summary rows or notes (e.g. "SUMMARY", "Added shloka...")
+      if (!stem || (!optA && !optB && !rawAnswer)) {
+        continue;
+      }
+    } else {
+      rawType = getCol(row, 'questiontype', 'type', 'qtype').toLowerCase();
+      subject = getCol(row, 'subject', 'samhita', 'text');
+      sthana = getCol(row, 'sthana', 'section', 'sth');
+      chapter = getCol(row, 'chapter', 'chaptername', 'adhyaya', 'ch');
+
+      stem = getCol(row, 'questiontext', 'stem', 'question', 'text', 'prompt');
+      optA = getCol(row, 'optiona', 'opta', 'a', 'opt1');
+      optB = getCol(row, 'optionb', 'optb', 'b', 'opt2');
+      optC = getCol(row, 'optionc', 'optc', 'c', 'opt3');
+      optD = getCol(row, 'optiond', 'optd', 'd', 'opt4');
+      rawAnswer = getCol(row, 'correctanswer', 'answer', 'ans', 'correct');
+      reference = getCol(row, 'reference', 'ref', 'referenceshloka', 'shloka', 'source');
+      explanation = getCol(row, 'explanation', 'exp', 'solution', 'rationale');
+      rawDiff = getCol(row, 'difficultylevel', 'difficulty', 'diff', 'level').toLowerCase();
+
+      // If stem is missing or row is incomplete, fallback to positional if row has >= 6 columns
+      if (!stem && row.length >= 6) {
+        stem = String(row[1] || '').trim();
+        optA = optA || String(row[2] || '').trim();
+        optB = optB || String(row[3] || '').trim();
+        optC = optC || String(row[4] || '').trim();
+        optD = optD || String(row[5] || '').trim();
+        rawAnswer = rawAnswer || String(row[6] || '').trim();
+        reference = reference || (row.length >= 8 ? String(row[7] || '').trim() : '');
+      }
+    }
+
+    const effectiveStem = stem;
+    const effectiveOptA = optA;
+    const effectiveOptB = optB;
+    const effectiveOptC = optC;
+    const effectiveOptD = optD;
+    const effectiveAns = rawAnswer;
+    const effectiveRef = reference;
 
     // 2. Validate Question Text
     if (!effectiveStem) {
@@ -492,7 +571,7 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
   return {
     validQuestions,
     errors,
-    totalRows: rawRows.length - 1,
+    totalRows: Math.max(0, rawRows.length - startRow),
   };
 }
 
