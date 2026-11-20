@@ -769,6 +769,30 @@ class BackendService {
     await this.persistCustomQuestions();
   }
 
+  async deleteQuestions(ids: (string | number)[]): Promise<number> {
+    await this.initialize();
+    const idSet = new Set(ids.map((id) => String(id)));
+    if (idSet.size === 0) return 0;
+
+    let deletedCount = 0;
+    this.questions = this.questions.filter((q) => {
+      const sId = String(q.id);
+      if (idSet.has(sId)) {
+        deletedCount++;
+        this.deletedQuestionIds.add(sId);
+        delete this.editedQuestions[sId];
+        return false;
+      }
+      return true;
+    });
+
+    await AsyncStorage.setItem('bams_deleted_questions_v1', JSON.stringify(Array.from(this.deletedQuestionIds)));
+    await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
+    await this.persistCustomQuestions();
+
+    return deletedCount;
+  }
+
   async updateQuestion(id: string | number, patch: Partial<Question>): Promise<Question> {
     await this.initialize();
     const strId = String(id);

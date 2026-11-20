@@ -18,6 +18,7 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   HelpCircle,
   Search,
   X,
@@ -94,6 +95,16 @@ const STANDARD_STATEMENT_OPTIONS = [
   'Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है',
 ];
 
+/**
+ * Checks if a question row is shifted (e.g. question_text is purely numeric like 360, 420 or < 10 chars
+ * while option_a is longer than 25 characters containing the actual stem).
+ */
+export const isBrokenShiftedQuestion = (q: Question): boolean => {
+  const stem = String(q.stem || '').trim();
+  const optA = String(q.options?.[0] || '').trim();
+  return (/^\d+\.?$/.test(stem) || stem.length < 10) && optA.length > 25;
+};
+
 interface QuestionManagementProps {
   onOpenAISettings?: () => void;
 }
@@ -114,6 +125,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
+  const [isDeletingBroken, setIsDeletingBroken] = useState<boolean>(false);
 
   // AI Interactive Assistant state
   const [isAiRephrasing, setIsAiRephrasing] = useState<boolean>(false);
@@ -640,10 +652,43 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }, 150);
   };
 
+  // Detect Shifted / Broken rows (numeric serial stems with question in Option A)
+  const brokenQuestions = useMemo(() => {
+    return questions.filter(isBrokenShiftedQuestion);
+  }, [questions]);
+
+  // Delete all flagged shifted/broken rows in one click
+  const handleDeleteAllBrokenRows = async () => {
+    if (brokenQuestions.length === 0) return;
+    const count = brokenQuestions.length;
+    const confirmed = confirm(
+      `Are you sure you want to delete ${count} flagged shifted/broken question(s) from Cloud DB?\n\n` +
+        `These questions have numeric serial numbers (like 420 or 430) as question text while Option A contains the question stem.\n\n` +
+        `Once deleted, you can re-run Google Drive Sync with the updated smart parser to cleanly re-import all questions without any shift!`
+    );
+    if (!confirmed) return;
+
+    setIsDeletingBroken(true);
+    try {
+      const idsToDelete = brokenQuestions.map((q) => q.id);
+      await backend.deleteQuestions(idsToDelete);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      setSelectedTypeFilter('all');
+      showToast(`🗑️ Successfully deleted ${count} broken shifted rows! You can now re-run Google Drive Sync.`);
+    } catch (err: any) {
+      alert(`Failed to delete broken rows: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsDeletingBroken(false);
+    }
+  };
+
   // Filtered & Paginated questions
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
-      if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
+      if (selectedTypeFilter === 'broken_shifted') {
+        if (!isBrokenShiftedQuestion(q)) return false;
+      } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
       if (searchQuery.trim()) {
@@ -1427,16 +1472,32 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               { id: 'assertion_reason', label: `Assertion / Reason (${typeCounts.assertion_reason})` },
               { id: 'match_the_pair', label: `Match Pair (${typeCounts.match_the_pair})` },
               { id: 'statement_type', label: `Statement (${typeCounts.statement_type})` },
+              ...(brokenQuestions.length > 0
+                ? [
+                    {
+                      id: 'broken_shifted',
+                      label: `⚠️ Shifted Rows (${brokenQuestions.length})`,
+                      isBrokenPill: true,
+                    },
+                  ]
+                : []),
             ].map((f) => (
               <TouchableOpacity
                 key={f.id}
-                style={[styles.filterChip, selectedTypeFilter === f.id && styles.filterChipActive]}
+                style={[
+                  styles.filterChip,
+                  selectedTypeFilter === f.id && styles.filterChipActive,
+                  (f as any).isBrokenPill && styles.filterChipBroken,
+                  (f as any).isBrokenPill && selectedTypeFilter === f.id && styles.filterChipBrokenActive,
+                ]}
                 onPress={() => setSelectedTypeFilter(f.id)}
               >
                 <Text
                   style={[
                     styles.filterChipText,
                     selectedTypeFilter === f.id && styles.filterChipTextActive,
+                    (f as any).isBrokenPill && styles.filterChipBrokenText,
+                    (f as any).isBrokenPill && selectedTypeFilter === f.id && styles.filterChipBrokenTextActive,
                   ]}
                 >
                   {f.label}
@@ -1445,6 +1506,65 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             ))}
           </ScrollView>
         </View>
+
+        {/* Broken / Shifted Rows Alert & Cleanup Bar */}
+        {brokenQuestions.length > 0 && (
+          <View style={styles.brokenBannerCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
+              <View style={styles.brokenBannerIconWrap}>
+                <AlertTriangle size={18} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.brokenBannerTitle}>
+                  ⚠️ Detected {brokenQuestions.length} Shifted / Broken Question(s)
+                </Text>
+                <Text style={styles.brokenBannerText}>
+                  These questions have numeric serial numbers (e.g. 420, 430) stored as the question text while Option A contains the question stem. You can delete them in one click and re-run Google Drive Sync.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.brokenBannerActions}>
+              <TouchableOpacity
+                style={[
+                  styles.btnViewBroken,
+                  selectedTypeFilter === 'broken_shifted' && styles.btnViewBrokenActive,
+                ]}
+                onPress={() =>
+                  setSelectedTypeFilter(selectedTypeFilter === 'broken_shifted' ? 'all' : 'broken_shifted')
+                }
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.btnViewBrokenText,
+                    selectedTypeFilter === 'broken_shifted' && styles.btnViewBrokenTextActive,
+                  ]}
+                >
+                  {selectedTypeFilter === 'broken_shifted' ? 'Show All Questions' : 'View Flagged Rows'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnDeleteBroken, isDeletingBroken && { opacity: 0.7 }]}
+                onPress={handleDeleteAllBrokenRows}
+                disabled={isDeletingBroken}
+                activeOpacity={0.8}
+              >
+                {isDeletingBroken ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Trash2 size={13} color="#FFF" />
+                    <Text style={styles.btnDeleteBrokenText}>
+                      Delete Flagged Broken Rows ({brokenQuestions.length})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Counter Header with Jump-to-Question and Edited Counter */}
         <View style={styles.tableHeader}>
@@ -1501,6 +1621,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             {displayedQuestions.map((q) => {
               const globalIndex = questions.findIndex((item) => String(item.id) === String(q.id)) + 1;
               const isEdited = editedIds.has(String(q.id));
+              const isBroken = isBrokenShiftedQuestion(q);
 
               const typeColor =
                 q.questionType === 'assertion_reason'
@@ -1526,7 +1647,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   id={`q-card-${globalIndex}`}
                   // @ts-ignore: nativeID for web DOM id attribute
                   nativeID={`q-card-${globalIndex}`}
-                  style={styles.questionCard}
+                  style={[styles.questionCard, isBroken && styles.questionCardBroken]}
                 >
                   {/* Top Badges & Action Buttons */}
                   <View style={styles.cardHeaderRow}>
@@ -1542,6 +1663,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           {QUESTION_TYPE_LABELS[q.questionType] || 'Standard MCQ'}
                         </Text>
                       </View>
+
+                      {/* Shifted / Broken Badge */}
+                      {isBroken && (
+                        <View style={styles.badgeShiftedError}>
+                          <AlertTriangle size={11} color="#DC2626" />
+                          <Text style={styles.badgeShiftedErrorText}>Shifted Row (Numeric Stem)</Text>
+                        </View>
+                      )}
 
                       {/* Edited Progress Tag */}
                       {isEdited && (
@@ -2739,5 +2868,111 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: THEME.colors.brand,
+  },
+  filterChipBroken: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  filterChipBrokenActive: {
+    backgroundColor: '#DC2626',
+    borderColor: '#B91C1C',
+  },
+  filterChipBrokenText: {
+    color: '#DC2626',
+    fontWeight: '700',
+  },
+  filterChipBrokenTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  brokenBannerCard: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+  },
+  brokenBannerIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brokenBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  brokenBannerText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  brokenBannerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  btnViewBroken: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  btnViewBrokenActive: {
+    backgroundColor: '#991B1B',
+    borderColor: '#991B1B',
+  },
+  btnViewBrokenText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  btnViewBrokenTextActive: {
+    color: '#FFF',
+  },
+  btnDeleteBroken: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    backgroundColor: '#DC2626',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnDeleteBrokenText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  questionCardBroken: {
+    borderColor: '#F87171',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFDFD',
+  },
+  badgeShiftedError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  badgeShiftedErrorText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 });

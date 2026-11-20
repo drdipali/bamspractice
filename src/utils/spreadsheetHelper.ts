@@ -376,7 +376,8 @@ export function parseWorkbookAllTabs(buffer: ArrayBuffer | Uint8Array | string):
 
 /**
  * Parses a 2D array of string/cell values (from Excel, CSV, or Google Sheets API)
- * with automatic header detection (named headers vs positional layout) and UTF-8 preservation.
+ * with automatic header detection (named headers vs positional layout),
+ * smart serial-number column detection (+1 column shift handling), and UTF-8 preservation.
  */
 export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
   if (!rawRows || rawRows.length < 1) {
@@ -386,6 +387,34 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
       totalRows: 0,
     };
   }
+
+  // Helper to check if a cell value looks like a serial number (1, 234, 360, 420, 1., etc.) or serial header
+  const isSerialCell = (val: string): boolean => {
+    const s = String(val || '').trim();
+    return (
+      /^\d+\.?$/.test(s) ||
+      /^(?:sr\.?\s*no\.?|s\.?\s*no\.?|q\.?\s*no\.?|qno|slno|#|id|serial|no)$/i.test(s)
+    );
+  };
+
+  // Inspect the first few rows (up to 12) to detect if Column 0 is consistently a serial number
+  // while Column 1 contains actual question text (length > 15)
+  let sampleSerialCount = 0;
+  let sampleValidCount = 0;
+  for (let sIdx = 0; sIdx < Math.min(12, rawRows.length); sIdx++) {
+    const sRow = rawRows[sIdx];
+    if (!sRow || sRow.length < 2) continue;
+    const c0 = String(sRow[0] || '').trim();
+    const c1 = String(sRow[1] || '').trim();
+    if (c0 || c1) {
+      sampleValidCount++;
+      if (isSerialCell(c0) && c1.length > 15) {
+        sampleSerialCount++;
+      }
+    }
+  }
+
+  const sheetHasSerialCol0 = sampleSerialCount > 0 && sampleSerialCount >= sampleValidCount * 0.35;
 
   // 1. Detect if sheet has named headers in row 0 or row 1
   const row0Clean = rawRows[0].map((cell) =>
@@ -408,10 +437,13 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
       headerMap[h] = idx;
     });
   } else {
-    // Check row 1 in case row 0 was a document title
-    const row1Clean = rawRows.length > 1 ? rawRows[1].map((cell) =>
-      String(cell || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '')
-    ) : [];
+    // Check row 1 in case row 0 was a document title or section heading
+    const row1Clean =
+      rawRows.length > 1
+        ? rawRows[1].map((cell) =>
+            String(cell || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '')
+          )
+        : [];
     const hasNamedHeaderRow1 = row1Clean.some((h) =>
       ['question', 'stem', 'questiontext', 'qtext', 'questionstem', 'prompt'].includes(h)
     );
@@ -423,16 +455,21 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
         headerMap[h] = idx;
       });
     } else {
-      // Positional mode: Row 0 is the first data row!
+      // Positional mode: Row 0 is data
       isPositional = true;
       startRow = 0;
-      const firstCell = String(rawRows[0][0] || '').trim();
-      // If first cell is a number (e.g. 1, 2) or short label <= 4 chars and row has >= 7 columns:
-      if (/^\d+$/.test(firstCell) || (firstCell.length <= 4 && rawRows[0].length >= 7)) {
+      if (sheetHasSerialCol0) {
         posColMap = { stem: 1, optA: 2, optB: 3, optC: 4, optD: 5, ans: 6, ref: 7, qNum: 0 };
       } else {
-        // [Stem, OptA, OptB, OptC, OptD, Ans, Ref]
-        posColMap = { stem: 0, optA: 1, optB: 2, optC: 3, optD: 4, ans: 5, ref: 6, qNum: -1 };
+        const firstCell = String(rawRows[0][0] || '').trim();
+        const secondCell = String(rawRows[0][1] || '').trim();
+        if (isSerialCell(firstCell) && secondCell.length > 15) {
+          posColMap = { stem: 1, optA: 2, optB: 3, optC: 4, optD: 5, ans: 6, ref: 7, qNum: 0 };
+        } else if (rawRows[0].length >= 7 && (isSerialCell(firstCell) || firstCell.length <= 4)) {
+          posColMap = { stem: 1, optA: 2, optB: 3, optC: 4, optD: 5, ans: 6, ref: 7, qNum: 0 };
+        } else {
+          posColMap = { stem: 0, optA: 1, optB: 2, optC: 3, optD: 4, ans: 5, ref: 6, qNum: -1 };
+        }
       }
     }
   }
@@ -474,17 +511,28 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
     let sthana = '';
     let chapter = '';
 
-    if (isPositional) {
-      stem = String(row[posColMap.stem] || '').trim();
-      optA = String(row[posColMap.optA] || '').trim();
-      optB = String(row[posColMap.optB] || '').trim();
-      optC = String(row[posColMap.optC] || '').trim();
-      optD = String(row[posColMap.optD] || '').trim();
-      rawAnswer = String(row[posColMap.ans] || '').trim();
-      reference = String(row[posColMap.ref] || '').trim();
-      explanation = posColMap.ref + 1 < row.length ? String(row[posColMap.ref + 1] || '').trim() : '';
+    const c0 = String(row[0] || '').trim();
+    const c1 = String(row[1] || '').trim();
 
-      // Skip non-question trailing summary rows or notes (e.g. "SUMMARY", "Added shloka...")
+    if (isPositional) {
+      // Per-row serial detection: if col 0 is serial number (e.g. 420) while col 1 is actual question text
+      let offset = posColMap.stem;
+      if (isSerialCell(c0) && c1.length > 15) {
+        offset = 1;
+      } else if (!sheetHasSerialCol0 && !isSerialCell(c0) && c0.length > 15) {
+        offset = 0;
+      }
+
+      stem = String(row[offset] || '').trim();
+      optA = String(row[offset + 1] || '').trim();
+      optB = String(row[offset + 2] || '').trim();
+      optC = String(row[offset + 3] || '').trim();
+      optD = String(row[offset + 4] || '').trim();
+      rawAnswer = String(row[offset + 5] || '').trim();
+      reference = String(row[offset + 6] || '').trim();
+      explanation = offset + 7 < row.length ? String(row[offset + 7] || '').trim() : '';
+
+      // Skip non-question trailing summary rows or notes
       if (!stem || (!optA && !optB && !rawAnswer)) {
         continue;
       }
@@ -494,26 +542,49 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
       sthana = getCol(row, 'sthana', 'section', 'sth');
       chapter = getCol(row, 'chapter', 'chaptername', 'adhyaya', 'ch');
 
-      stem = getCol(row, 'questiontext', 'stem', 'question', 'text', 'prompt');
-      optA = getCol(row, 'optiona', 'opta', 'a', 'opt1');
-      optB = getCol(row, 'optionb', 'optb', 'b', 'opt2');
-      optC = getCol(row, 'optionc', 'optc', 'c', 'opt3');
-      optD = getCol(row, 'optiond', 'optd', 'd', 'opt4');
-      rawAnswer = getCol(row, 'correctanswer', 'answer', 'ans', 'correct');
+      stem = getCol(row, 'questiontext', 'stem', 'question', 'text', 'prompt', 'mcq');
+      optA = getCol(row, 'optiona', 'opta', 'a', 'opt1', 'choicea');
+      optB = getCol(row, 'optionb', 'optb', 'b', 'opt2', 'choiceb');
+      optC = getCol(row, 'optionc', 'optc', 'c', 'opt3', 'choicec');
+      optD = getCol(row, 'optiond', 'optd', 'd', 'opt4', 'choiced');
+      rawAnswer = getCol(row, 'correctanswer', 'answer', 'ans', 'correct', 'key');
       reference = getCol(row, 'reference', 'ref', 'referenceshloka', 'shloka', 'source');
       explanation = getCol(row, 'explanation', 'exp', 'solution', 'rationale');
       rawDiff = getCol(row, 'difficultylevel', 'difficulty', 'diff', 'level').toLowerCase();
 
       // If stem is missing or row is incomplete, fallback to positional if row has >= 6 columns
       if (!stem && row.length >= 6) {
-        stem = String(row[1] || '').trim();
-        optA = optA || String(row[2] || '').trim();
-        optB = optB || String(row[3] || '').trim();
-        optC = optC || String(row[4] || '').trim();
-        optD = optD || String(row[5] || '').trim();
-        rawAnswer = rawAnswer || String(row[6] || '').trim();
-        reference = reference || (row.length >= 8 ? String(row[7] || '').trim() : '');
+        const offset = isSerialCell(c0) && c1.length > 15 ? 1 : 0;
+        stem = String(row[offset] || '').trim();
+        optA = optA || String(row[offset + 1] || '').trim();
+        optB = optB || String(row[offset + 2] || '').trim();
+        optC = optC || String(row[offset + 3] || '').trim();
+        optD = optD || String(row[offset + 4] || '').trim();
+        rawAnswer = rawAnswer || String(row[offset + 5] || '').trim();
+        reference = reference || (row.length >= offset + 7 ? String(row[offset + 6] || '').trim() : '');
       }
+    }
+
+    // DEFENSIVE 1-COLUMN SHIFT AUTO-HEALING:
+    // If stem was mapped to a numeric serial number (e.g. 420, 430, or length < 10) while optA is > 25 chars
+    if ((/^\d+\.?$/.test(stem) || stem.length < 10) && optA.length > 25) {
+      const realStem = optA;
+      const realOptA = optB;
+      const realOptB = optC;
+      const realOptC = optD;
+      const realOptD = rawAnswer;
+      const realAns = reference;
+      const realRef = explanation || (row.length > 7 ? String(row[7] || '').trim() : '');
+      const realExp = row.length > 8 ? String(row[8] || '').trim() : '';
+
+      stem = realStem;
+      optA = realOptA;
+      optB = realOptB;
+      optC = realOptC;
+      optD = realOptD;
+      rawAnswer = realAns;
+      reference = realRef;
+      if (realExp) explanation = realExp;
     }
 
     const effectiveStem = stem;
