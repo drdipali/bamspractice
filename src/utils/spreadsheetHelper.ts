@@ -282,6 +282,13 @@ const STANDARD_STATEMENT_OPTIONS = [
   'Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है',
 ];
 
+export interface WorkbookTabResult {
+  sheetName: string;
+  totalRows: number;
+  validQuestions: Omit<Question, 'id'>[];
+  errors: { row: number; error: string; rawSnippet?: string }[];
+}
+
 /**
  * Parses any uploaded ArrayBuffer (XLSX, XLS, or CSV) or raw CSV text
  * with strict UTF-8 preservation for Sanskrit, Hindi (Devanagari) and IAST diacritics.
@@ -314,6 +321,57 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
   });
 
   return parseSpreadsheetRows(rawRows);
+}
+
+/**
+ * Parses an Excel (.xlsx/.xls) or CSV buffer and extracts questions from ALL worksheets/tabs.
+ */
+export function parseWorkbookAllTabs(buffer: ArrayBuffer | Uint8Array | string): WorkbookTabResult[] {
+  let workbook: XLSX.WorkBook;
+
+  try {
+    if (typeof buffer === 'string') {
+      workbook = XLSX.read(buffer, { type: 'string', codepage: 65001 });
+    } else {
+      workbook = XLSX.read(new Uint8Array(buffer), { type: 'array', codepage: 65001 });
+    }
+  } catch (err: any) {
+    throw new Error(`Failed to parse file: ${err.message || 'Corrupted or unsupported format'}`);
+  }
+
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+    return [
+      {
+        sheetName: 'Sheet1',
+        totalRows: 0,
+        validQuestions: [],
+        errors: [{ row: 1, error: 'Spreadsheet contains no worksheets.' }],
+      },
+    ];
+  }
+
+  const results: WorkbookTabResult[] = [];
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+
+    const rawRows: any[][] = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+      blankrows: false,
+    });
+
+    const parsed = parseSpreadsheetRows(rawRows);
+    results.push({
+      sheetName,
+      totalRows: parsed.totalRows,
+      validQuestions: parsed.validQuestions,
+      errors: parsed.errors,
+    });
+  }
+
+  return results;
 }
 
 /**

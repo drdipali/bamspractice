@@ -514,7 +514,30 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                       <Text style={styles.statLabel}>Duplicates</Text>
                     </View>
                   )}
+                  {scanResult.failedFilesCount > 0 && (
+                    <View style={[styles.statCard, { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }]}>
+                      <Text style={[styles.statNum, { color: '#DC2626' }]}>
+                        {scanResult.failedFilesCount}
+                      </Text>
+                      <Text style={[styles.statLabel, { color: '#991B1B' }]}>Failed Files</Text>
+                    </View>
+                  )}
                 </View>
+
+                {/* Scan Errors Banner */}
+                {scanResult.failedFilesCount > 0 && (
+                  <View style={styles.scanErrorBanner}>
+                    <AlertCircle size={18} color="#DC2626" style={{ marginTop: 2 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.scanErrorBannerTitle}>
+                        {scanResult.failedFilesCount} of {scanResult.totalSheetsFound} files could not be read
+                      </Text>
+                      <Text style={styles.scanErrorBannerText}>
+                        See error details below under Scanned Files Breakdown. If Google Sheets API is not enabled in your Google Cloud Console, enable it or upload questions as .xlsx files.
+                      </Text>
+                    </View>
+                  </View>
+                )}
 
                 {/* Duplicate Policy Selector */}
                 {duplicateCount > 0 && (
@@ -576,6 +599,34 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                 </Text>
                 {scanResult.sheets.map((sheet) => {
                   const isExpanded = expandedFiles[sheet.fileId] ?? true;
+                  const isError = sheet.status === 'error' || Boolean(sheet.errorMessage);
+
+                  if (isError) {
+                    return (
+                      <View key={sheet.fileId} style={[styles.sheetCard, styles.sheetCardError]}>
+                        <View style={styles.sheetHeaderError}>
+                          <AlertCircle size={16} color="#DC2626" />
+                          <Text style={styles.sheetNameError} numberOfLines={1}>
+                            {sheet.fileName}
+                          </Text>
+                          <View style={styles.badgeError}>
+                            <Text style={styles.badgeErrorText}>Scan Error</Text>
+                          </View>
+                        </View>
+                        <View style={styles.sheetErrorBody}>
+                          <Text style={styles.sheetErrorMsg}>
+                            {sheet.errorMessage || 'Failed to read file contents.'}
+                          </Text>
+                          {sheet.errorMessage?.toLowerCase().includes('sheets api') && (
+                            <Text style={styles.sheetErrorHint}>
+                              💡 Tip: Enable "Google Sheets API" in your Google Cloud Console, or convert your sheet into an Excel (.xlsx) file.
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  }
+
                   return (
                     <View key={sheet.fileId} style={styles.sheetCard}>
                       <TouchableOpacity
@@ -1150,12 +1201,37 @@ const styles = StyleSheet.create({
     color: THEME.colors.ink,
     marginBottom: 6,
   },
+  scanErrorBanner: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+  },
+  scanErrorBannerTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  scanErrorBannerText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+    lineHeight: 15,
+  },
   sheetCard: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,
     marginBottom: 8,
     overflow: 'hidden',
+  },
+  sheetCardError: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF',
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -1164,10 +1240,23 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: '#F8FAFC',
   },
+  sheetHeaderError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    backgroundColor: '#FEF2F2',
+  },
   sheetName: {
     fontSize: 12,
     fontWeight: '600',
     color: THEME.colors.ink,
+    flex: 1,
+  },
+  sheetNameError: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B91C1C',
     flex: 1,
   },
   sheetBadge: {
@@ -1180,6 +1269,36 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#166534',
+  },
+  badgeError: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeErrorText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  sheetErrorBody: {
+    padding: 10,
+    backgroundColor: '#FFF5F5',
+    borderTopWidth: 1,
+    borderTopColor: '#FEE2E2',
+    gap: 4,
+  },
+  sheetErrorMsg: {
+    fontSize: 11,
+    color: '#991B1B',
+    lineHeight: 16,
+  },
+  sheetErrorHint: {
+    fontSize: 11,
+    color: '#7F1D1D',
+    fontWeight: '600',
+    marginTop: 2,
+    lineHeight: 15,
   },
   tabsContainer: {
     backgroundColor: '#FFF',

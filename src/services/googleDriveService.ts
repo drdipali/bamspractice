@@ -3,6 +3,8 @@ import { Question } from '../types';
 import {
   parseSpreadsheetRows,
   parseSpreadsheetBuffer,
+  parseWorkbookAllTabs,
+  WorkbookTabResult,
   SpreadsheetParseResult,
 } from '../utils/spreadsheetHelper';
 
@@ -64,6 +66,9 @@ export interface DriveTabScan {
 export interface DriveSheetScan {
   fileId: string;
   fileName: string;
+  mimeType: string;
+  status: 'success' | 'error';
+  errorMessage?: string;
   tabs: DriveTabScan[];
   sheetValidQuestions: Omit<Question, 'id'>[];
 }
@@ -76,6 +81,7 @@ export interface DriveFolderScanSummary {
   totalRowsScanned: number;
   validQuestionsCount: number;
   errorCount: number;
+  failedFilesCount: number;
   sheets: DriveSheetScan[];
   allValidQuestions: Omit<Question, 'id'>[];
 }
@@ -421,15 +427,255 @@ export class GoogleDriveService {
   }
 
   /**
-   * Scans a Google Drive folder for all Google Sheets, reads every tab, and parses questions
+   * Processes a single Drive file (Google Sheet, Excel, or CSV) and parses all tabs
+   */
+  private static async processDriveFile(
+    file: DriveFileItem,
+    token: string,
+    onFileProgress?: (msg: string) => void
+  ): Promise<DriveSheetScan> {
+    const isGoogleSheet = file.mimeType === 'application/vnd.google-apps.spreadsheet';
+    const isExcelOrCsv =
+      file.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.mimeType === 'application/vnd.ms-excel' ||
+      file.mimeType === 'text/csv' ||
+      file.mimeType === 'application/csv' ||
+      file.mimeType === 'text/comma-separated-values' ||
+      file.name.toLowerCase().endsWith('.xlsx') ||
+      file.name.toLowerCase().endsWith('.xls') ||
+      file.name.toLowerCase().endsWith('.csv');
+
+    // Case 1: Native Google Spreadsheet
+    if (isGoogleSheet) {
+      try {
+        onFileProgress?.(`Querying Sheets API for "${file.name}"...`);
+        const metaRes = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets(properties(sheetId,title))`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (metaRes.ok) {
+          const metaData = await metaRes.json();
+          const tabs = metaData.sheets || [];
+          if (tabs.length === 0) {
+            return {
+              fileId: file.id,
+              fileName: file.name,
+              mimeType: file.mimeType,
+              status: 'error',
+              errorMessage: 'Google Sheet has no worksheets/tabs.',
+              tabs: [],
+              sheetValidQuestions: [],
+            };
+          }
+
+          const sheetTabs: DriveTabScan[] = [];
+          const fileValidQuestions: Omit<Question, 'id'>[] = [];
+
+          for (const tab of tabs) {
+            const title = tab.properties?.title || 'Sheet1';
+            const sheetId = tab.properties?.sheetId ?? 0;
+            onFileProgress?.(`Reading tab "${title}" in "${file.name}"...`);
+
+            const valuesRes = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/${encodeURIComponent(
+                title
+              )}?valueRenderOption=FORMATTED_VALUE`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+
+            if (!valuesRes.ok) {
+              let valErr = `HTTP ${valuesRes.status}`;
+              try {
+                const valJson = await valuesRes.json();
+                if (valJson?.error?.message) valErr = valJson.error.message;
+              } catch {}
+              sheetTabs.push({
+                tabName: title,
+                sheetId,
+                totalRows: 0,
+                validQuestions: [],
+                errors: [{ row: 1, error: `Could not read tab "${title}": ${valErr}` }],
+              });
+              continue;
+            }
+
+            const valuesData = await valuesRes.json();
+            const rawRows: any[][] = valuesData.values || [];
+            const parseResult = parseSpreadsheetRows(rawRows);
+
+            sheetTabs.push({
+              tabName: title,
+              sheetId,
+              totalRows: rawRows.length,
+              validQuestions: parseResult.validQuestions,
+              errors: parseResult.errors,
+            });
+            fileValidQuestions.push(...parseResult.validQuestions);
+          }
+
+          return {
+            fileId: file.id,
+            fileName: file.name,
+            mimeType: file.mimeType,
+            status: 'success',
+            tabs: sheetTabs,
+            sheetValidQuestions: fileValidQuestions,
+          };
+        }
+
+        // Sheets API returned non-OK. Read the exact error.
+        let sheetsErrMsg = `HTTP ${metaRes.status}`;
+        try {
+          const errData = await metaRes.json();
+          if (errData?.error?.message) sheetsErrMsg = errData.error.message;
+        } catch {
+          const errText = await metaRes.text().catch(() => '');
+          if (errText) sheetsErrMsg = errText;
+        }
+
+        // Try automatic fallback: Export Google Sheet as XLSX via Google Drive API
+        // (Drive API export requires only drive.readonly scope and works even if Sheets API is not enabled!)
+        onFileProgress?.(`Falling back to Drive XLSX export for "${file.name}"...`);
+        const exportRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (exportRes.ok) {
+          const buffer = await exportRes.arrayBuffer();
+          const tabResults = parseWorkbookAllTabs(buffer);
+          const sheetTabs: DriveTabScan[] = tabResults.map((t, idx) => ({
+            tabName: t.sheetName,
+            sheetId: idx,
+            totalRows: t.totalRows,
+            validQuestions: t.validQuestions,
+            errors: t.errors,
+          }));
+          const fileValidQuestions = tabResults.flatMap((t) => t.validQuestions);
+
+          return {
+            fileId: file.id,
+            fileName: file.name,
+            mimeType: file.mimeType,
+            status: 'success',
+            tabs: sheetTabs,
+            sheetValidQuestions: fileValidQuestions,
+          };
+        }
+
+        // Both Sheets API and Drive Export failed: report real error
+        let finalError = sheetsErrMsg;
+        if (metaRes.status === 403 && sheetsErrMsg.toLowerCase().includes('sheets api')) {
+          finalError = `Google Sheets API is not enabled in your Google Cloud Project (${sheetsErrMsg}). Please enable the 'Google Sheets API' in your Google Cloud Console.`;
+        } else if (metaRes.status === 403) {
+          finalError = `Permission denied (HTTP 403): ${sheetsErrMsg}`;
+        }
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          mimeType: file.mimeType,
+          status: 'error',
+          errorMessage: finalError,
+          tabs: [],
+          sheetValidQuestions: [],
+        };
+      } catch (err: any) {
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          mimeType: file.mimeType,
+          status: 'error',
+          errorMessage: err.message || 'Failed to read Google Sheet.',
+          tabs: [],
+          sheetValidQuestions: [],
+        };
+      }
+    }
+
+    // Case 2: Excel (.xlsx / .xls) or CSV uploaded to Drive
+    if (isExcelOrCsv || true) {
+      try {
+        onFileProgress?.(`Downloading binary for "${file.name}"...`);
+        const downloadRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!downloadRes.ok) {
+          let dlError = `HTTP ${downloadRes.status}`;
+          try {
+            const errJson = await downloadRes.json();
+            if (errJson?.error?.message) dlError = errJson.error.message;
+          } catch {
+            const errText = await downloadRes.text().catch(() => '');
+            if (errText) dlError = errText;
+          }
+
+          return {
+            fileId: file.id,
+            fileName: file.name,
+            mimeType: file.mimeType,
+            status: 'error',
+            errorMessage: `Download failed (${dlError})`,
+            tabs: [],
+            sheetValidQuestions: [],
+          };
+        }
+
+        const buffer = await downloadRes.arrayBuffer();
+        const tabResults = parseWorkbookAllTabs(buffer);
+
+        const sheetTabs: DriveTabScan[] = tabResults.map((t, idx) => ({
+          tabName: t.sheetName,
+          sheetId: idx,
+          totalRows: t.totalRows,
+          validQuestions: t.validQuestions,
+          errors: t.errors,
+        }));
+        const fileValidQuestions = tabResults.flatMap((t) => t.validQuestions);
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          mimeType: file.mimeType,
+          status: 'success',
+          tabs: sheetTabs,
+          sheetValidQuestions: fileValidQuestions,
+        };
+      } catch (err: any) {
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          mimeType: file.mimeType,
+          status: 'error',
+          errorMessage: err.message || 'Failed to parse Excel / CSV file.',
+          tabs: [],
+          sheetValidQuestions: [],
+        };
+      }
+    }
+  }
+
+  /**
+   * Scans a Google Drive folder for all Google Sheets, Excel files, and CSVs,
+   * reads every tab in batches of 3, and parses questions with live progress.
    */
   static async scanFolder(
     folderInput: string,
-    onProgress?: (status: { message: string; currentFile?: string; completedFiles?: number; totalFiles?: number }) => void
+    onProgress?: (status: {
+      message: string;
+      currentFile?: string;
+      completedFiles?: number;
+      totalFiles?: number;
+    }) => void
   ): Promise<DriveFolderScanSummary> {
     const token = this.getActiveToken();
     if (!token) {
-      throw new Error('You are not connected to Google Drive. Please click "Connect Google Drive" first.');
+      throw new Error(
+        'You are not connected to Google Drive. Please click "Connect Google Drive" first.'
+      );
     }
 
     const folderId = this.extractFolderId(folderInput);
@@ -442,9 +688,9 @@ export class GoogleDriveService {
     onProgress?.({ message: 'Verifying Google Drive folder access...' });
     const folderMeta = await this.getFolderMetadata(folderId, token);
 
-    // List all spreadsheets inside this folder
+    // List all non-folder files inside this folder
     onProgress?.({ message: `Listing spreadsheets inside "${folderMeta.name}"...` });
-    const query = `'${folderId}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`;
+    const query = `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
     const listRes = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
         query
@@ -457,15 +703,37 @@ export class GoogleDriveService {
     );
 
     if (!listRes.ok) {
-      throw new Error(`Failed to list files in folder (HTTP ${listRes.status}).`);
+      let listErr = `HTTP ${listRes.status}`;
+      try {
+        const j = await listRes.json();
+        if (j?.error?.message) listErr = j.error.message;
+      } catch {}
+      throw new Error(`Failed to list files in folder: ${listErr}`);
     }
 
     const listData = await listRes.json();
-    const files: DriveFileItem[] = listData.files || [];
+    const rawFiles: DriveFileItem[] = listData.files || [];
+
+    // Filter to spreadsheet, excel, csv files
+    const files = rawFiles.filter((f) => {
+      const mime = (f.mimeType || '').toLowerCase();
+      const name = (f.name || '').toLowerCase();
+      return (
+        mime.includes('spreadsheet') ||
+        mime.includes('excel') ||
+        mime.includes('csv') ||
+        name.endsWith('.xlsx') ||
+        name.endsWith('.xls') ||
+        name.endsWith('.csv') ||
+        mime === 'application/vnd.google-apps.spreadsheet' ||
+        mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        mime === 'application/vnd.ms-excel'
+      );
+    });
 
     if (files.length === 0) {
       throw new Error(
-        `No Google Sheets, Excel files, or CSVs found inside folder "${folderMeta.name}". Please ensure your question sheets are placed in this folder.`
+        `No spreadsheets, Excel files, or CSVs found inside folder "${folderMeta.name}". (Found ${rawFiles.length} other files).`
       );
     }
 
@@ -474,117 +742,67 @@ export class GoogleDriveService {
     let totalTabsScanned = 0;
     let totalRowsScanned = 0;
     let totalErrors = 0;
+    let failedFilesCount = 0;
 
-    for (let fIdx = 0; fIdx < files.length; fIdx++) {
-      const file = files[fIdx];
+    // Process files in small batches of 3 to avoid rate limits
+    const BATCH_SIZE = 3;
+    let completedCount = 0;
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+
       onProgress?.({
-        message: `Scanning file (${fIdx + 1}/${files.length}): "${file.name}"...`,
-        currentFile: file.name,
-        completedFiles: fIdx,
+        message: `Scanning files ${completedCount + 1}–${Math.min(
+          completedCount + batch.length,
+          files.length
+        )} of ${files.length}...`,
+        currentFile: batch[0].name,
+        completedFiles: completedCount,
         totalFiles: files.length,
       });
 
-      const sheetTabs: DriveTabScan[] = [];
-      const fileValidQuestions: Omit<Question, 'id'>[] = [];
+      const batchPromises = batch.map(async (file, bIdx) => {
+        const fileNum = i + bIdx + 1;
+        const res = await this.processDriveFile(file, token, (msg) => {
+          onProgress?.({
+            message: `Scanning ${fileNum} of ${files.length}: ${msg}`,
+            currentFile: file.name,
+            completedFiles: completedCount,
+            totalFiles: files.length,
+          });
+        });
 
-      try {
-        if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
-          // 1. Fetch metadata to discover all sheets / tabs in this Google Spreadsheet
-          const metaRes = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets(properties(sheetId,title))`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
+        completedCount++;
+        onProgress?.({
+          message: `Scanning ${completedCount} of ${files.length}: "${file.name}"...`,
+          currentFile: file.name,
+          completedFiles: completedCount,
+          totalFiles: files.length,
+        });
 
-          if (!metaRes.ok) {
-            console.warn(`Could not fetch metadata for spreadsheet ${file.name}: HTTP ${metaRes.status}`);
-            continue;
-          }
+        return res;
+      });
 
-          const metaData = await metaRes.json();
-          const tabs = metaData.sheets || [];
+      const batchResults = await Promise.all(batchPromises);
 
-          for (const tab of tabs) {
-            const title = tab.properties?.title || 'Sheet1';
-            const sheetId = tab.properties?.sheetId ?? 0;
-
-            onProgress?.({
-              message: `Reading tab "${title}" from "${file.name}"...`,
-              currentFile: file.name,
-              completedFiles: fIdx,
-              totalFiles: files.length,
-            });
-
-            // 2. Fetch all values for this tab using Sheets API
-            const valuesRes = await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/${encodeURIComponent(
-                title
-              )}?valueRenderOption=FORMATTED_VALUE`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              }
-            );
-
-            if (!valuesRes.ok) {
-              console.warn(`Could not read values from tab ${title} in ${file.name}`);
-              continue;
-            }
-
-            const valuesData = await valuesRes.json();
-            const rawRows: any[][] = valuesData.values || [];
-
-            totalTabsScanned++;
-            totalRowsScanned += rawRows.length;
-
-            const parseResult: SpreadsheetParseResult = parseSpreadsheetRows(rawRows);
-
-            sheetTabs.push({
-              tabName: title,
-              sheetId,
-              totalRows: rawRows.length,
-              validQuestions: parseResult.validQuestions,
-              errors: parseResult.errors,
-            });
-
-            fileValidQuestions.push(...parseResult.validQuestions);
-            allValidQuestions.push(...parseResult.validQuestions);
-            totalErrors += parseResult.errors.length;
+      for (const res of batchResults) {
+        sheetsScans.push(res);
+        if (res.status === 'success') {
+          allValidQuestions.push(...res.sheetValidQuestions);
+          totalTabsScanned += res.tabs.length;
+          for (const tab of res.tabs) {
+            totalRowsScanned += tab.totalRows;
+            totalErrors += tab.errors.length;
           }
         } else {
-          // CSV or Excel uploaded file in Drive: download binary stream
-          const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-
-          if (downloadRes.ok) {
-            const buffer = await downloadRes.arrayBuffer();
-            const parseResult = parseSpreadsheetBuffer(buffer);
-
-            totalTabsScanned++;
-            totalRowsScanned += parseResult.totalRows;
-            sheetTabs.push({
-              tabName: file.name,
-              sheetId: 0,
-              totalRows: parseResult.totalRows,
-              validQuestions: parseResult.validQuestions,
-              errors: parseResult.errors,
-            });
-
-            fileValidQuestions.push(...parseResult.validQuestions);
-            allValidQuestions.push(...parseResult.validQuestions);
-            totalErrors += parseResult.errors.length;
-          }
+          failedFilesCount++;
+          totalErrors++;
         }
+      }
 
-        sheetsScans.push({
-          fileId: file.id,
-          fileName: file.name,
-          tabs: sheetTabs,
-          sheetValidQuestions: fileValidQuestions,
-        });
-      } catch (fileErr: any) {
-        console.warn(`Error scanning file ${file.name}:`, fileErr);
+      // Small friendly pause between batches to avoid rate limits
+      if (i + BATCH_SIZE < files.length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
@@ -602,6 +820,7 @@ export class GoogleDriveService {
       totalRowsScanned,
       validQuestionsCount: allValidQuestions.length,
       errorCount: totalErrors,
+      failedFilesCount,
       sheets: sheetsScans,
       allValidQuestions,
     };
