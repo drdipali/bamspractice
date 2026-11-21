@@ -174,12 +174,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Progress Tracking: Set of Question IDs edited
   const [editedIds, setEditedIds] = useState<Set<string>>(new Set());
 
-  // Chapter-wise Coverage and Filtering state
+  // Cascading 3-Step Chapter Filter state (Samhita -> Sthana -> Chapter)
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string | null>(null);
+  const [selectedSthanaFilter, setSelectedSthanaFilter] = useState<string | null>(null);
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string | null>(null);
   const [isChapterPanelExpanded, setIsChapterPanelExpanded] = useState<boolean>(true);
-  const [chapterSearchQuery, setChapterSearchQuery] = useState<string>('');
-  const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({});
-  const [expandedSthanas, setExpandedSthanas] = useState<Record<string, boolean>>({});
 
   // Smart Citation Auto-Mapper state
   const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState<boolean>(false);
@@ -718,6 +717,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
   };
 
+  // Cascading 3-Step Chapter Filter Helper: Reset all 3 tiers
+  const handleResetCascadingFilter = () => {
+    setSelectedSubjectFilter(null);
+    setSelectedSthanaFilter(null);
+    setSelectedChapterFilter(null);
+  };
+
   // Filtered & Paginated questions
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
@@ -728,20 +734,62 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
-      if (selectedChapterFilter) {
+
+      // Cascading 3-Step Chapter Filter (Subject -> Sthana -> Chapter)
+      if (selectedSubjectFilter) {
+        const rawTag = String(q.chapterName || q.ch || 'Charaka Samhita > Sutrasthana > Chapter 1').trim();
+        const parts = rawTag.split('>').map((s) => s.trim());
+        let qSubj = parts[0] || 'Charaka Samhita';
+        let qSthana = parts[1] || 'Sutrasthana';
+        let qChapter = parts[2] || (parts[1] && parts[1].toLowerCase().includes('chapter') ? parts[1] : 'Chapter 1');
+        if (!parts[1] && !parts[2]) {
+          qSubj = 'General Ayurveda';
+          qSthana = 'General';
+          qChapter = rawTag || 'Chapter 1';
+        }
+
+        const subjMatch =
+          qSubj.toLowerCase() === selectedSubjectFilter.toLowerCase() ||
+          rawTag.toLowerCase().includes(selectedSubjectFilter.toLowerCase());
+        if (!subjMatch) return false;
+
+        if (selectedSthanaFilter) {
+          const sthanaMatch =
+            qSthana.toLowerCase() === selectedSthanaFilter.toLowerCase() ||
+            rawTag.toLowerCase().includes(selectedSthanaFilter.toLowerCase());
+          if (!sthanaMatch) return false;
+
+          if (selectedChapterFilter) {
+            const chFilterNum = selectedChapterFilter.replace(/\D/g, '');
+            const qChNum = qChapter.replace(/\D/g, '');
+            const chMatch =
+              qChapter.toLowerCase() === selectedChapterFilter.toLowerCase() ||
+              (chFilterNum !== '' && qChNum !== '' && chFilterNum === qChNum) ||
+              rawTag.toLowerCase().includes(selectedChapterFilter.toLowerCase());
+            if (!chMatch) return false;
+          }
+        }
+      } else if (selectedChapterFilter) {
         const qBreadcrumb = (q.chapterName || String(q.ch) || '').toLowerCase();
-        const filterLower = selectedChapterFilter.toLowerCase();
-        if (!qBreadcrumb.includes(filterLower)) {
+        if (!qBreadcrumb.includes(selectedChapterFilter.toLowerCase())) {
           return false;
         }
       }
+
       if (searchQuery.trim()) {
         const text = `${q.stem} ${q.chapterName || ''} ${q.r || ''} ${q.explanation || ''}`.toLowerCase();
         return text.includes(searchQuery.toLowerCase().trim());
       }
       return true;
     });
-  }, [questions, selectedTypeFilter, selectedChapterFilter, searchQuery]);
+  }, [
+    questions,
+    selectedTypeFilter,
+    selectedSubjectFilter,
+    selectedSthanaFilter,
+    selectedChapterFilter,
+    searchQuery,
+  ]);
 
   const displayedQuestions = useMemo(() => {
     return filteredQuestions.slice(0, visibleCount);
@@ -763,52 +811,49 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     return count;
   }, [chapterHierarchy]);
 
-  // Filter chapter breakdown by quick search query
-  const filteredChapterHierarchy = useMemo(() => {
-    if (!chapterSearchQuery.trim()) return chapterHierarchy;
-    const q = chapterSearchQuery.toLowerCase().trim();
+  // Cascading Selection Lookups
+  const activeSubjectObj = useMemo(() => {
+    if (!selectedSubjectFilter) return null;
+    return (
+      chapterHierarchy.find(
+        (s) => s.name.toLowerCase() === selectedSubjectFilter.toLowerCase()
+      ) || null
+    );
+  }, [chapterHierarchy, selectedSubjectFilter]);
 
-    return chapterHierarchy
-      .map((subj) => {
-        const matchingSthanas = subj.sthanas
-          .map((sth) => {
-            const matchingChapters = sth.chapters.filter(
-              (ch) =>
-                ch.name.toLowerCase().includes(q) ||
-                ch.fullBreadcrumb.toLowerCase().includes(q) ||
-                ch.sthana.toLowerCase().includes(q)
-            );
-            const sthMatches =
-              sth.name.toLowerCase().includes(q) ||
-              sth.fullBreadcrumb.toLowerCase().includes(q);
+  const availableSthanas = useMemo(() => {
+    return activeSubjectObj ? activeSubjectObj.sthanas : [];
+  }, [activeSubjectObj]);
 
-            if (sthMatches) {
-              return sth;
-            }
-            if (matchingChapters.length > 0) {
-              return {
-                ...sth,
-                chapters: matchingChapters,
-              };
-            }
-            return null;
-          })
-          .filter(Boolean) as SthanaSummaryItem[];
+  const activeSthanaObj = useMemo(() => {
+    if (!activeSubjectObj || !selectedSthanaFilter) return null;
+    return (
+      activeSubjectObj.sthanas.find(
+        (st) => st.name.toLowerCase() === selectedSthanaFilter.toLowerCase()
+      ) || null
+    );
+  }, [activeSubjectObj, selectedSthanaFilter]);
 
-        const subjMatches = subj.name.toLowerCase().includes(q);
-        if (subjMatches) {
-          return subj;
-        }
-        if (matchingSthanas.length > 0) {
-          return {
-            ...subj,
-            sthanas: matchingSthanas,
-          };
-        }
-        return null;
-      })
-      .filter(Boolean) as SubjectSummaryItem[];
-  }, [chapterHierarchy, chapterSearchQuery]);
+  const availableChapters = useMemo(() => {
+    return activeSthanaObj ? activeSthanaObj.chapters : [];
+  }, [activeSthanaObj]);
+
+  const activeChapterObj = useMemo(() => {
+    if (!availableChapters.length || !selectedChapterFilter) return null;
+    return (
+      availableChapters.find(
+        (c) => c.name.toLowerCase() === selectedChapterFilter.toLowerCase()
+      ) || null
+    );
+  }, [availableChapters, selectedChapterFilter]);
+
+  // Live count for active path
+  const activeFilterLiveCount = useMemo(() => {
+    if (activeChapterObj) return activeChapterObj.valid;
+    if (activeSthanaObj) return activeSthanaObj.valid;
+    if (activeSubjectObj) return activeSubjectObj.valid;
+    return questions.filter((q) => !isQuestionMalformed(q)).length;
+  }, [activeChapterObj, activeSthanaObj, activeSubjectObj, questions]);
 
   // Smart Citation Auto-Mapper handlers
   const handleOpenAutoFixModal = () => {
@@ -1599,38 +1644,39 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       )}
 
       {/* ============================================================== */}
-      {/* 2.5 CHAPTER-WISE QUESTION COVERAGE PANEL                      */}
+      {/* 2.5 COMPACT 3-STEP CASCADING CHAPTER FILTER                     */}
       {/* ============================================================== */}
-      <View style={styles.chapterCoverageContainer}>
+      <View style={styles.cascadeContainer}>
+        {/* Header Bar with Toggle & Active Summary */}
         <TouchableOpacity
-          style={styles.chapterPanelHeader}
+          style={styles.cascadeHeader}
           onPress={() => setIsChapterPanelExpanded(!isChapterPanelExpanded)}
           activeOpacity={0.8}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, flexWrap: 'wrap' }}>
-            <View style={styles.chapterPanelIconWrap}>
+            <View style={styles.cascadeIconWrap}>
               <BookOpen size={18} color="#047857" />
             </View>
             <View>
-              <Text style={styles.chapterPanelTitle}>📊 Chapter-wise Question Coverage</Text>
-              <Text style={styles.chapterPanelSub}>
-                {chapterHierarchy.length} Subjects • {totalChaptersCount} Chapters across Cloud DB
+              <Text style={styles.cascadeTitle}>📊 Chapter & Samhita Filter</Text>
+              <Text style={styles.cascadeSub}>
+                3-Step Cascading Selection • {chapterHierarchy.length} Samhitas • {totalChaptersCount} Chapters
               </Text>
             </View>
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {selectedChapterFilter && (
+            {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
               <TouchableOpacity
-                style={styles.activeFilterPill}
+                style={styles.cascadeActiveBadge}
                 onPress={(e) => {
                   e.stopPropagation?.();
-                  setSelectedChapterFilter(null);
+                  handleResetCascadingFilter();
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.activeFilterPillText} numberOfLines={1}>
-                  Filter: {selectedChapterFilter}
+                <Text style={styles.cascadeActiveBadgeText} numberOfLines={1}>
+                  {[selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).join(' › ')}
                 </Text>
                 <X size={12} color="#065F46" />
               </TouchableOpacity>
@@ -1646,215 +1692,298 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         </TouchableOpacity>
 
         {isChapterPanelExpanded && (
-          <View style={styles.chapterPanelBody}>
-            {/* Quick Search inside Chapters */}
-            <View style={styles.chapterSearchBar}>
-              <Search size={14} color={THEME.colors.muted} />
-              <TextInput
-                style={styles.chapterSearchInput}
-                value={chapterSearchQuery}
-                onChangeText={setChapterSearchQuery}
-                placeholder="Search chapter, sthana, or subject (e.g. Sutra 45, Chikitsa 3, Sushrut)..."
-                placeholderTextColor={THEME.colors.muted}
-              />
-              {chapterSearchQuery ? (
-                <TouchableOpacity onPress={() => setChapterSearchQuery('')}>
-                  <X size={14} color={THEME.colors.muted} />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            {/* Hierarchical Tree of Subjects -> Sthanas -> Chapters */}
-            <View style={styles.subjectsTree}>
-              {filteredChapterHierarchy.length === 0 ? (
-                <View style={styles.noChaptersFound}>
-                  <Text style={styles.noChaptersFoundText}>
-                    No chapters match &quot;{chapterSearchQuery}&quot;
-                  </Text>
-                </View>
-              ) : (
-                filteredChapterHierarchy.map((subj) => {
-                  const isSubjExpanded = expandedSubjects[subj.name] !== false; // default expanded
-                  const isSubjActive = selectedChapterFilter === subj.name;
-
-                  return (
-                    <View key={subj.name} style={styles.subjectTreeCard}>
-                      <View
+          <View style={styles.cascadeBody}>
+            {/* Live Breadcrumb & Reset Filter Row */}
+            <View style={styles.breadcrumbBar}>
+              <View style={styles.breadcrumbPath}>
+                <Compass size={14} color="#047857" />
+                {selectedSubjectFilter ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedSthanaFilter(null);
+                        setSelectedChapterFilter(null);
+                      }}
+                    >
+                      <Text
                         style={[
-                          styles.subjectTreeHeader,
-                          isSubjActive && styles.subjectTreeHeaderActive,
+                          styles.breadcrumbSegment,
+                          !selectedSthanaFilter && styles.breadcrumbSegmentCurrent,
                         ]}
                       >
-                        <TouchableOpacity
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}
-                          onPress={() =>
-                            setExpandedSubjects((prev) => ({
-                              ...prev,
-                              [subj.name]: !isSubjExpanded,
-                            }))
-                          }
-                          activeOpacity={0.7}
-                        >
-                          <ChevronRight
-                            size={16}
-                            color={THEME.colors.ink}
-                            style={{
-                              transform: [{ rotate: isSubjExpanded ? '90deg' : '0deg' }],
-                            }}
-                          />
-                          <Text style={styles.subjectTreeName}>{subj.name}</Text>
-                        </TouchableOpacity>
+                        {selectedSubjectFilter}
+                      </Text>
+                    </TouchableOpacity>
 
-                        <View style={styles.badgesCluster}>
-                          <View style={styles.badgeTotalCount}>
-                            <Text style={styles.badgeTotalCountText}>{subj.total} total</Text>
-                          </View>
-                          <View style={styles.badgeValidCount}>
-                            <Text style={styles.badgeValidCountText}>✓ {subj.valid} Live</Text>
-                          </View>
-                          {subj.malformed > 0 && (
-                            <View style={styles.badgeMalformedCount}>
-                              <Text style={styles.badgeMalformedCountText}>⚠ {subj.malformed} Malformed</Text>
-                            </View>
-                          )}
-                          <TouchableOpacity
-                            style={[styles.btnFilterRow, isSubjActive && styles.btnFilterRowActive]}
-                            onPress={() => setSelectedChapterFilter(isSubjActive ? null : subj.name)}
+                    {selectedSthanaFilter && (
+                      <>
+                        <Text style={styles.breadcrumbDivider}>›</Text>
+                        <TouchableOpacity onPress={() => setSelectedChapterFilter(null)}>
+                          <Text
+                            style={[
+                              styles.breadcrumbSegment,
+                              !selectedChapterFilter && styles.breadcrumbSegmentCurrent,
+                            ]}
                           >
-                            <Text
-                              style={[
-                                styles.btnFilterRowText,
-                                isSubjActive && styles.btnFilterRowTextActive,
-                              ]}
-                            >
-                              {isSubjActive ? 'Active Filter' : 'Filter'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
+                            {selectedSthanaFilter}
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
 
-                      {isSubjExpanded && (
-                        <View style={styles.sthanaContainer}>
-                          {subj.sthanas.map((sth) => {
-                            const isSthExpanded = expandedSthanas[sth.fullBreadcrumb] !== false;
-                            const isSthActive = selectedChapterFilter === sth.fullBreadcrumb;
+                    {selectedChapterFilter && (
+                      <>
+                        <Text style={styles.breadcrumbDivider}>›</Text>
+                        <Text style={[styles.breadcrumbSegment, styles.breadcrumbSegmentCurrent]}>
+                          {selectedChapterFilter}
+                        </Text>
+                      </>
+                    )}
 
-                            return (
-                              <View key={sth.fullBreadcrumb} style={styles.sthanaCard}>
-                                <View
-                                  style={[
-                                    styles.sthanaHeader,
-                                    isSthActive && styles.sthanaHeaderActive,
-                                  ]}
-                                >
-                                  <TouchableOpacity
-                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
-                                    onPress={() =>
-                                      setExpandedSthanas((prev) => ({
-                                        ...prev,
-                                        [sth.fullBreadcrumb]: !isSthExpanded,
-                                      }))
-                                    }
-                                    activeOpacity={0.7}
-                                  >
-                                    <ChevronRight
-                                      size={14}
-                                      color={THEME.colors.muted}
-                                      style={{
-                                        transform: [{ rotate: isSthExpanded ? '90deg' : '0deg' }],
-                                      }}
-                                    />
-                                    <Text style={styles.sthanaName}>{sth.name}</Text>
-                                    <Text style={styles.sthanaSub}>({sth.chapters.length} Ch)</Text>
-                                  </TouchableOpacity>
-
-                                  <View style={styles.badgesCluster}>
-                                    <View style={styles.badgeValidMini}>
-                                      <Text style={styles.badgeValidMiniText}>{sth.valid} live</Text>
-                                    </View>
-                                    {sth.malformed > 0 && (
-                                      <View style={styles.badgeMalformedMini}>
-                                        <Text style={styles.badgeMalformedMiniText}>
-                                          {sth.malformed} malformed
-                                        </Text>
-                                      </View>
-                                    )}
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.btnFilterMini,
-                                        isSthActive && styles.btnFilterMiniActive,
-                                      ]}
-                                      onPress={() =>
-                                        setSelectedChapterFilter(isSthActive ? null : sth.fullBreadcrumb)
-                                      }
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.btnFilterMiniText,
-                                          isSthActive && styles.btnFilterMiniTextActive,
-                                        ]}
-                                      >
-                                        {isSthActive ? 'Active' : 'Filter'}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                </View>
-
-                                {isSthExpanded && (
-                                  <View style={styles.chaptersGrid}>
-                                    {sth.chapters.map((ch) => {
-                                      const isChActive = selectedChapterFilter === ch.fullBreadcrumb;
-                                      return (
-                                        <TouchableOpacity
-                                          key={ch.fullBreadcrumb}
-                                          style={[
-                                            styles.chapterPill,
-                                            isChActive && styles.chapterPillActive,
-                                          ]}
-                                          onPress={() =>
-                                            setSelectedChapterFilter(isChActive ? null : ch.fullBreadcrumb)
-                                          }
-                                          activeOpacity={0.7}
-                                        >
-                                          <Text
-                                            style={[
-                                              styles.chapterPillName,
-                                              isChActive && styles.chapterPillNameActive,
-                                            ]}
-                                          >
-                                            {ch.name}
-                                          </Text>
-                                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                            <Text
-                                              style={[
-                                                styles.chapterPillTotal,
-                                                isChActive && styles.chapterPillTotalActive,
-                                              ]}
-                                            >
-                                              {ch.total}
-                                            </Text>
-                                            {ch.malformed > 0 && (
-                                              <View
-                                                style={styles.dotMalformed}
-                                                accessibilityLabel={`${ch.malformed} malformed`}
-                                              />
-                                            )}
-                                          </View>
-                                        </TouchableOpacity>
-                                      );
-                                    })}
-                                  </View>
-                                )}
-                              </View>
-                            );
-                          })}
-                        </View>
-                      )}
+                    <View style={styles.breadcrumbLiveBadge}>
+                      <Text style={styles.breadcrumbLiveBadgeText}>
+                        {activeFilterLiveCount.toLocaleString()} Live
+                      </Text>
                     </View>
-                  );
-                })
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={styles.breadcrumbAllText}>All Cloud Questions</Text>
+                    <View style={styles.breadcrumbLiveBadge}>
+                      <Text style={styles.breadcrumbLiveBadgeText}>
+                        {activeFilterLiveCount.toLocaleString()} Live
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
+                <TouchableOpacity
+                  style={styles.btnResetFilter}
+                  onPress={handleResetCascadingFilter}
+                  activeOpacity={0.7}
+                >
+                  <RotateCcw size={12} color="#991B1B" />
+                  <Text style={styles.btnResetFilterText}>Reset Filter</Text>
+                </TouchableOpacity>
               )}
             </View>
+
+            {/* STEP 1: Select Samhita / Subject */}
+            <View style={styles.stepBlock}>
+              <View style={styles.stepHeaderRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>Step 1</Text>
+                </View>
+                <Text style={styles.stepTitle}>Select Samhita / Subject</Text>
+                {selectedSubjectFilter && (
+                  <Text style={styles.stepSelectedEcho}>• {selectedSubjectFilter}</Text>
+                )}
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.stepPillsScroll}
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.cascadePill,
+                    !selectedSubjectFilter && styles.cascadePillActive,
+                  ]}
+                  onPress={handleResetCascadingFilter}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.cascadePillText,
+                      !selectedSubjectFilter && styles.cascadePillTextActive,
+                    ]}
+                  >
+                    All ({questions.length.toLocaleString()})
+                  </Text>
+                </TouchableOpacity>
+
+                {chapterHierarchy.map((subj) => {
+                  const isSelected = selectedSubjectFilter === subj.name;
+                  return (
+                    <TouchableOpacity
+                      key={subj.name}
+                      style={[
+                        styles.cascadePill,
+                        isSelected && styles.cascadePillActive,
+                      ]}
+                      onPress={() => {
+                        if (isSelected) {
+                          handleResetCascadingFilter();
+                        } else {
+                          setSelectedSubjectFilter(subj.name);
+                          setSelectedSthanaFilter(null);
+                          setSelectedChapterFilter(null);
+                        }
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.cascadePillText,
+                          isSelected && styles.cascadePillTextActive,
+                        ]}
+                      >
+                        {subj.name} ({subj.total.toLocaleString()})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* STEP 2: Select Sthana (Section) */}
+            {selectedSubjectFilter && availableSthanas.length > 0 && (
+              <View style={styles.stepBlock}>
+                <View style={styles.stepHeaderRow}>
+                  <View style={[styles.stepBadge, { backgroundColor: '#E0F2FE' }]}>
+                    <Text style={[styles.stepBadgeText, { color: '#0369A1' }]}>Step 2</Text>
+                  </View>
+                  <Text style={styles.stepTitle}>Select Sthana</Text>
+                  <Text style={styles.stepSubHint}>under {selectedSubjectFilter}</Text>
+                  {selectedSthanaFilter && (
+                    <Text style={styles.stepSelectedEcho}>• {selectedSthanaFilter}</Text>
+                  )}
+                </View>
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.stepPillsScroll}
+                >
+                  <TouchableOpacity
+                    style={[
+                      styles.cascadePill,
+                      !selectedSthanaFilter && styles.cascadePillActiveSthana,
+                    ]}
+                    onPress={() => {
+                      setSelectedSthanaFilter(null);
+                      setSelectedChapterFilter(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.cascadePillText,
+                        !selectedSthanaFilter && styles.cascadePillTextActive,
+                      ]}
+                    >
+                      All Sthanas ({activeSubjectObj?.total.toLocaleString()})
+                    </Text>
+                  </TouchableOpacity>
+
+                  {availableSthanas.map((sth) => {
+                    const isSelected = selectedSthanaFilter === sth.name;
+                    return (
+                      <TouchableOpacity
+                        key={sth.name}
+                        style={[
+                          styles.cascadePill,
+                          isSelected && styles.cascadePillActiveSthana,
+                        ]}
+                        onPress={() => {
+                          if (isSelected) {
+                            setSelectedSthanaFilter(null);
+                            setSelectedChapterFilter(null);
+                          } else {
+                            setSelectedSthanaFilter(sth.name);
+                            setSelectedChapterFilter(null);
+                          }
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.cascadePillText,
+                            isSelected && styles.cascadePillTextActive,
+                          ]}
+                        >
+                          {sth.name} ({sth.total.toLocaleString()})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* STEP 3: Select Chapter */}
+            {selectedSthanaFilter && availableChapters.length > 0 && (
+              <View style={styles.stepBlock}>
+                <View style={styles.stepHeaderRow}>
+                  <View style={[styles.stepBadge, { backgroundColor: '#FEF3C7' }]}>
+                    <Text style={[styles.stepBadgeText, { color: '#B45309' }]}>Step 3</Text>
+                  </View>
+                  <Text style={styles.stepTitle}>Select Chapter</Text>
+                  <Text style={styles.stepSubHint}>
+                    ({availableChapters.length} chapters, sorted numerically)
+                  </Text>
+                  {selectedChapterFilter && (
+                    <Text style={styles.stepSelectedEcho}>• {selectedChapterFilter}</Text>
+                  )}
+                </View>
+
+                <View style={styles.chaptersGridContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.chapterGridPill,
+                      !selectedChapterFilter && styles.chapterGridPillActive,
+                    ]}
+                    onPress={() => setSelectedChapterFilter(null)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.chapterGridPillText,
+                        !selectedChapterFilter && styles.chapterGridPillTextActive,
+                      ]}
+                    >
+                      All ({activeSthanaObj?.total.toLocaleString()})
+                    </Text>
+                  </TouchableOpacity>
+
+                  {availableChapters.map((ch) => {
+                    const isSelected = selectedChapterFilter === ch.name;
+                    const displayName = ch.name.replace(/^Chapter\s*/i, 'Ch ');
+                    return (
+                      <TouchableOpacity
+                        key={ch.name}
+                        style={[
+                          styles.chapterGridPill,
+                          isSelected && styles.chapterGridPillActive,
+                        ]}
+                        onPress={() => {
+                          setSelectedChapterFilter(isSelected ? null : ch.name);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.chapterGridPillText,
+                            isSelected && styles.chapterGridPillTextActive,
+                          ]}
+                        >
+                          {displayName} ({ch.total.toLocaleString()})
+                        </Text>
+                        {ch.malformed > 0 && (
+                          <View
+                            style={styles.dotMalformedMini}
+                            accessibilityLabel={`${ch.malformed} malformed`}
+                          />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -1881,21 +2010,25 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             ) : null}
           </View>
 
-          {/* Active Chapter Filter Bar */}
-          {selectedChapterFilter && (
+          {/* Active Cascading Filter Bar */}
+          {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
             <View style={styles.activeChapterFilterBar}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
                 <BookOpen size={14} color="#047857" />
                 <Text style={styles.activeChapterFilterText}>
-                  Filtered to Chapter: <Text style={{ fontWeight: '700' }}>{selectedChapterFilter}</Text> ({filteredQuestions.length} matching)
+                  Active Filter:{' '}
+                  <Text style={{ fontWeight: '700' }}>
+                    {[selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).join(' › ')}
+                  </Text>{' '}
+                  ({filteredQuestions.length.toLocaleString()} matching)
                 </Text>
               </View>
               <TouchableOpacity
                 style={styles.btnClearChapterFilter}
-                onPress={() => setSelectedChapterFilter(null)}
+                onPress={handleResetCascadingFilter}
               >
                 <X size={13} color="#991B1B" />
-                <Text style={styles.btnClearChapterFilterText}>Clear Chapter Filter</Text>
+                <Text style={styles.btnClearChapterFilterText}>Reset Filter</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -3839,15 +3972,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  chapterCoverageContainer: {
+  cascadeContainer: {
     backgroundColor: '#FFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: THEME.colors.line,
+    borderColor: '#E2E8F0',
     marginBottom: 16,
     overflow: 'hidden',
   },
-  chapterPanelHeader: {
+  cascadeHeader: {
     padding: 14,
     backgroundColor: '#F8FAFC',
     flexDirection: 'row',
@@ -3857,7 +3990,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
-  chapterPanelIconWrap: {
+  cascadeIconWrap: {
     width: 34,
     height: 34,
     borderRadius: 8,
@@ -3865,17 +3998,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chapterPanelTitle: {
+  cascadeTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: THEME.colors.ink,
   },
-  chapterPanelSub: {
+  cascadeSub: {
     fontSize: 11,
     color: THEME.colors.muted,
     marginTop: 2,
   },
-  activeFilterPill: {
+  cascadeActiveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -3885,9 +4018,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 16,
-    maxWidth: 220,
+    maxWidth: 240,
   },
-  activeFilterPillText: {
+  cascadeActiveBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#065F46',
@@ -3896,240 +4029,177 @@ const styles = StyleSheet.create({
   panelChevronWrap: {
     padding: 4,
   },
-  chapterPanelBody: {
+  cascadeBody: {
     padding: 14,
-    gap: 12,
+    gap: 14,
   },
-  chapterSearchBar: {
+  breadcrumbBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    gap: 8,
-  },
-  chapterSearchInput: {
-    flex: 1,
-    fontSize: 12,
-    color: THEME.colors.ink,
-    outlineWidth: 0 as any,
-  },
-  subjectsTree: {
-    gap: 10,
-  },
-  noChaptersFound: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  noChaptersFoundText: {
-    fontSize: 12,
-    color: THEME.colors.muted,
-  },
-  subjectTreeCard: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    backgroundColor: '#FFF',
-    overflow: 'hidden',
-  },
-  subjectTreeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#FAFAFA',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
     flexWrap: 'wrap',
     gap: 8,
   },
-  subjectTreeHeaderActive: {
-    backgroundColor: '#ECFDF5',
-    borderBottomColor: '#A7F3D0',
-  },
-  subjectTreeName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: THEME.colors.ink,
-  },
-  badgesCluster: {
+  breadcrumbPath: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexWrap: 'wrap',
+    flex: 1,
   },
-  badgeTotalCount: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  badgeTotalCountText: {
-    fontSize: 11,
+  breadcrumbAllText: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#475569',
-  },
-  badgeValidCount: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  badgeValidCountText: {
-    fontSize: 11,
-    fontWeight: '700',
     color: '#065F46',
   },
-  badgeMalformedCount: {
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
+  breadcrumbSegment: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#047857',
   },
-  badgeMalformedCountText: {
+  breadcrumbSegmentCurrent: {
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  breadcrumbDivider: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6EE7B7',
+    marginHorizontal: 1,
+  },
+  breadcrumbLiveBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 4,
+  },
+  breadcrumbLiveBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#DC2626',
+    color: '#15803D',
   },
-  btnFilterRow: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  btnFilterRowActive: {
-    backgroundColor: THEME.colors.brand,
-    borderColor: THEME.colors.brand,
-  },
-  btnFilterRowText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: THEME.colors.ink,
-  },
-  btnFilterRowTextActive: {
-    color: '#FFF',
-  },
-  sthanaContainer: {
-    padding: 10,
-    gap: 8,
-    backgroundColor: '#FCFCFD',
-  },
-  sthanaCard: {
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    borderRadius: 8,
-    backgroundColor: '#FFF',
-    padding: 10,
-    gap: 8,
-  },
-  sthanaHeader: {
+  btnResetFilter: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  sthanaHeaderActive: {
-    backgroundColor: '#F0FDF4',
-    padding: 4,
+    gap: 4,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 6,
   },
-  sthanaName: {
+  btnResetFilterText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  stepBlock: {
+    gap: 8,
+  },
+  stepHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  stepBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  stepBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+    textTransform: 'uppercase',
+  },
+  stepTitle: {
     fontSize: 12,
     fontWeight: '700',
     color: '#334155',
   },
-  sthanaSub: {
+  stepSubHint: {
     fontSize: 11,
     color: THEME.colors.muted,
   },
-  badgeValidMini: {
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-  },
-  badgeValidMiniText: {
-    fontSize: 10,
+  stepSelectedEcho: {
+    fontSize: 11,
     fontWeight: '700',
-    color: '#15803D',
+    color: '#047857',
   },
-  badgeMalformedMini: {
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-  },
-  badgeMalformedMiniText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#B91C1C',
-  },
-  btnFilterMini: {
-    paddingHorizontal: 8,
+  stepPillsScroll: {
+    gap: 6,
     paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    alignItems: 'center',
   },
-  btnFilterMiniActive: {
+  cascadePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  cascadePillActive: {
     backgroundColor: '#047857',
     borderColor: '#047857',
   },
-  btnFilterMiniText: {
-    fontSize: 10,
+  cascadePillActiveSthana: {
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7',
+  },
+  cascadePillText: {
+    fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: '#334155',
   },
-  btnFilterMiniTextActive: {
+  cascadePillTextActive: {
     color: '#FFF',
+    fontWeight: '700',
   },
-  chaptersGrid: {
+  chaptersGridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    paddingTop: 4,
+    paddingTop: 2,
   },
-  chapterPill: {
+  chapterGridPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 5,
+    gap: 4,
     paddingHorizontal: 9,
+    paddingVertical: 5,
     borderRadius: 6,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  chapterPillActive: {
-    backgroundColor: '#047857',
-    borderColor: '#047857',
+  chapterGridPillActive: {
+    backgroundColor: '#D97706',
+    borderColor: '#D97706',
   },
-  chapterPillName: {
+  chapterGridPillText: {
     fontSize: 11,
     fontWeight: '600',
     color: '#334155',
   },
-  chapterPillNameActive: {
+  chapterGridPillTextActive: {
     color: '#FFF',
-  },
-  chapterPillTotal: {
-    fontSize: 10,
     fontWeight: '700',
-    color: '#64748B',
   },
-  chapterPillTotalActive: {
-    color: '#E6F4EA',
-  },
-  dotMalformed: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  dotMalformedMini: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#EF4444',
   },
   activeChapterFilterBar: {
