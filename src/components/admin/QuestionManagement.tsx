@@ -38,6 +38,7 @@ import {
   Wrench,
   Edit3,
   CheckSquare,
+  Link2,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -45,8 +46,11 @@ import { backend } from '../../services/backend';
 import {
   parseSpreadsheetBuffer,
   downloadSampleTemplate,
+  fetchGoogleSheetCsv,
+  extractGoogleSheetCsvCandidates,
   SpreadsheetParseResult,
 } from '../../utils/spreadsheetHelper';
+import { GoogleDriveService } from '../../services/googleDriveService';
 import {
   buildChapterHierarchy,
   checkQuestionRemap,
@@ -235,6 +239,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [uploadTargetSthana, setUploadTargetSthana] = useState<string>('Sutrasthana');
   const [uploadTargetChapter, setUploadTargetChapter] = useState<string>('Chapter 1');
   const [uploadMarkVerified, setUploadMarkVerified] = useState<boolean>(true);
+  const [uploadTab, setUploadTab] = useState<'file' | 'link'>('file');
+  const [uploadLinkUrl, setUploadLinkUrl] = useState<string>('');
+  const [isFetchingLink, setIsFetchingLink] = useState<boolean>(false);
+  const [uploadLinkError, setUploadLinkError] = useState<string | null>(null);
 
   // Multi-Select Bar State
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
@@ -617,6 +625,81 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     reader.readAsArrayBuffer(file);
   };
 
+  // Fetch & Parse Google Sheet or Google Drive file link
+  const handleFetchUploadLink = async () => {
+    const raw = uploadLinkUrl.trim().replace(/^["']|["']$/g, '');
+    if (!raw) {
+      setUploadLinkError('Please paste a Google Sheet or Google Drive file link.');
+      return;
+    }
+
+    setIsFetchingLink(true);
+    setUploadLinkError(null);
+    setUploadParseResult(null);
+    setUploadFileName('');
+
+    try {
+      let csvOrBuffer: ArrayBuffer | string | null = null;
+      const gdriveToken = GoogleDriveService.getActiveToken();
+      const candidates = extractGoogleSheetCsvCandidates(raw);
+      const fileId = candidates?.sheetId;
+
+      // 1. If Google Drive token exists, attempt authenticated Drive API export / download
+      if (gdriveToken && fileId) {
+        try {
+          const exportRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+            { headers: { Authorization: `Bearer ${gdriveToken}` } }
+          );
+          if (exportRes.ok) {
+            csvOrBuffer = await exportRes.arrayBuffer();
+          } else {
+            const mediaRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+              { headers: { Authorization: `Bearer ${gdriveToken}` } }
+            );
+            if (mediaRes.ok) {
+              csvOrBuffer = await mediaRes.arrayBuffer();
+            }
+          }
+        } catch (authErr) {
+          console.warn('Authenticated Drive fetch error, falling back to public export:', authErr);
+        }
+      }
+
+      // 2. Fallback to public fetchGoogleSheetCsv across candidate export endpoints
+      if (!csvOrBuffer) {
+        csvOrBuffer = await fetchGoogleSheetCsv(raw);
+      }
+
+      // 3. Parse spreadsheet buffer with strict UTF-8 preservation & column-shift auto-healing
+      const parsed = parseSpreadsheetBuffer(csvOrBuffer);
+      if (parsed.validQuestions.length === 0) {
+        throw new Error(
+          'No valid questions could be extracted from this sheet. Please make sure the sheet contains Question Text, Options A-D, and Correct Answer.'
+        );
+      }
+
+      setUploadParseResult(parsed);
+      setUploadFileName(fileId ? `Google Sheet (${fileId.slice(0, 10)}...)` : 'Google Sheet Link');
+      showToast(`Parsed ${parsed.validQuestions.length} valid questions from Google link!`);
+    } catch (err: any) {
+      console.warn('Google link import error:', err);
+      let msg = err.message || 'Failed to fetch and parse Google link.';
+      if (
+        msg.includes('401') ||
+        msg.includes('403') ||
+        msg.toLowerCase().includes('permission') ||
+        msg.toLowerCase().includes('private')
+      ) {
+        msg = "Make sure the Google Sheet sharing is set to 'Anyone with the link can view' (or connect Google Drive).";
+      }
+      setUploadLinkError(msg);
+    } finally {
+      setIsFetchingLink(false);
+    }
+  };
+
   // Confirm and batch upload questions to Cloud DB with strict target chapter & verification
   const handleConfirmBatchUpload = async () => {
     if (!uploadParseResult || uploadParseResult.validQuestions.length === 0) {
@@ -646,6 +729,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       );
       setUploadParseResult(null);
       setUploadFileName('');
+      setUploadLinkUrl('');
+      setUploadLinkError(null);
       setIsUploadModalOpen(false);
     } catch (e: any) {
       alert(e.message || 'Failed to upload questions.');
@@ -1554,38 +1639,153 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 </View>
               </View>
 
-              <Text style={styles.uploadStep2Title}>2. Choose Spreadsheet File (.xlsx, .xls, .csv)</Text>
+              <Text style={styles.uploadStep2Title}>2. Choose Question Source</Text>
 
-              {/* File Picker Box */}
-              <View style={styles.dropZone}>
-                <Upload size={32} color={THEME.colors.brand} />
-                <Text style={styles.dropZoneTitle}>Select your Question Spreadsheet</Text>
-                <Text style={styles.dropZoneSub}>Choose an .xlsx, .xls, or .csv file from your computer</Text>
+              {/* Source Tabs: Upload File vs Google Drive / Sheet Link */}
+              <View style={styles.uploadSourceTabsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.uploadSourceTab,
+                    uploadTab === 'file' && styles.uploadSourceTabActive,
+                  ]}
+                  onPress={() => {
+                    setUploadTab('file');
+                    setUploadLinkError(null);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Upload size={14} color={uploadTab === 'file' ? '#047857' : '#64748B'} />
+                  <Text
+                    style={[
+                      styles.uploadSourceTabText,
+                      uploadTab === 'file' && styles.uploadSourceTabTextActive,
+                    ]}
+                  >
+                    Upload File (.xlsx, .xls, .csv)
+                  </Text>
+                </TouchableOpacity>
 
-                {Platform.OS === 'web' && (
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={handleFilePicked}
-                    style={{
-                      marginTop: 12,
-                      padding: '8px 14px',
-                      borderRadius: 6,
-                      border: '1px solid #CBD5E1',
-                      backgroundColor: '#FFF',
-                      cursor: 'pointer',
-                      fontSize: 13,
-                    }}
-                  />
-                )}
-
-                {uploadFileName ? (
-                  <View style={styles.selectedFilePill}>
-                    <CheckCircle2 size={14} color="#15803D" />
-                    <Text style={styles.selectedFileName}>{uploadFileName}</Text>
-                  </View>
-                ) : null}
+                <TouchableOpacity
+                  style={[
+                    styles.uploadSourceTab,
+                    uploadTab === 'link' && styles.uploadSourceTabActive,
+                  ]}
+                  onPress={() => {
+                    setUploadTab('link');
+                    setUploadLinkError(null);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Link2 size={14} color={uploadTab === 'link' ? '#047857' : '#64748B'} />
+                  <Text
+                    style={[
+                      styles.uploadSourceTabText,
+                      uploadTab === 'link' && styles.uploadSourceTabTextActive,
+                    ]}
+                  >
+                    Google Drive / Sheet Link
+                  </Text>
+                </TouchableOpacity>
               </View>
+
+              {/* Tab 1: File Picker Box */}
+              {uploadTab === 'file' && (
+                <View style={styles.dropZone}>
+                  <Upload size={32} color={THEME.colors.brand} />
+                  <Text style={styles.dropZoneTitle}>Select your Question Spreadsheet</Text>
+                  <Text style={styles.dropZoneSub}>Choose an .xlsx, .xls, or .csv file from your computer</Text>
+
+                  {Platform.OS === 'web' && (
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleFilePicked}
+                      style={{
+                        marginTop: 12,
+                        padding: '8px 14px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFF',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                      }}
+                    />
+                  )}
+
+                  {uploadFileName ? (
+                    <View style={styles.selectedFilePill}>
+                      <CheckCircle2 size={14} color="#15803D" />
+                      <Text style={styles.selectedFileName}>{uploadFileName}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+
+              {/* Tab 2: Google Drive / Sheet Link Import */}
+              {uploadTab === 'link' && (
+                <View style={styles.uploadLinkCard}>
+                  <Text style={styles.uploadLinkLabel}>Paste Google Sheet or Google Drive file link:</Text>
+                  <View style={styles.uploadLinkInputRow}>
+                    <View style={styles.uploadLinkIconWrap}>
+                      <Link2 size={16} color="#047857" />
+                    </View>
+                    <TextInput
+                      style={styles.uploadLinkInput}
+                      value={uploadLinkUrl}
+                      onChangeText={(text) => {
+                        setUploadLinkUrl(text);
+                        if (uploadLinkError) setUploadLinkError(null);
+                      }}
+                      placeholder="Paste Google Sheet or Google Drive file link..."
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      selectTextOnFocus
+                      onSubmitEditing={handleFetchUploadLink}
+                    />
+                    <TouchableOpacity
+                      style={[styles.btnFetchLink, isFetchingLink && styles.btnFetchLinkDisabled]}
+                      onPress={handleFetchUploadLink}
+                      disabled={isFetchingLink}
+                      activeOpacity={0.8}
+                    >
+                      {isFetchingLink ? (
+                        <>
+                          <ActivityIndicator size="small" color="#FFF" />
+                          <Text style={styles.btnFetchLinkText}>Fetching...</Text>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={13} color="#FFF" />
+                          <Text style={styles.btnFetchLinkText}>Fetch &amp; Import</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.uploadLinkHelper}>
+                    Supports URLs from Google Sheets (docs.google.com/spreadsheets/d/...) and Google Drive (drive.google.com/file/d/...).
+                  </Text>
+
+                  {/* Clear Error Feedback */}
+                  {uploadLinkError && (
+                    <View style={styles.uploadLinkErrorBanner}>
+                      <AlertCircle size={16} color="#DC2626" style={{ marginTop: 2, flexShrink: 0 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.uploadLinkErrorTitle}>Unable to Access Link</Text>
+                        <Text style={styles.uploadLinkErrorText}>{uploadLinkError}</Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {uploadFileName && !uploadLinkError ? (
+                    <View style={styles.selectedFilePill}>
+                      <CheckCircle2 size={14} color="#15803D" />
+                      <Text style={styles.selectedFileName}>{uploadFileName}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
 
               {/* Validation & Preview Summary */}
               {uploadParseResult && (
@@ -5616,5 +5816,125 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 4,
+  },
+  uploadSourceTabsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingBottom: 4,
+    flexWrap: 'wrap',
+  },
+  uploadSourceTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  uploadSourceTabActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  uploadSourceTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  uploadSourceTabTextActive: {
+    color: '#047857',
+    fontWeight: '700',
+  },
+  uploadLinkCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 16,
+    marginBottom: 14,
+  },
+  uploadLinkLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  uploadLinkInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  uploadLinkIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadLinkInput: {
+    flex: 1,
+    minWidth: 220,
+    height: 38,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  btnFetchLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#047857',
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+  },
+  btnFetchLinkDisabled: {
+    opacity: 0.6,
+  },
+  btnFetchLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  uploadLinkHelper: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 16,
+  },
+  uploadLinkErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+  },
+  uploadLinkErrorTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  uploadLinkErrorText: {
+    fontSize: 11,
+    color: '#B91C1C',
+    lineHeight: 16,
   },
 });

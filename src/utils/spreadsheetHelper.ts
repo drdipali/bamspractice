@@ -68,16 +68,25 @@ export function extractGoogleSheetCsvCandidates(rawUrl: string): {
     }
   }
 
-  // 2. Standard Google Sheet URL
-  const sheetIdMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!sheetIdMatch || !sheetIdMatch[1]) {
+  // 2. Standard Google Sheet or Google Drive file URL
+  let sheetId = '';
+  const sheetIdMatch = url.match(/(?:\/spreadsheets\/d\/|\/file\/d\/)([a-zA-Z0-9-_]+)/);
+  if (sheetIdMatch && sheetIdMatch[1]) {
+    sheetId = sheetIdMatch[1];
+  } else {
+    const idParamMatch = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+    if (idParamMatch && idParamMatch[1]) {
+      sheetId = idParamMatch[1];
+    }
+  }
+
+  if (!sheetId) {
     if (url.startsWith('http') && (url.includes('.csv') || url.includes('format=csv') || url.includes('output=csv'))) {
       return { candidateUrls: [url], sheetId: 'custom' };
     }
     return null;
   }
 
-  const sheetId = sheetIdMatch[1];
   const isTruncated = sheetId.length < 28;
 
   // Extract explicit GID if present in user URL
@@ -102,6 +111,9 @@ export function extractGoogleSheetCsvCandidates(rawUrl: string): {
   if (!explicitGid) {
     candidateUrls.push(`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`);
   }
+
+  // Candidate 4: Google Drive direct download endpoint
+  candidateUrls.push(`https://drive.google.com/uc?export=download&id=${sheetId}`);
 
   return {
     candidateUrls: Array.from(new Set(candidateUrls)),
@@ -197,7 +209,7 @@ Quick Fix: In your Google Sheet, click File → Share → Publish to web → Com
 
   if (lastStatus === 401 || lastStatus === 403) {
     throw new Error(
-      `Permission Denied (HTTP ${lastStatus}): This Google Sheet is private or requires sign-in. In Google Sheets, click "Share" (top-right) and set General access to "Anyone with the link can view". Alternatively, use File → Share → Publish to web → Comma-separated values (.csv) and paste that link here.`
+      "Make sure the Google Sheet sharing is set to 'Anyone with the link can view' (or connect Google Drive)."
     );
   }
 
