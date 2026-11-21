@@ -92,6 +92,26 @@ export interface QuizSession {
   t0: number;                                      // Start timestamp ms
   t1?: number;                                     // Finish timestamp ms
   chs: (string | number)[];                        // Selected chapter IDs
+  isMockTest?: boolean;                            // True if full-syllabus 120Q timed mock test
+  durationSecs?: number;                           // e.g. 7200 for 120 minutes
+}
+
+export interface MockBlueprintItem {
+  id: string;
+  subject: string;
+  weightage_questions: number;
+  is_high_yield: boolean;
+}
+
+export interface SubjectAccuracyStat {
+  subject: string;
+  total: number;
+  attempted: number;
+  correct: number;
+  incorrect: number;
+  unattempted: number;
+  accuracy: number;
+  is_high_yield: boolean;
 }
 
 export interface ChapterStat {
@@ -111,6 +131,8 @@ export interface QuizResults {
   accuracy: number;
   timeSpentSecs: number;
   byChapter: Record<string | number, ChapterStat>;
+  bySubject?: Record<string, SubjectAccuracyStat>;
+  isMockTest?: boolean;
   wrongQuestions: Question[];
   // Competitive exam scoring: +4 correct, -1 incorrect, 0 unattempted
   score: number;

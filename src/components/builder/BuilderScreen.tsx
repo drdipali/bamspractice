@@ -13,6 +13,7 @@ import { Header } from '../common/Header';
 import { ChapterTree } from './ChapterTree';
 import { BasketSummary } from './BasketSummary';
 import { BookmarksPanel } from './BookmarksPanel';
+import { FullMockTestPanel } from './FullMockTestPanel';
 import { useApp } from '../../context/AppContext';
 import { Chapter } from '../../types';
 import { allocateQuestions } from '../../utils/allocator';
@@ -109,8 +110,8 @@ export const BuilderScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Mobile Tab Switcher */}
-      {!isTablet && (
+      {/* Mobile Tab Switcher - Only shown in Chapter-Wise Practice mode */}
+      {!isTablet && practiceMode === 'chapter_verified' && (
         <View style={styles.tabBar}>
           <TouchableOpacity
             style={[styles.tabBtn, activeTab === 'tree' && styles.tabBtnActive]}
@@ -169,8 +170,11 @@ export const BuilderScreen: React.FC = () => {
           !isTablet && styles.scrollContentMobile,
         ]}
       >
-        {isTablet ? (
-          // Tablet / Desktop: 2-column Grid
+        {practiceMode === 'mixed_mock' ? (
+          // Full-Syllabus AIAPGET Mock Test View
+          <FullMockTestPanel />
+        ) : isTablet ? (
+          // Tablet / Desktop: 2-column Grid for Chapter-Wise Practice
           <View style={styles.grid}>
             <View style={styles.leftCol}>
               <BookmarksPanel />
@@ -181,7 +185,7 @@ export const BuilderScreen: React.FC = () => {
             </View>
           </View>
         ) : (
-          // Mobile: Tab-driven view
+          // Mobile: Tab-driven view for Chapter-Wise Practice
           <View>
             {activeTab === 'tree' ? (
               <>
@@ -195,27 +199,30 @@ export const BuilderScreen: React.FC = () => {
         )}
       </ScrollView>
 
-      {/* Mobile Floating Bottom Bar (.bar from prototype) */}
-      {!isTablet && activeTab === 'tree' && selectedChapters.length > 0 && (
-        <View style={styles.floatingBar}>
-          <View style={styles.barInfo}>
-            <Text style={styles.barCount}>
-              {selectedChapters.length} chapters · {alloc.totalEligible} MCQs
-            </Text>
-            <Text style={styles.barSub}>
-              {alloc.finalCount} test questions configured
-            </Text>
-          </View>
+      {/* Mobile Floating Bottom Bar - Only shown in Chapter-Wise Practice mode */}
+      {!isTablet &&
+        practiceMode === 'chapter_verified' &&
+        activeTab === 'tree' &&
+        selectedChapters.length > 0 && (
+          <View style={styles.floatingBar}>
+            <View style={styles.barInfo}>
+              <Text style={styles.barCount}>
+                {selectedChapters.length} chapters · {alloc.totalEligible} MCQs
+              </Text>
+              <Text style={styles.barSub}>
+                {alloc.finalCount} test questions configured
+              </Text>
+            </View>
 
-          <TouchableOpacity
-            style={styles.reviewBasketBtn}
-            onPress={() => setActiveTab('basket')}
-          >
-            <ShoppingBag size={15} color={THEME.colors.brandInk} />
-            <Text style={styles.reviewBasketText}>Review basket</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+            <TouchableOpacity
+              style={styles.reviewBasketBtn}
+              onPress={() => setActiveTab('basket')}
+            >
+              <ShoppingBag size={15} color={THEME.colors.brandInk} />
+              <Text style={styles.reviewBasketText}>Review basket</Text>
+            </TouchableOpacity>
+          </View>
+        )}
     </View>
   );
 };

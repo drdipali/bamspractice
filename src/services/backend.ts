@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserRecord, QuizAttemptRecord } from '../types/auth';
-import { Chapter, Question } from '../types';
+import { Chapter, Question, MockBlueprintItem } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
 import { ALL_CHAPTERS } from '../constants/syllabusData';
 import { normalizeQuestionStem } from '../utils/spreadsheetHelper';
@@ -15,6 +15,133 @@ import {
 const USERS_STORAGE_KEY = 'bams_cloud_users_v1';
 const SESSION_STORAGE_KEY = 'bams_cloud_session_v1';
 const QUESTIONS_STORAGE_KEY = 'bams_cloud_questions_v1';
+const MOCK_BLUEPRINT_STORAGE_KEY = 'bams_mock_blueprint_v1';
+
+export const DEFAULT_MOCK_BLUEPRINT: MockBlueprintItem[] = [
+  {
+    id: 'bp_charaka',
+    subject: 'Charaka Samhita',
+    weightage_questions: 35,
+    is_high_yield: true,
+  },
+  {
+    id: 'bp_sushruta',
+    subject: 'Sushruta Samhita',
+    weightage_questions: 30,
+    is_high_yield: true,
+  },
+  {
+    id: 'bp_ashtanga',
+    subject: 'Ashtanga Hridaya',
+    weightage_questions: 15,
+    is_high_yield: true,
+  },
+  {
+    id: 'bp_dravyaguna_rasa',
+    subject: 'Dravyaguna & Rasashastra',
+    weightage_questions: 15,
+    is_high_yield: true,
+  },
+  {
+    id: 'bp_roganidana_kaya',
+    subject: 'Roganidana & Kayachikitsa',
+    weightage_questions: 15,
+    is_high_yield: false,
+  },
+  {
+    id: 'bp_modern_research',
+    subject: 'Modern Medical & Research Methodology',
+    weightage_questions: 10,
+    is_high_yield: false,
+  },
+];
+
+export function matchQuestionToBlueprintSubject(
+  chapterName: string,
+  blueprint: MockBlueprintItem[]
+): string {
+  const norm = (chapterName || '').toLowerCase().trim();
+  const root = (chapterName.split('>')[0] || '').trim().toLowerCase();
+
+  // 1. Direct match with blueprint subject name or root
+  for (const item of blueprint) {
+    const sNorm = item.subject.toLowerCase().trim();
+    if (norm.includes(sNorm) || sNorm.includes(root)) {
+      return item.subject;
+    }
+  }
+
+  // 2. Specific Samhita & Subject keywords
+  if (norm.includes('charak') || norm.includes('चरक')) {
+    const b = blueprint.find((x) => x.subject.toLowerCase().includes('charak'));
+    if (b) return b.subject;
+  }
+  if (norm.includes('sushrut') || norm.includes('su.su') || norm.includes('सुश्रुत')) {
+    const b = blueprint.find((x) => x.subject.toLowerCase().includes('sushrut'));
+    if (b) return b.subject;
+  }
+  if (
+    norm.includes('ashtang') ||
+    norm.includes('hridaya') ||
+    norm.includes('vagbhat') ||
+    norm.includes('अष्टांग')
+  ) {
+    const b = blueprint.find((x) => x.subject.toLowerCase().includes('ashtang'));
+    if (b) return b.subject;
+  }
+  if (
+    norm.includes('dravya') ||
+    norm.includes('rasa') ||
+    norm.includes('bhaishaj') ||
+    norm.includes('bhasma') ||
+    norm.includes('द्रव्यगुण') ||
+    norm.includes('रसशास्त्र')
+  ) {
+    const b = blueprint.find(
+      (x) => x.subject.toLowerCase().includes('dravya') || x.subject.toLowerCase().includes('rasa')
+    );
+    if (b) return b.subject;
+  }
+  if (
+    norm.includes('roga') ||
+    norm.includes('nidana') ||
+    norm.includes('kaya') ||
+    norm.includes('chikitsa') ||
+    norm.includes('रोगनिदान') ||
+    norm.includes('कायचिकित्सा')
+  ) {
+    const b = blueprint.find(
+      (x) => x.subject.toLowerCase().includes('roga') || x.subject.toLowerCase().includes('kaya')
+    );
+    if (b) return b.subject;
+  }
+  if (
+    norm.includes('modern') ||
+    norm.includes('research') ||
+    norm.includes('stat') ||
+    norm.includes('methodology') ||
+    norm.includes('padartha') ||
+    norm.includes('rachana') ||
+    norm.includes('kriya') ||
+    norm.includes('shalya') ||
+    norm.includes('shalakya') ||
+    norm.includes('prasuti') ||
+    norm.includes('kaumar') ||
+    norm.includes('agada') ||
+    norm.includes('swastha')
+  ) {
+    const b = blueprint.find(
+      (x) =>
+        x.subject.toLowerCase().includes('modern') ||
+        x.subject.toLowerCase().includes('research') ||
+        x.subject.toLowerCase().includes('other')
+    );
+    if (b) return b.subject;
+  }
+
+  // 3. Fallback to first item in blueprint
+  return blueprint[0]?.subject || 'Charaka Samhita';
+}
 
 // Initial pre-seeded users for immediate admin testing
 const SEED_USERS: UserRecord[] = [
@@ -239,6 +366,7 @@ class BackendService {
   private questions: Question[] = [];
   private editedQuestions: Record<string, Question> = {};
   private deletedQuestionIds: Set<string> = new Set();
+  private mockBlueprint: MockBlueprintItem[] = [];
   private isInitialized = false;
 
   private async initialize() {
@@ -354,11 +482,25 @@ class BackendService {
         });
 
       this.questions = [...activeCustom, ...baseQuestions];
+
+      // 5. Mock Blueprint
+      const storedBlueprint = await AsyncStorage.getItem(MOCK_BLUEPRINT_STORAGE_KEY);
+      if (storedBlueprint) {
+        try {
+          this.mockBlueprint = JSON.parse(storedBlueprint);
+        } catch {
+          this.mockBlueprint = [...DEFAULT_MOCK_BLUEPRINT];
+        }
+      } else {
+        this.mockBlueprint = [...DEFAULT_MOCK_BLUEPRINT];
+        await AsyncStorage.setItem(MOCK_BLUEPRINT_STORAGE_KEY, JSON.stringify(this.mockBlueprint));
+      }
     } catch (e) {
       console.warn('Backend initialization error:', e);
       this.users = [...SEED_USERS];
       this.passwords = { ...DEFAULT_PASSWORDS };
       this.questions = [...INITIAL_SEED_QUESTIONS];
+      this.mockBlueprint = [...DEFAULT_MOCK_BLUEPRINT];
     }
 
     this.isInitialized = true;
@@ -913,6 +1055,87 @@ class BackendService {
   async getEditedQuestionIds(): Promise<string[]> {
     await this.initialize();
     return Object.keys(this.editedQuestions);
+  }
+
+  // ==========================================
+  // FULL-SYLLABUS AIAPGET MOCK TEST ENGINE
+  // ==========================================
+
+  async getMockBlueprint(): Promise<MockBlueprintItem[]> {
+    await this.initialize();
+    return [...this.mockBlueprint];
+  }
+
+  async saveMockBlueprint(blueprint: MockBlueprintItem[]): Promise<MockBlueprintItem[]> {
+    await this.initialize();
+    this.mockBlueprint = [...blueprint];
+    await AsyncStorage.setItem(MOCK_BLUEPRINT_STORAGE_KEY, JSON.stringify(blueprint));
+    return [...this.mockBlueprint];
+  }
+
+  /**
+   * Generates a 120-question Mock Exam strictly adhering to the blueprint weightage.
+   * If a subject doesn't have enough questions, it backfills from the overall valid pool
+   * to guarantee exactly 120 questions.
+   */
+  async generateMockTestQuestions(customBlueprint?: MockBlueprintItem[]): Promise<Question[]> {
+    await this.initialize();
+    const activeBlueprint = customBlueprint && customBlueprint.length > 0 ? customBlueprint : this.mockBlueprint;
+
+    // Filter all valid questions
+    const allValid = this.questions.filter((q) => isValidQuestion(q));
+
+    // Group valid questions into blueprint subject buckets
+    const subjectBuckets: Record<string, Question[]> = {};
+    activeBlueprint.forEach((item) => {
+      subjectBuckets[item.subject] = [];
+    });
+
+    allValid.forEach((q) => {
+      const matched = matchQuestionToBlueprintSubject(q.chapterName || '', activeBlueprint);
+      if (subjectBuckets[matched]) {
+        subjectBuckets[matched].push(q);
+      }
+    });
+
+    const selectedQuestions: Question[] = [];
+    const usedIds = new Set<string | number>();
+
+    // Step 1: Draw weightage_questions from each bucket
+    activeBlueprint.forEach((item) => {
+      const bucket = subjectBuckets[item.subject] || [];
+      // Shuffle bucket candidates
+      const shuffled = [...bucket].sort(() => Math.random() - 0.5);
+      const needed = item.weightage_questions || 0;
+      let addedForSubject = 0;
+
+      for (const q of shuffled) {
+        if (addedForSubject >= needed) break;
+        if (!usedIds.has(q.id)) {
+          usedIds.add(q.id);
+          selectedQuestions.push(q);
+          addedForSubject++;
+        }
+      }
+    });
+
+    // Step 2: Ensure target questions total (120 questions)
+    const targetTotal = activeBlueprint.reduce((acc, curr) => acc + (curr.weightage_questions || 0), 0) || 120;
+
+    if (selectedQuestions.length < targetTotal) {
+      const remainingCandidates = allValid
+        .filter((q) => !usedIds.has(q.id))
+        .sort(() => Math.random() - 0.5);
+
+      for (const q of remainingCandidates) {
+        if (selectedQuestions.length >= targetTotal) break;
+        usedIds.add(q.id);
+        selectedQuestions.push(q);
+      }
+    }
+
+    // Step 3: Shuffle the entire set of 120 questions so they appear randomized across subjects
+    return selectedQuestions.sort(() => Math.random() - 0.5);
   }
 }
 

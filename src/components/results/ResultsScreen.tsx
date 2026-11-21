@@ -12,6 +12,7 @@ import { useApp } from '../../context/AppContext';
 import { Header } from '../common/Header';
 import { Scorecard } from './Scorecard';
 import { ChapterAccuracyList } from './ChapterAccuracyList';
+import { SubjectWeakAreaAnalysis } from './SubjectWeakAreaAnalysis';
 import { IncorrectReviewList } from './IncorrectReviewList';
 import { ClaimQuestionModal } from './ClaimQuestionModal';
 import { Question } from '../../types';
@@ -53,8 +54,12 @@ export const ResultsScreen: React.FC = () => {
   return (
     <View style={styles.container}>
       <Header
-        title="Session Results"
-        subtitle={`${modeTitle} · ${results.total} questions`}
+        title={results.isMockTest ? 'Mock Test Results' : 'Session Results'}
+        subtitle={
+          results.isMockTest
+            ? 'AIAPGET Pattern · 120 Questions · 480 Max Marks'
+            : `${modeTitle} · ${results.total} questions`
+        }
         rightAction={
           <TouchableOpacity style={styles.backTopBtn} onPress={backToBuilder}>
             <ArrowLeft size={16} color={THEME.colors.brand} />
@@ -89,8 +94,16 @@ export const ResultsScreen: React.FC = () => {
             {/* Scorecard with Competitive Scoring */}
             <Scorecard results={results} />
 
+            {/* Subject-Wise High-Yield Weak Area Analysis */}
+            <SubjectWeakAreaAnalysis
+              statsBySubject={results.bySubject}
+              isMockTest={results.isMockTest}
+            />
+
             {/* Accuracy by Chapter */}
-            <ChapterAccuracyList statsByChapter={results.byChapter} />
+            {(!results.isMockTest || Object.keys(results.byChapter).length <= 25) && (
+              <ChapterAccuracyList statsByChapter={results.byChapter} />
+            )}
 
             {/* Action Buttons */}
             <View style={styles.actionsRow}>

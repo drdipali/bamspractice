@@ -24,18 +24,20 @@ import {
   Phone,
   X,
   Sparkles,
+  Layers,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { UserRecord } from '../../types/auth';
 import { backend } from '../../services/backend';
 import { useApp } from '../../context/AppContext';
 import { QuestionManagement } from './QuestionManagement';
+import { AdminMockBlueprint } from './AdminMockBlueprint';
 import { AISettingsModal } from './AISettingsModal';
 import { GeminiService } from '../../services/gemini';
 
 export const AdminDashboard: React.FC = () => {
   const { setView, currentUser } = useApp();
-  const [activeTab, setActiveTab] = useState<'users' | 'cms'>('cms');
+  const [activeTab, setActiveTab] = useState<'users' | 'cms' | 'blueprint'>('cms');
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -198,6 +200,20 @@ export const AdminDashboard: React.FC = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={[styles.navTab, activeTab === 'blueprint' && styles.navTabActive]}
+          onPress={() => setActiveTab('blueprint')}
+          activeOpacity={0.7}
+        >
+          <Layers size={15} color={activeTab === 'blueprint' ? THEME.colors.brand : THEME.colors.muted} />
+          <Text style={[styles.navTabText, activeTab === 'blueprint' && styles.navTabTextActive]}>
+            Mock Blueprint
+          </Text>
+          <View style={styles.tabBadge}>
+            <Text style={styles.tabBadgeText}>120 Qs</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.navTab, activeTab === 'users' && styles.navTabActive]}
           onPress={() => setActiveTab('users')}
           activeOpacity={0.7}
@@ -212,6 +228,8 @@ export const AdminDashboard: React.FC = () => {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {activeTab === 'cms' ? (
           <QuestionManagement onOpenAISettings={() => setIsAISettingsOpen(true)} />
+        ) : activeTab === 'blueprint' ? (
+          <AdminMockBlueprint />
         ) : (
           <>
             {/* Metric Summary Cards */}

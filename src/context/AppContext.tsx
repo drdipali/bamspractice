@@ -4,6 +4,7 @@ import {
   Chapter,
   Difficulty,
   Language,
+  MockBlueprintItem,
   PracticeConfig,
   Question,
   QuizMode,
@@ -11,6 +12,7 @@ import {
   QuizSession,
   SavedPracticeSet,
   StudentPracticeMode,
+  SubjectAccuracyStat,
   UserRecord,
 } from '../types';
 import { shuffle } from '../utils/allocator';
@@ -25,7 +27,12 @@ import {
   savePracticeSets,
   saveBookmarks,
 } from '../utils/storage';
-import { backend, isUserAdmin } from '../services/backend';
+import {
+  backend,
+  isUserAdmin,
+  DEFAULT_MOCK_BLUEPRINT,
+  matchQuestionToBlueprintSubject,
+} from '../services/backend';
 
 export interface AppContextType {
   currentUser: UserRecord | null;
@@ -57,6 +64,10 @@ export interface AppContextType {
   deleteSet: (setId: string) => Promise<void>;
   session: QuizSession | null;
   startQuiz: (customIds?: (string | number)[], forcedMode?: QuizMode) => Promise<void> | void;
+  // Full-Syllabus AIAPGET Mock Test Engine
+  mockBlueprint: MockBlueprintItem[];
+  updateMockBlueprint: (newBlueprint: MockBlueprintItem[]) => Promise<void>;
+  startMockTest: () => Promise<void>;
   answerQuestion: (optionIndex: number) => void;
   unattemptQuestion: () => void;
   submitQuestion: () => void;
@@ -101,6 +112,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [session, setSession] = useState<QuizSession | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [bookmarkedIds, setBookmarkedIds] = useState<(string | number)[]>([]);
+  const [mockBlueprint, setMockBlueprint] = useState<MockBlueprintItem[]>(DEFAULT_MOCK_BLUEPRINT);
 
   // Function to refresh questions and dynamic chapter syllabus from backend
   const refreshQuestions = async () => {
@@ -152,6 +164,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const storedBookmarks = await loadBookmarks();
       setBookmarkedIds(storedBookmarks);
+
+      // Load mock test blueprint
+      try {
+        const bp = await backend.getMockBlueprint();
+        if (bp && bp.length > 0) {
+          setMockBlueprint(bp);
+        }
+      } catch (err) {
+        console.warn('Error loading mock blueprint:', err);
+      }
     })();
   }, []);
 
@@ -322,6 +344,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     setView('quiz');
     setStatusMessage('');
+  };
+
+  const updateMockBlueprint = async (newBlueprint: MockBlueprintItem[]) => {
+    try {
+      const saved = await backend.saveMockBlueprint(newBlueprint);
+      setMockBlueprint(saved);
+      setStatusMessage('Mock blueprint saved successfully.');
+    } catch (e) {
+      console.warn('Failed to save mock blueprint:', e);
+      setStatusMessage('Failed to save blueprint.');
+    }
+  };
+
+  const startMockTest = async () => {
+    try {
+      const mockQs = await backend.generateMockTestQuestions(mockBlueprint);
+      if (mockQs.length === 0) {
+        setStatusMessage('No valid questions found to generate mock test.');
+        return;
+      }
+
+      setSession({
+        qs: mockQs,
+        i: 0,
+        ans: {},
+        sub: {},
+        rev: {},
+        mode: 'test', // Full competitive test mode (+4/-1)
+        t0: Date.now(),
+        chs: [],
+        isMockTest: true,
+        durationSecs: 120 * 60, // 120 minutes (7200 seconds)
+      });
+      setView('quiz');
+      setStatusMessage('');
+    } catch (e) {
+      console.warn('Failed to start mock test:', e);
+      setStatusMessage('Error generating mock test. Please try again.');
+    }
   };
 
   const answerQuestion = (optionIndex: number) => {
@@ -504,6 +565,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stat.accuracy = stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0;
     });
 
+    // Subject-level performance analysis for Mock Tests and Revision Focus
+    const bySubject: Record<string, SubjectAccuracyStat> = {};
+    const blueprintItems = mockBlueprint.length > 0 ? mockBlueprint : DEFAULT_MOCK_BLUEPRINT;
+
+    blueprintItems.forEach((b) => {
+      bySubject[b.subject] = {
+        subject: b.subject,
+        total: 0,
+        attempted: 0,
+        correct: 0,
+        incorrect: 0,
+        unattempted: 0,
+        accuracy: 0,
+        is_high_yield: b.is_high_yield,
+      };
+    });
+
+    session.qs.forEach((q) => {
+      const subj = matchQuestionToBlueprintSubject(q.chapterName || '', blueprintItems);
+      if (!bySubject[subj]) {
+        const bpMatch = blueprintItems.find((b) => b.subject.toLowerCase() === subj.toLowerCase());
+        bySubject[subj] = {
+          subject: subj,
+          total: 0,
+          attempted: 0,
+          correct: 0,
+          incorrect: 0,
+          unattempted: 0,
+          accuracy: 0,
+          is_high_yield: bpMatch ? bpMatch.is_high_yield : false,
+        };
+      }
+
+      bySubject[subj].total++;
+      const chosen = session.ans[q.id];
+      if (chosen === undefined) {
+        bySubject[subj].unattempted++;
+      } else {
+        bySubject[subj].attempted++;
+        if (chosen === q.c) {
+          bySubject[subj].correct++;
+        } else {
+          bySubject[subj].incorrect++;
+        }
+      }
+    });
+
+    Object.keys(bySubject).forEach((key) => {
+      const stat = bySubject[key];
+      // Accuracy computed based on questions attempted (or total if none)
+      stat.accuracy = stat.attempted > 0 ? Math.round((stat.correct / stat.attempted) * 100) : 0;
+    });
+
     const attempted = correct + incorrect;
     const total = session.qs.length;
     const accuracy = attempted > 0 ? Math.round((correct / attempted) * 100) : 0;
@@ -523,12 +637,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       accuracy,
       timeSpentSecs,
       byChapter,
+      bySubject,
+      isMockTest: session.isMockTest,
       wrongQuestions,
       score,
       maxScore,
       scorePercent,
     };
-  }, [session, view]);
+  }, [session, view, mockBlueprint]);
 
   const reattemptIncorrect = () => {
     if (!results || results.wrongQuestions.length === 0) return;
@@ -602,6 +718,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteSet,
         session,
         startQuiz,
+        mockBlueprint,
+        updateMockBlueprint,
+        startMockTest,
         answerQuestion,
         unattemptQuestion,
         submitQuestion,

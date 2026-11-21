@@ -92,8 +92,12 @@ export const QuizScreen: React.FC = () => {
   return (
     <View style={styles.container}>
       <Header
-        title={isLearning ? 'Learning Mode' : 'Test Mode'}
-        subtitle={`Session started · ${totalQuestions} questions`}
+        title={session.isMockTest ? 'AIAPGET Full Mock Test' : isLearning ? 'Learning Mode' : 'Test Mode'}
+        subtitle={
+          session.isMockTest
+            ? '120 Minutes · 120 Questions · +4 / -1 Marking'
+            : `Session started · ${totalQuestions} questions`
+        }
         rightAction={finishButton}
       />
 
@@ -122,7 +126,11 @@ export const QuizScreen: React.FC = () => {
                       {DIFFICULTY_LABELS[currentQ.d]}
                     </Text>
                   </View>
-                  <QuizTimer startTime={session.t0} />
+                  <QuizTimer
+                    startTime={session.t0}
+                    durationSecs={session.durationSecs}
+                    onTimeUp={finishQuiz}
+                  />
                 </View>
               </View>
 
