@@ -33,9 +33,10 @@ export interface ContextHints {
 export function detectChapterInfo(
   citation?: string,
   explanation?: string,
-  context?: ContextHints
+  context?: ContextHints,
+  stem?: string
 ): DetectedChapterInfo {
-  const rawRef = `${citation || ''} ${explanation || ''}`.trim();
+  const rawRef = `${citation || ''} ${explanation || ''} ${(stem || '').slice(0, 350)}`.trim();
   const normalizedRef = convertDevanagariNumerals(rawRef);
   const normalizedFileName = convertDevanagariNumerals(context?.fileName || '');
   const normalizedTabName = convertDevanagariNumerals(context?.tabName || '');
@@ -238,6 +239,171 @@ export function detectChapterInfo(
   };
 }
 
+export interface SamhitaMismatchResult {
+  hasMismatch: boolean;
+  type: 'samhita_conflict' | 'impossible_chapter' | 'none';
+  citationSamhita?: string;
+  claimedSamhita?: string;
+  badgeLabel?: string;
+  detailedMessage?: string;
+  suggestedTag?: string;
+}
+
+// Classical maximum chapter limits per Samhita & Sthana
+export const SAMHITA_MAX_CHAPTERS: Record<string, Record<string, number>> = {
+  'Charaka Samhita': {
+    Sutrasthana: 30,
+    Nidanasthana: 8,
+    Vimanasthana: 8,
+    Sharirasthana: 8,
+    Indriyasthana: 12,
+    Chikitsasthana: 30,
+    Kalpasthana: 12,
+    Siddhisthana: 12,
+  },
+  'Sushruta Samhita': {
+    Sutrasthana: 46,
+    Nidanasthana: 16,
+    Sharirasthana: 10,
+    Chikitsasthana: 40,
+    Kalpasthana: 8,
+    Uttaratantra: 66,
+  },
+  'Ashtanga Hridaya': {
+    Sutrasthana: 30,
+    Sharirasthana: 6,
+    Nidanasthana: 16,
+    Chikitsasthana: 22,
+    Kalpasthana: 6,
+    Uttarasthana: 40,
+  },
+};
+
+/**
+ * Detects whether a question has:
+ * 1. A Samhita conflict (e.g. citation mentions Sushruta/su.su while Question Text or Chapter Tag mentions Charaka)
+ * 2. An impossible chapter number for that Samhita/Sthana (e.g. Charaka Sutra > 30, Charaka Nidana > 8, Sushruta Sutra > 46).
+ */
+export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
+  const stem = String(q.stem || '');
+  const ref = String(q.r || '');
+  const exp = String(q.explanation || '');
+  const tag = String(q.chapterName || q.ch || '').trim();
+
+  // Combine reference, explanation, and first 350 chars of stem (where shlokas/citations often appear)
+  const citationPool = `${ref} ${exp} ${stem.slice(0, 350)}`;
+  const normalizedCitationPool = convertDevanagariNumerals(citationPool).toLowerCase();
+
+  // 1. Detect which Samhita the citation actually points to
+  let citationSamhita: 'Sushruta Samhita' | 'Charaka Samhita' | 'Ashtanga Hridaya' | null = null;
+  let citationEvidence = '';
+
+  if (
+    /su\.?\s*(?:su|ni|sha|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|sushrut|suśruta|सुश्रुत|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
+      normalizedCitationPool
+    )
+  ) {
+    citationSamhita = 'Sushruta Samhita';
+    citationEvidence = 'Sushruta (su.su)';
+  } else if (
+    /ca\.?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|charak|caraka|चरक|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
+      normalizedCitationPool
+    )
+  ) {
+    citationSamhita = 'Charaka Samhita';
+    citationEvidence = 'Charaka (ca.su)';
+  } else if (
+    /ashtang|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hṛdaya|हृदय|vagbhat|वाग्भट|a\.?\s*h\.?|a\.?\s*s\.?/i.test(
+      normalizedCitationPool
+    )
+  ) {
+    citationSamhita = 'Ashtanga Hridaya';
+    citationEvidence = 'Ashtanga (A.H.)';
+  }
+
+  // 2. Detect which Samhita is claimed by Chapter Tag and Question Text
+  const tagLower = tag.toLowerCase();
+  const stemLower = stem.toLowerCase();
+
+  let claimedSamhita: 'Charaka Samhita' | 'Sushruta Samhita' | 'Ashtanga Hridaya' | null = null;
+  if (
+    tagLower.includes('charaka') ||
+    stemLower.includes('acharya charak') ||
+    stemLower.includes('चरक के मतानुसार') ||
+    stemLower.includes('charaka samhita')
+  ) {
+    claimedSamhita = 'Charaka Samhita';
+  } else if (
+    tagLower.includes('sushrut') ||
+    stemLower.includes('sushruta') ||
+    stemLower.includes('सुश्रुत')
+  ) {
+    claimedSamhita = 'Sushruta Samhita';
+  } else if (
+    tagLower.includes('ashtang') ||
+    stemLower.includes('ashtanga') ||
+    stemLower.includes('अष्टाङ्ग')
+  ) {
+    claimedSamhita = 'Ashtanga Hridaya';
+  }
+
+  // Auto-detect best target tag using detectChapterInfo (inspecting citation + stem + explanation)
+  const detectedTarget = detectChapterInfo(ref, exp, { existingChapter: tag }, stem);
+
+  // Check Condition 1: Samhita conflict between Citation vs Tag / Question text
+  if (citationSamhita && claimedSamhita && citationSamhita !== claimedSamhita) {
+    const citationShort = citationSamhita.replace(' Samhita', '');
+    const claimedShort = claimedSamhita.replace(' Samhita', '');
+    return {
+      hasMismatch: true,
+      type: 'samhita_conflict',
+      citationSamhita,
+      claimedSamhita,
+      badgeLabel: `⚠️ Samhita Mismatch: Citation is ${citationShort}, Tag/Text says ${claimedShort}`,
+      detailedMessage: `Citation points to ${citationSamhita} (${citationEvidence}), but the question is tagged or worded as ${claimedSamhita}.`,
+      suggestedTag: detectedTarget.fullChapterName,
+    };
+  }
+
+  // Check Condition 2: Impossible Chapter Number for Samhita / Sthana
+  if (tag.includes('>')) {
+    const tagParts = tag.split('>').map((s) => s.trim());
+    const samhitaName = tagParts[0];
+    const sthanaName = tagParts[1];
+    const chStr = tagParts[2] || '';
+    const chMatch = chStr.match(/(\d+)/);
+
+    if (samhitaName && sthanaName && chMatch) {
+      const chNum = parseInt(chMatch[1], 10);
+      const limits = SAMHITA_MAX_CHAPTERS[samhitaName];
+      if (limits) {
+        const limitKey = Object.keys(limits).find((k) =>
+          sthanaName.toLowerCase().includes(k.toLowerCase())
+        );
+        if (limitKey) {
+          const maxAllowed = limits[limitKey];
+          if (chNum > maxAllowed) {
+            return {
+              hasMismatch: true,
+              type: 'impossible_chapter',
+              citationSamhita: citationSamhita || undefined,
+              claimedSamhita: samhitaName,
+              badgeLabel: `⚠️ Impossible Chapter: ${samhitaName} ${limitKey} has max ${maxAllowed} chapters (Tagged as Ch ${chNum})`,
+              detailedMessage: `${samhitaName} ${limitKey} only contains ${maxAllowed} chapters. Tagging as Chapter ${chNum} is invalid.`,
+              suggestedTag: detectedTarget.fullChapterName,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    hasMismatch: false,
+    type: 'none',
+  };
+}
+
 /**
  * Checks if a question has an outdated, generic or shifted chapter tag
  * and returns the suggested auto-remap target based on its citation and explanation.
@@ -249,9 +415,23 @@ export function checkQuestionRemap(q: Question): {
   detectedInfo: DetectedChapterInfo;
 } {
   const currentTag = String(q.chapterName || q.ch || '').trim();
-  const detected = detectChapterInfo(q.r, q.explanation, {
-    existingChapter: currentTag,
-  });
+  const detected = detectChapterInfo(
+    q.r,
+    q.explanation,
+    { existingChapter: currentTag },
+    q.stem
+  );
+
+  // Check if Samhita mismatch exists
+  const mismatch = detectSamhitaMismatch(q);
+  if (mismatch.hasMismatch && mismatch.suggestedTag && mismatch.suggestedTag !== currentTag) {
+    return {
+      needsRemap: true,
+      currentTag,
+      suggestedTag: mismatch.suggestedTag,
+      detectedInfo: detected,
+    };
+  }
 
   const isCurrentGeneric =
     !currentTag ||

@@ -47,6 +47,7 @@ import {
 import {
   buildChapterHierarchy,
   checkQuestionRemap,
+  detectSamhitaMismatch,
   isQuestionMalformed,
   SubjectSummaryItem,
   ChapterSummaryItem,
@@ -417,6 +418,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       if (result.statement2 !== undefined) {
         setStatement2(result.statement2);
       }
+      if (result.suggestedChapterTag && result.suggestedChapterTag.trim()) {
+        setChapterName(result.suggestedChapterTag.trim());
+      }
 
       setIsAiRephrased(true);
       setAiActionLabel(
@@ -683,6 +687,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     return questions.filter(isBrokenShiftedQuestion);
   }, [questions]);
 
+  // Detect Samhita / Citation Mismatches (e.g. su.su citation with Charaka tag, or impossible chapters)
+  const mismatchQuestions = useMemo(() => {
+    return questions.filter((q) => detectSamhitaMismatch(q).hasMismatch);
+  }, [questions]);
+
   // Delete all flagged shifted/broken rows in one click
   const handleDeleteAllBrokenRows = async () => {
     if (brokenQuestions.length === 0) return;
@@ -714,6 +723,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     return questions.filter((q) => {
       if (selectedTypeFilter === 'broken_shifted') {
         if (!isBrokenShiftedQuestion(q)) return false;
+      } else if (selectedTypeFilter === 'citation_mismatch') {
+        if (!detectSamhitaMismatch(q).hasMismatch) return false;
       } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
@@ -1897,6 +1908,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               { id: 'assertion_reason', label: `Assertion / Reason (${typeCounts.assertion_reason})` },
               { id: 'match_the_pair', label: `Match Pair (${typeCounts.match_the_pair})` },
               { id: 'statement_type', label: `Statement (${typeCounts.statement_type})` },
+              ...(mismatchQuestions.length > 0
+                ? [
+                    {
+                      id: 'citation_mismatch',
+                      label: `⚠️ Citation Mismatch (${mismatchQuestions.length})`,
+                      isMismatchPill: true,
+                    },
+                  ]
+                : []),
               ...(brokenQuestions.length > 0
                 ? [
                     {
@@ -1912,6 +1932,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 style={[
                   styles.filterChip,
                   selectedTypeFilter === f.id && styles.filterChipActive,
+                  (f as any).isMismatchPill && styles.filterChipMismatch,
+                  (f as any).isMismatchPill && selectedTypeFilter === f.id && styles.filterChipMismatchActive,
                   (f as any).isBrokenPill && styles.filterChipBroken,
                   (f as any).isBrokenPill && selectedTypeFilter === f.id && styles.filterChipBrokenActive,
                 ]}
@@ -1921,6 +1943,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   style={[
                     styles.filterChipText,
                     selectedTypeFilter === f.id && styles.filterChipTextActive,
+                    (f as any).isMismatchPill && styles.filterChipMismatchText,
+                    (f as any).isMismatchPill && selectedTypeFilter === f.id && styles.filterChipMismatchTextActive,
                     (f as any).isBrokenPill && styles.filterChipBrokenText,
                     (f as any).isBrokenPill && selectedTypeFilter === f.id && styles.filterChipBrokenTextActive,
                   ]}
@@ -1931,6 +1955,58 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             ))}
           </ScrollView>
         </View>
+
+        {/* Samhita / Citation Mismatch Alert & Action Bar */}
+        {mismatchQuestions.length > 0 && (
+          <View style={styles.mismatchBannerCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
+              <View style={styles.mismatchBannerIconWrap}>
+                <AlertTriangle size={18} color="#C2410C" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.mismatchBannerTitle}>
+                  ⚠️ Detected {mismatchQuestions.length} Samhita / Citation Mismatch(es)
+                </Text>
+                <Text style={styles.mismatchBannerText}>
+                  Questions where the citation (e.g. su.su / Sushruta) conflicts with the tagged or worded Samhita (e.g. Charaka), or chapter numbers exceed classical limits.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.mismatchBannerActions}>
+              <TouchableOpacity
+                style={[
+                  styles.btnViewMismatch,
+                  selectedTypeFilter === 'citation_mismatch' && styles.btnViewMismatchActive,
+                ]}
+                onPress={() =>
+                  setSelectedTypeFilter(selectedTypeFilter === 'citation_mismatch' ? 'all' : 'citation_mismatch')
+                }
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.btnViewMismatchText,
+                    selectedTypeFilter === 'citation_mismatch' && styles.btnViewMismatchTextActive,
+                  ]}
+                >
+                  {selectedTypeFilter === 'citation_mismatch' ? 'Show All Questions' : 'View Mismatches'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnAutoFixFromBanner}
+                onPress={handleOpenAutoFixModal}
+                activeOpacity={0.8}
+              >
+                <RefreshCw size={13} color="#FFF" />
+                <Text style={styles.btnAutoFixFromBannerText}>
+                  Auto-Fix Chapter Tags
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Broken / Shifted Rows Alert & Cleanup Bar */}
         {brokenQuestions.length > 0 && (
@@ -2047,6 +2123,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               const globalIndex = questions.findIndex((item) => String(item.id) === String(q.id)) + 1;
               const isEdited = editedIds.has(String(q.id));
               const isBroken = isBrokenShiftedQuestion(q);
+              const mismatch = detectSamhitaMismatch(q);
 
               const typeColor =
                 q.questionType === 'assertion_reason'
@@ -2072,7 +2149,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   id={`q-card-${globalIndex}`}
                   // @ts-ignore: nativeID for web DOM id attribute
                   nativeID={`q-card-${globalIndex}`}
-                  style={[styles.questionCard, isBroken && styles.questionCardBroken]}
+                  style={[
+                    styles.questionCard,
+                    isBroken && styles.questionCardBroken,
+                    mismatch.hasMismatch && styles.questionCardMismatch,
+                  ]}
                 >
                   {/* Top Badges & Action Buttons */}
                   <View style={styles.cardHeaderRow}>
@@ -2088,6 +2169,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           {QUESTION_TYPE_LABELS[q.questionType] || 'Standard MCQ'}
                         </Text>
                       </View>
+
+                      {/* Samhita / Citation Mismatch Badge */}
+                      {mismatch.hasMismatch && (
+                        <View style={styles.badgeMismatchError}>
+                          <AlertTriangle size={11} color="#C2410C" />
+                          <Text style={styles.badgeMismatchErrorText}>{mismatch.badgeLabel}</Text>
+                        </View>
+                      )}
 
                       {/* Shifted / Broken Badge */}
                       {isBroken && (
@@ -2140,6 +2229,53 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                       </TouchableOpacity>
                     </View>
                   </View>
+
+                  {/* Samhita / Citation Mismatch Alert Banner with 1-click Auto-Fix */}
+                  {mismatch.hasMismatch && (
+                    <View style={styles.cardMismatchAlert}>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 220 }}>
+                        <AlertTriangle size={13} color="#C2410C" style={{ marginTop: 2 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cardMismatchAlertTitle}>
+                            {mismatch.badgeLabel}
+                          </Text>
+                          <Text style={styles.cardMismatchAlertText}>
+                            {mismatch.detailedMessage}
+                          </Text>
+                        </View>
+                      </View>
+                      {mismatch.suggestedTag ? (
+                        <TouchableOpacity
+                          style={styles.btnCardQuickFixTag}
+                          onPress={async () => {
+                            try {
+                              await backend.updateQuestion(q.id, {
+                                chapterName: mismatch.suggestedTag,
+                                ch: mismatch.suggestedTag,
+                              });
+                              setQuestions((prev) =>
+                                prev.map((item) =>
+                                  item.id === q.id
+                                    ? { ...item, chapterName: mismatch.suggestedTag, ch: mismatch.suggestedTag }
+                                    : item
+                                )
+                              );
+                              setEditedIds((prev) => new Set(prev).add(String(q.id)));
+                              showToast(`Auto-fixed chapter tag to "${mismatch.suggestedTag}"`);
+                            } catch (err: any) {
+                              console.error('Failed to quick-fix chapter tag:', err);
+                            }
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Sparkles size={11} color="#FFF" />
+                          <Text style={styles.btnCardQuickFixTagText}>
+                            Fix Tag to: {mismatch.suggestedTag}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  )}
 
                   {/* Shifted warning alert banner on card */}
                   {isBroken && (
@@ -3415,6 +3551,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: THEME.colors.brand,
   },
+  filterChipMismatch: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FED7AA',
+  },
+  filterChipMismatchActive: {
+    backgroundColor: '#EA580C',
+    borderColor: '#C2410C',
+  },
+  filterChipMismatchText: {
+    color: '#EA580C',
+    fontWeight: '700',
+  },
+  filterChipMismatchTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
   filterChipBroken: {
     backgroundColor: '#FEF2F2',
     borderColor: '#FECACA',
@@ -3538,6 +3690,138 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     flex: 1,
     lineHeight: 15,
+  },
+  mismatchBannerCard: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: '#FDBA74',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+  },
+  mismatchBannerIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#FFEDD5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mismatchBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9A3412',
+  },
+  mismatchBannerText: {
+    fontSize: 11,
+    color: '#C2410C',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  mismatchBannerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  btnViewMismatch: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+  },
+  btnViewMismatchActive: {
+    backgroundColor: '#EA580C',
+    borderColor: '#EA580C',
+  },
+  btnViewMismatchText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#C2410C',
+  },
+  btnViewMismatchTextActive: {
+    color: '#FFF',
+  },
+  btnAutoFixFromBanner: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    backgroundColor: '#EA580C',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnAutoFixFromBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  questionCardMismatch: {
+    borderColor: '#FB923C',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFAF5',
+  },
+  badgeMismatchError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFEDD5',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    maxWidth: '100%',
+    flexShrink: 1,
+  },
+  badgeMismatchErrorText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  cardMismatchAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  cardMismatchAlertTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9A3412',
+  },
+  cardMismatchAlertText: {
+    fontSize: 11,
+    color: '#C2410C',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  btnCardQuickFixTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EA580C',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    alignSelf: 'flex-start',
+  },
+  btnCardQuickFixTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFF',
   },
   btnAutoFixChapters: {
     backgroundColor: '#EEF2FF',

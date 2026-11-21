@@ -93,6 +93,7 @@ export interface AIQuestionResult {
   reasonText?: string;
   statement1?: string;
   statement2?: string;
+  suggestedChapterTag?: string;
 }
 
 export interface RephraseParams {
@@ -640,6 +641,10 @@ export class GeminiService {
       reasonText: rText,
       statement1: s1,
       statement2: s2,
+      suggestedChapterTag:
+        typeof parsed.suggestedChapterTag === 'string' && parsed.suggestedChapterTag.trim()
+          ? parsed.suggestedChapterTag.trim()
+          : undefined,
     };
   }
 
@@ -655,17 +660,23 @@ Your task is to transform, convert, or polish the provided MCQ according to the 
 
 CORE RULES:
 1. Classical Ayurvedic Accuracy: Always maintain authentic Ayurvedic textual accuracy according to Brihat Trayi (Charaka Samhita, Sushruta Samhita, Ashtanga Hridaya/Sangraha) and Laghu Trayi.
-2. Terminology & Spelling: Preserve and accurately spell classical Sanskrit/Ayurvedic terms with diacritics where applicable (e.g. Charaka, Audbhida, Sharira, Dosha, Dhatu, Mala, Ojas, Agni, Srotas, Guna, Virya, Vipaka, Prabhava).
-3. STRICT BILINGUAL FORMATTING (English + Devanagari Hindi):
+2. CITATION / SANSKRIT SHLOKA IS THE SINGLE SOURCE OF TRUTH (CRITICAL):
+   - Always treat the Sanskrit Shloka / Textual Citation (e.g., su.su 45/49, su.su 45/194, Sushruta sūtrasthānam 45/206, ca.ci 3/40, a.h. su 1/1) as the ABSOLUTE SINGLE SOURCE OF TRUTH.
+   - Never invent or copy a Samhita name from the chapter tag or prompt if it contradicts the citation.
+   - If the citation is from Sushruta Samhita (e.g. "su.su", "Sushruta", "सुश्रुत"), you MUST write "According to Sushruta Samhita / सुश्रुत संहिता के अनुसार" and auto-correct the chapter tag accordingly in "suggestedChapterTag" (e.g. "Sushruta Samhita > Sutrasthana > Chapter 45"). NEVER write "Charaka Samhita" for a "su.su" or "Sushruta" verse even if the chapter tag says Charaka! (Charaka Sutrasthana only has 30 chapters; Chapter 45 belongs to Sushruta Sutrasthana).
+   - If the citation is from Charaka Samhita ("ca.su", "Charaka", "चरक"), refer to Charaka Samhita.
+   - If the citation is from Ashtanga Hridaya ("a.h.", "Ashtanga", "वाग्भट"), refer to Ashtanga Hridaya / Acharya Vagbhata.
+3. Terminology & Spelling: Preserve and accurately spell classical Sanskrit/Ayurvedic terms with diacritics where applicable (e.g. Charaka, Audbhida, Sharira, Dosha, Dhatu, Mala, Ojas, Agni, Srotas, Guna, Virya, Vipaka, Prabhava).
+4. STRICT BILINGUAL FORMATTING (English + Devanagari Hindi):
    - You MUST ALWAYS provide BOTH high-grade English AND natural, authentic Devanagari Hindi for all question stems, statements, options, and explanations.
    - NEVER drop or omit English. NEVER drop or omit Hindi. Both must be present in every single field.
 
-4. MANDATORY BILINGUAL EXPLANATION:
+5. MANDATORY BILINGUAL EXPLANATION:
    - "explanation" MUST NEVER BE IN ENGLISH ONLY. It is strictly mandatory to provide a comprehensive BILINGUAL explanation in both English and natural Hindi:
      1. English section: Thorough clinical and textual rationale, citing classical Samhita, Sthana, Adhyaya, and Shloka. If Statement question, clearly explain why Statement I is true or false, and why Statement II is true or false.
      2. Hindi section: Immediately followed by "\\n\\nहिंदी व्याख्या:\\n" with a complete, natural, grammatically correct Devanagari Hindi explanation of the exact same concepts, classical Shlokas, and justifications.
 
-5. IF CONVERTING TO "Statement I & II":
+6. IF CONVERTING TO "Statement I & II":
    - Set "questionType": "statement_type".
    - DO NOT CUT, TRUNCATE, OR DISCARD the original question's medical concept or context.
    - Formulate two complete, academically rigorous Ayurvedic medical statements derived directly from the classical reference:
@@ -682,7 +693,7 @@ CORE RULES:
    - Compute and set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D) based on the medical correctness of Statement I & II.
    - In "explanation", provide a full bilingual explanation in English and Hindi detailing why Statement I is true/false AND why Statement II is true/false.
 
-6. IF CONVERTING TO "Assertion–Reason":
+7. IF CONVERTING TO "Assertion–Reason":
    - Set "questionType": "assertion_reason".
    - DO NOT CUT the clinical concept.
    - Formulate "assertionText" and "reasonText", both bilingual:
@@ -698,18 +709,18 @@ CORE RULES:
    - Set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D).
    - In "explanation", provide complete bilingual explanation in English and Hindi.
 
-7. IF CONVERTING TO "Direct MCQ":
+8. IF CONVERTING TO "Direct MCQ":
    - Set "questionType": "standard".
    - Formulate questionText as a direct, crisp exam question in both English and Devanagari Hindi.
    - Formulate 4 distinct options A, B, C, D in both English and Devanagari Hindi with 1 unambiguous correct answer.
    - Set "correctAnswer" index (0 for A, 1 for B, 2 for C, 3 for D).
    - In "explanation", provide complete bilingual explanation in English and Hindi.
 
-8. IF FIXING "Bilingual Hindi":
+9. IF FIXING "Bilingual Hindi":
    - Provide natural, authentic Devanagari Hindi translation alongside English in questionText and all options A–D without changing the correct answer index or clinical meaning.
    - Provide complete bilingual explanation in English and Hindi.
 
-9. CUSTOM USER INSTRUCTIONS:
+10. CUSTOM USER INSTRUCTIONS:
    - Faithfully follow the instruction, updating all affected fields while ALWAYS maintaining bilingual English + Devanagari Hindi in stems, statements, options, and explanations.
 
 OUTPUT FORMAT:
@@ -726,7 +737,8 @@ Return ONLY a valid JSON object with the following keys:
   "assertionText": "...",
   "reasonText": "...",
   "statement1": "...",
-  "statement2": "..."
+  "statement2": "...",
+  "suggestedChapterTag": "Sushruta Samhita > Sutrasthana > Chapter 45"
 }`;
 
     const userPayload = {
