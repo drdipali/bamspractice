@@ -48,6 +48,7 @@ import {
   buildChapterHierarchy,
   checkQuestionRemap,
   detectSamhitaMismatch,
+  getQuestionAuditStatus,
   isQuestionMalformed,
   SubjectSummaryItem,
   ChapterSummaryItem,
@@ -179,6 +180,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [selectedSthanaFilter, setSelectedSthanaFilter] = useState<string | null>(null);
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string | null>(null);
   const [isChapterPanelExpanded, setIsChapterPanelExpanded] = useState<boolean>(true);
+  const [auditHealthFilter, setAuditHealthFilter] = useState<'all' | 'valid' | 'errors'>('all');
 
   // Smart Citation Auto-Mapper state
   const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState<boolean>(false);
@@ -776,6 +778,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         }
       }
 
+      // Chapter Health & Accuracy Filter ('all' | 'valid' | 'errors')
+      if (auditHealthFilter !== 'all') {
+        const audit = getQuestionAuditStatus(q);
+        if (auditHealthFilter === 'valid' && !audit.isValid) return false;
+        if (auditHealthFilter === 'errors' && audit.isValid) return false;
+      }
+
       if (searchQuery.trim()) {
         const text = `${q.stem} ${q.chapterName || ''} ${q.r || ''} ${q.explanation || ''}`.toLowerCase();
         return text.includes(searchQuery.toLowerCase().trim());
@@ -788,6 +797,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     selectedSubjectFilter,
     selectedSthanaFilter,
     selectedChapterFilter,
+    auditHealthFilter,
     searchQuery,
   ]);
 
@@ -854,6 +864,62 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     if (activeSubjectObj) return activeSubjectObj.valid;
     return questions.filter((q) => !isQuestionMalformed(q)).length;
   }, [activeChapterObj, activeSthanaObj, activeSubjectObj, questions]);
+
+  // Scope Metrics for Chapter Health & Accuracy Summary Strip
+  const scopeMetrics = useMemo(() => {
+    const inScope = questions.filter((q) => {
+      if (!selectedSubjectFilter) return true;
+      const rawTag = String(q.chapterName || q.ch || 'Charaka Samhita > Sutrasthana > Chapter 1').trim();
+      const parts = rawTag.split('>').map((s) => s.trim());
+      let qSubj = parts[0] || 'Charaka Samhita';
+      let qSthana = parts[1] || 'Sutrasthana';
+      let qChapter = parts[2] || (parts[1] && parts[1].toLowerCase().includes('chapter') ? parts[1] : 'Chapter 1');
+      if (!parts[1] && !parts[2]) {
+        qSubj = 'General Ayurveda';
+        qSthana = 'General';
+        qChapter = rawTag || 'Chapter 1';
+      }
+
+      const subjMatch =
+        qSubj.toLowerCase() === selectedSubjectFilter.toLowerCase() ||
+        rawTag.toLowerCase().includes(selectedSubjectFilter.toLowerCase());
+      if (!subjMatch) return false;
+
+      if (selectedSthanaFilter) {
+        const sthanaMatch =
+          qSthana.toLowerCase() === selectedSthanaFilter.toLowerCase() ||
+          rawTag.toLowerCase().includes(selectedSthanaFilter.toLowerCase());
+        if (!sthanaMatch) return false;
+
+        if (selectedChapterFilter) {
+          const chFilterNum = selectedChapterFilter.replace(/\D/g, '');
+          const qChNum = qChapter.replace(/\D/g, '');
+          return (
+            qChapter.toLowerCase() === selectedChapterFilter.toLowerCase() ||
+            (chFilterNum !== '' && qChNum !== '' && chFilterNum === qChNum) ||
+            rawTag.toLowerCase().includes(selectedChapterFilter.toLowerCase())
+          );
+        }
+      }
+      return true;
+    });
+
+    let validCount = 0;
+    let errorCount = 0;
+    inScope.forEach((q) => {
+      if (getQuestionAuditStatus(q).isValid) {
+        validCount++;
+      } else {
+        errorCount++;
+      }
+    });
+
+    return {
+      total: inScope.length,
+      valid: validCount,
+      errors: errorCount,
+    };
+  }, [questions, selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter]);
 
   // Smart Citation Auto-Mapper handlers
   const handleOpenAutoFixModal = () => {
@@ -1644,346 +1710,348 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       )}
 
       {/* ============================================================== */}
-      {/* 2.5 COMPACT 3-STEP CASCADING CHAPTER FILTER                     */}
+      {/* 2.5 CASCADING DROPDOWNS BAR (Samhita -> Sthana -> Chapter)     */}
       {/* ============================================================== */}
-      <View style={styles.cascadeContainer}>
-        {/* Header Bar with Toggle & Active Summary */}
-        <TouchableOpacity
-          style={styles.cascadeHeader}
-          onPress={() => setIsChapterPanelExpanded(!isChapterPanelExpanded)}
-          activeOpacity={0.8}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, flexWrap: 'wrap' }}>
-            <View style={styles.cascadeIconWrap}>
-              <BookOpen size={18} color="#047857" />
+      <View style={styles.dropdownBarContainer}>
+        <View style={styles.dropdownBarHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+            <View style={styles.dropdownBarIconWrap}>
+              <BookOpen size={16} color="#047857" />
             </View>
             <View>
-              <Text style={styles.cascadeTitle}>📊 Chapter & Samhita Filter</Text>
-              <Text style={styles.cascadeSub}>
-                3-Step Cascading Selection • {chapterHierarchy.length} Samhitas • {totalChaptersCount} Chapters
+              <Text style={styles.dropdownBarTitle}>📊 Chapter & Samhita Filter</Text>
+              <Text style={styles.dropdownBarSub}>
+                3-Level Cascading Dropdowns • {chapterHierarchy.length} Samhitas • {totalChaptersCount} Chapters
               </Text>
             </View>
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
-              <TouchableOpacity
-                style={styles.cascadeActiveBadge}
-                onPress={(e) => {
-                  e.stopPropagation?.();
-                  handleResetCascadingFilter();
+          {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
+            <TouchableOpacity
+              style={styles.btnResetDropdowns}
+              onPress={() => {
+                setSelectedSubjectFilter(null);
+                setSelectedSthanaFilter(null);
+                setSelectedChapterFilter(null);
+                setAuditHealthFilter('all');
+              }}
+              activeOpacity={0.7}
+            >
+              <RotateCcw size={13} color="#991B1B" />
+              <Text style={styles.btnResetDropdownsText}>Reset Filter</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 3-Level Side-by-Side Cascading Dropdown Menus */}
+        <View style={styles.dropdownsGrid}>
+          {/* Dropdown 1: Samhita / Subject */}
+          <View style={styles.dropdownField}>
+            <Text style={styles.dropdownLabel}>1. Samhita / Subject</Text>
+            <View style={styles.selectWrap}>
+              <select
+                aria-label="Select Samhita / Subject"
+                value={selectedSubjectFilter || ''}
+                onChange={(e: any) => {
+                  const val = e.target.value;
+                  setSelectedSubjectFilter(val || null);
+                  setSelectedSthanaFilter(null);
+                  setSelectedChapterFilter(null);
+                  setAuditHealthFilter('all');
                 }}
-                activeOpacity={0.7}
+                style={{
+                  width: '100%',
+                  height: 40,
+                  backgroundColor: '#FFFFFF',
+                  borderColor: selectedSubjectFilter ? '#047857' : '#CBD5E1',
+                  borderWidth: selectedSubjectFilter ? 1.5 : 1,
+                  borderRadius: 8,
+                  paddingLeft: 12,
+                  paddingRight: 32,
+                  fontSize: 13,
+                  fontWeight: selectedSubjectFilter ? '700' : '500',
+                  color: selectedSubjectFilter ? '#064E3B' : '#1E293B',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                }}
               >
-                <Text style={styles.cascadeActiveBadgeText} numberOfLines={1}>
-                  {[selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).join(' › ')}
-                </Text>
-                <X size={12} color="#065F46" />
-              </TouchableOpacity>
-            )}
-            <View style={styles.panelChevronWrap}>
-              {isChapterPanelExpanded ? (
-                <ChevronUp size={18} color={THEME.colors.muted} />
-              ) : (
-                <ChevronDown size={18} color={THEME.colors.muted} />
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {isChapterPanelExpanded && (
-          <View style={styles.cascadeBody}>
-            {/* Live Breadcrumb & Reset Filter Row */}
-            <View style={styles.breadcrumbBar}>
-              <View style={styles.breadcrumbPath}>
-                <Compass size={14} color="#047857" />
-                {selectedSubjectFilter ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSelectedSthanaFilter(null);
-                        setSelectedChapterFilter(null);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.breadcrumbSegment,
-                          !selectedSthanaFilter && styles.breadcrumbSegmentCurrent,
-                        ]}
-                      >
-                        {selectedSubjectFilter}
-                      </Text>
-                    </TouchableOpacity>
-
-                    {selectedSthanaFilter && (
-                      <>
-                        <Text style={styles.breadcrumbDivider}>›</Text>
-                        <TouchableOpacity onPress={() => setSelectedChapterFilter(null)}>
-                          <Text
-                            style={[
-                              styles.breadcrumbSegment,
-                              !selectedChapterFilter && styles.breadcrumbSegmentCurrent,
-                            ]}
-                          >
-                            {selectedSthanaFilter}
-                          </Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {selectedChapterFilter && (
-                      <>
-                        <Text style={styles.breadcrumbDivider}>›</Text>
-                        <Text style={[styles.breadcrumbSegment, styles.breadcrumbSegmentCurrent]}>
-                          {selectedChapterFilter}
-                        </Text>
-                      </>
-                    )}
-
-                    <View style={styles.breadcrumbLiveBadge}>
-                      <Text style={styles.breadcrumbLiveBadgeText}>
-                        {activeFilterLiveCount.toLocaleString()} Live
-                      </Text>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <Text style={styles.breadcrumbAllText}>All Cloud Questions</Text>
-                    <View style={styles.breadcrumbLiveBadge}>
-                      <Text style={styles.breadcrumbLiveBadgeText}>
-                        {activeFilterLiveCount.toLocaleString()} Live
-                      </Text>
-                    </View>
-                  </View>
-                )}
-              </View>
-
-              {(selectedSubjectFilter || selectedSthanaFilter || selectedChapterFilter) && (
-                <TouchableOpacity
-                  style={styles.btnResetFilter}
-                  onPress={handleResetCascadingFilter}
-                  activeOpacity={0.7}
-                >
-                  <RotateCcw size={12} color="#991B1B" />
-                  <Text style={styles.btnResetFilterText}>Reset Filter</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* STEP 1: Select Samhita / Subject */}
-            <View style={styles.stepBlock}>
-              <View style={styles.stepHeaderRow}>
-                <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>Step 1</Text>
-                </View>
-                <Text style={styles.stepTitle}>Select Samhita / Subject</Text>
-                {selectedSubjectFilter && (
-                  <Text style={styles.stepSelectedEcho}>• {selectedSubjectFilter}</Text>
-                )}
-              </View>
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.stepPillsScroll}
-              >
-                <TouchableOpacity
-                  style={[
-                    styles.cascadePill,
-                    !selectedSubjectFilter && styles.cascadePillActive,
-                  ]}
-                  onPress={handleResetCascadingFilter}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.cascadePillText,
-                      !selectedSubjectFilter && styles.cascadePillTextActive,
-                    ]}
-                  >
-                    All ({questions.length.toLocaleString()})
-                  </Text>
-                </TouchableOpacity>
-
+                <option value="">All Samhitas ({questions.length.toLocaleString()})</option>
                 {chapterHierarchy.map((subj) => {
-                  const isSelected = selectedSubjectFilter === subj.name;
+                  const label =
+                    subj.name === 'General Ayurveda'
+                      ? `Uncategorized (${subj.total.toLocaleString()})`
+                      : `${subj.name} (${subj.total.toLocaleString()})`;
                   return (
-                    <TouchableOpacity
-                      key={subj.name}
-                      style={[
-                        styles.cascadePill,
-                        isSelected && styles.cascadePillActive,
-                      ]}
-                      onPress={() => {
-                        if (isSelected) {
-                          handleResetCascadingFilter();
-                        } else {
-                          setSelectedSubjectFilter(subj.name);
-                          setSelectedSthanaFilter(null);
-                          setSelectedChapterFilter(null);
-                        }
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.cascadePillText,
-                          isSelected && styles.cascadePillTextActive,
-                        ]}
-                      >
-                        {subj.name} ({subj.total.toLocaleString()})
-                      </Text>
-                    </TouchableOpacity>
+                    <option key={subj.name} value={subj.name}>
+                      {label}
+                    </option>
                   );
                 })}
-              </ScrollView>
+              </select>
+              <View style={styles.dropdownChevron}>
+                <ChevronDown size={15} color={selectedSubjectFilter ? '#047857' : '#64748B'} />
+              </View>
+            </View>
+          </View>
+
+          {/* Dropdown 2: Sthana (Section) */}
+          <View style={styles.dropdownField}>
+            <Text style={styles.dropdownLabel}>2. Sthana (Section)</Text>
+            <View style={styles.selectWrap}>
+              <select
+                aria-label="Select Sthana"
+                disabled={!selectedSubjectFilter}
+                value={selectedSthanaFilter || ''}
+                onChange={(e: any) => {
+                  const val = e.target.value;
+                  setSelectedSthanaFilter(val || null);
+                  setSelectedChapterFilter(null);
+                  setAuditHealthFilter('all');
+                }}
+                style={{
+                  width: '100%',
+                  height: 40,
+                  backgroundColor: !selectedSubjectFilter ? '#F8FAFC' : '#FFFFFF',
+                  borderColor: !selectedSubjectFilter
+                    ? '#E2E8F0'
+                    : selectedSthanaFilter
+                    ? '#0284C7'
+                    : '#CBD5E1',
+                  borderWidth: selectedSthanaFilter ? 1.5 : 1,
+                  borderRadius: 8,
+                  paddingLeft: 12,
+                  paddingRight: 32,
+                  fontSize: 13,
+                  fontWeight: selectedSthanaFilter ? '700' : '500',
+                  color: !selectedSubjectFilter
+                    ? '#94A3B8'
+                    : selectedSthanaFilter
+                    ? '#0369A1'
+                    : '#1E293B',
+                  cursor: !selectedSubjectFilter ? 'not-allowed' : 'pointer',
+                  outline: 'none',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                }}
+              >
+                {!selectedSubjectFilter ? (
+                  <option value="">Select a Samhita first...</option>
+                ) : (
+                  <>
+                    <option value="">
+                      All Sthanas ({activeSubjectObj?.total.toLocaleString() || 0})
+                    </option>
+                    {availableSthanas.map((sth) => (
+                      <option key={sth.name} value={sth.name}>
+                        {sth.name} ({sth.total.toLocaleString()})
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+              <View style={styles.dropdownChevron}>
+                <ChevronDown
+                  size={15}
+                  color={!selectedSubjectFilter ? '#CBD5E1' : selectedSthanaFilter ? '#0284C7' : '#64748B'}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Dropdown 3: Chapter */}
+          <View style={styles.dropdownField}>
+            <Text style={styles.dropdownLabel}>3. Chapter</Text>
+            <View style={styles.selectWrap}>
+              <select
+                aria-label="Select Chapter"
+                disabled={!selectedSthanaFilter}
+                value={selectedChapterFilter || ''}
+                onChange={(e: any) => {
+                  const val = e.target.value;
+                  setSelectedChapterFilter(val || null);
+                  setAuditHealthFilter('all');
+                }}
+                style={{
+                  width: '100%',
+                  height: 40,
+                  backgroundColor: !selectedSthanaFilter ? '#F8FAFC' : '#FFFFFF',
+                  borderColor: !selectedSthanaFilter
+                    ? '#E2E8F0'
+                    : selectedChapterFilter
+                    ? '#D97706'
+                    : '#CBD5E1',
+                  borderWidth: selectedChapterFilter ? 1.5 : 1,
+                  borderRadius: 8,
+                  paddingLeft: 12,
+                  paddingRight: 32,
+                  fontSize: 13,
+                  fontWeight: selectedChapterFilter ? '700' : '500',
+                  color: !selectedSthanaFilter
+                    ? '#94A3B8'
+                    : selectedChapterFilter
+                    ? '#92400E'
+                    : '#1E293B',
+                  cursor: !selectedSthanaFilter ? 'not-allowed' : 'pointer',
+                  outline: 'none',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                }}
+              >
+                {!selectedSthanaFilter ? (
+                  <option value="">Select a Sthana first...</option>
+                ) : (
+                  <>
+                    <option value="">
+                      All Chapters in {selectedSthanaFilter} ({activeSthanaObj?.total.toLocaleString() || 0})
+                    </option>
+                    {availableChapters.map((ch) => {
+                      const warningSuffix = ch.malformed > 0 ? ` (⚠️ ${ch.malformed})` : '';
+                      return (
+                        <option key={ch.name} value={ch.name}>
+                          {ch.name} — {ch.total.toLocaleString()} Qs{warningSuffix}
+                        </option>
+                      );
+                    })}
+                  </>
+                )}
+              </select>
+              <View style={styles.dropdownChevron}>
+                <ChevronDown
+                  size={15}
+                  color={!selectedSthanaFilter ? '#CBD5E1' : selectedChapterFilter ? '#D97706' : '#64748B'}
+                />
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Chapter Health & Accuracy Summary Strip (when a Chapter, Sthana, or Samhita is selected) */}
+        {(selectedChapterFilter || selectedSthanaFilter || selectedSubjectFilter) && (
+          <View style={styles.auditSummaryStrip}>
+            <View style={styles.auditScopeHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                <CheckCircle2 size={16} color="#047857" />
+                <Text style={styles.auditScopeTitle}>
+                  Chapter Health & Accuracy Audit:{' '}
+                  <Text style={{ fontWeight: '800', color: '#064E3B' }}>
+                    {[selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).join(' › ')}
+                  </Text>
+                </Text>
+              </View>
+
+              <View style={styles.auditMetricsRow}>
+                <View style={styles.metricBadgeTotal}>
+                  <Text style={styles.metricBadgeTotalText}>
+                    {scopeMetrics.total.toLocaleString()} Total
+                  </Text>
+                </View>
+                <View style={styles.metricBadgeValid}>
+                  <Check size={11} color="#15803D" />
+                  <Text style={styles.metricBadgeValidText}>
+                    {scopeMetrics.valid.toLocaleString()} Valid
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.metricBadgeError,
+                    scopeMetrics.errors === 0 && { backgroundColor: '#F1F5F9', borderColor: '#E2E8F0' },
+                  ]}
+                >
+                  <AlertTriangle
+                    size={11}
+                    color={scopeMetrics.errors > 0 ? '#C2410C' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.metricBadgeErrorText,
+                      scopeMetrics.errors === 0 && { color: '#64748B' },
+                    ]}
+                  >
+                    {scopeMetrics.errors.toLocaleString()}{' '}
+                    {scopeMetrics.errors === 1 ? 'Error' : 'Errors'}
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            {/* STEP 2: Select Sthana (Section) */}
-            {selectedSubjectFilter && availableSthanas.length > 0 && (
-              <View style={styles.stepBlock}>
-                <View style={styles.stepHeaderRow}>
-                  <View style={[styles.stepBadge, { backgroundColor: '#E0F2FE' }]}>
-                    <Text style={[styles.stepBadgeText, { color: '#0369A1' }]}>Step 2</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>Select Sthana</Text>
-                  <Text style={styles.stepSubHint}>under {selectedSubjectFilter}</Text>
-                  {selectedSthanaFilter && (
-                    <Text style={styles.stepSelectedEcho}>• {selectedSthanaFilter}</Text>
-                  )}
-                </View>
+            {/* Quick Filter Pills Inside the Summary Strip */}
+            <View style={styles.auditFilterPillsRow}>
+              <Text style={styles.auditFilterLabel}>Filter View:</Text>
 
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.stepPillsScroll}
+              <TouchableOpacity
+                style={[
+                  styles.auditFilterPill,
+                  auditHealthFilter === 'all' && styles.auditFilterPillActiveAll,
+                ]}
+                onPress={() => setAuditHealthFilter('all')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.auditFilterPillText,
+                    auditHealthFilter === 'all' && styles.auditFilterPillTextActive,
+                  ]}
                 >
-                  <TouchableOpacity
-                    style={[
-                      styles.cascadePill,
-                      !selectedSthanaFilter && styles.cascadePillActiveSthana,
-                    ]}
-                    onPress={() => {
-                      setSelectedSthanaFilter(null);
-                      setSelectedChapterFilter(null);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.cascadePillText,
-                        !selectedSthanaFilter && styles.cascadePillTextActive,
-                      ]}
-                    >
-                      All Sthanas ({activeSubjectObj?.total.toLocaleString()})
-                    </Text>
-                  </TouchableOpacity>
+                  All ({scopeMetrics.total.toLocaleString()})
+                </Text>
+              </TouchableOpacity>
 
-                  {availableSthanas.map((sth) => {
-                    const isSelected = selectedSthanaFilter === sth.name;
-                    return (
-                      <TouchableOpacity
-                        key={sth.name}
-                        style={[
-                          styles.cascadePill,
-                          isSelected && styles.cascadePillActiveSthana,
-                        ]}
-                        onPress={() => {
-                          if (isSelected) {
-                            setSelectedSthanaFilter(null);
-                            setSelectedChapterFilter(null);
-                          } else {
-                            setSelectedSthanaFilter(sth.name);
-                            setSelectedChapterFilter(null);
-                          }
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text
-                          style={[
-                            styles.cascadePillText,
-                            isSelected && styles.cascadePillTextActive,
-                          ]}
-                        >
-                          {sth.name} ({sth.total.toLocaleString()})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
+              <TouchableOpacity
+                style={[
+                  styles.auditFilterPill,
+                  auditHealthFilter === 'valid' && styles.auditFilterPillActiveValid,
+                ]}
+                onPress={() => setAuditHealthFilter('valid')}
+                activeOpacity={0.8}
+              >
+                <Check
+                  size={12}
+                  color={auditHealthFilter === 'valid' ? '#FFF' : '#15803D'}
+                />
+                <Text
+                  style={[
+                    styles.auditFilterPillText,
+                    auditHealthFilter === 'valid' && styles.auditFilterPillTextActive,
+                    auditHealthFilter !== 'valid' && { color: '#15803D' },
+                  ]}
+                >
+                  ✅ Valid Only ({scopeMetrics.valid.toLocaleString()})
+                </Text>
+              </TouchableOpacity>
 
-            {/* STEP 3: Select Chapter */}
-            {selectedSthanaFilter && availableChapters.length > 0 && (
-              <View style={styles.stepBlock}>
-                <View style={styles.stepHeaderRow}>
-                  <View style={[styles.stepBadge, { backgroundColor: '#FEF3C7' }]}>
-                    <Text style={[styles.stepBadgeText, { color: '#B45309' }]}>Step 3</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>Select Chapter</Text>
-                  <Text style={styles.stepSubHint}>
-                    ({availableChapters.length} chapters, sorted numerically)
-                  </Text>
-                  {selectedChapterFilter && (
-                    <Text style={styles.stepSelectedEcho}>• {selectedChapterFilter}</Text>
-                  )}
-                </View>
-
-                <View style={styles.chaptersGridContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.chapterGridPill,
-                      !selectedChapterFilter && styles.chapterGridPillActive,
-                    ]}
-                    onPress={() => setSelectedChapterFilter(null)}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.chapterGridPillText,
-                        !selectedChapterFilter && styles.chapterGridPillTextActive,
-                      ]}
-                    >
-                      All ({activeSthanaObj?.total.toLocaleString()})
-                    </Text>
-                  </TouchableOpacity>
-
-                  {availableChapters.map((ch) => {
-                    const isSelected = selectedChapterFilter === ch.name;
-                    const displayName = ch.name.replace(/^Chapter\s*/i, 'Ch ');
-                    return (
-                      <TouchableOpacity
-                        key={ch.name}
-                        style={[
-                          styles.chapterGridPill,
-                          isSelected && styles.chapterGridPillActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedChapterFilter(isSelected ? null : ch.name);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text
-                          style={[
-                            styles.chapterGridPillText,
-                            isSelected && styles.chapterGridPillTextActive,
-                          ]}
-                        >
-                          {displayName} ({ch.total.toLocaleString()})
-                        </Text>
-                        {ch.malformed > 0 && (
-                          <View
-                            style={styles.dotMalformedMini}
-                            accessibilityLabel={`${ch.malformed} malformed`}
-                          />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
+              <TouchableOpacity
+                style={[
+                  styles.auditFilterPill,
+                  auditHealthFilter === 'errors' && styles.auditFilterPillActiveError,
+                ]}
+                onPress={() => setAuditHealthFilter('errors')}
+                activeOpacity={0.8}
+              >
+                <AlertTriangle
+                  size={12}
+                  color={
+                    auditHealthFilter === 'errors'
+                      ? '#FFF'
+                      : scopeMetrics.errors > 0
+                      ? '#C2410C'
+                      : '#64748B'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.auditFilterPillText,
+                    auditHealthFilter === 'errors' && styles.auditFilterPillTextActive,
+                    auditHealthFilter !== 'errors' && {
+                      color: scopeMetrics.errors > 0 ? '#C2410C' : '#64748B',
+                    },
+                  ]}
+                >
+                  ⚠️ Errors Only ({scopeMetrics.errors.toLocaleString()})
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -2257,6 +2325,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               const isEdited = editedIds.has(String(q.id));
               const isBroken = isBrokenShiftedQuestion(q);
               const mismatch = detectSamhitaMismatch(q);
+              const audit = getQuestionAuditStatus(q);
 
               const typeColor =
                 q.questionType === 'assertion_reason'
@@ -2284,6 +2353,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   nativeID={`q-card-${globalIndex}`}
                   style={[
                     styles.questionCard,
+                    !audit.isValid && styles.questionCardIssue,
                     isBroken && styles.questionCardBroken,
                     mismatch.hasMismatch && styles.questionCardMismatch,
                   ]}
@@ -2302,6 +2372,19 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           {QUESTION_TYPE_LABELS[q.questionType] || 'Standard MCQ'}
                         </Text>
                       </View>
+
+                      {/* Chapter Health & Accuracy Status Badge */}
+                      {audit.isValid ? (
+                        <View style={styles.badgeAuditValid}>
+                          <Check size={11} color="#15803D" />
+                          <Text style={styles.badgeAuditValidText}>✓ Valid</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.badgeAuditIssue}>
+                          <AlertTriangle size={11} color="#C2410C" />
+                          <Text style={styles.badgeAuditIssueText}>⚠️ Issue: {audit.issueReason}</Text>
+                        </View>
+                      )}
 
                       {/* Samhita / Citation Mismatch Badge */}
                       {mismatch.hasMismatch && (
@@ -3972,235 +4055,240 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  cascadeContainer: {
+  dropdownBarContainer: {
     backgroundColor: '#FFF',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     marginBottom: 16,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  cascadeHeader: {
-    padding: 14,
-    backgroundColor: '#F8FAFC',
+  dropdownBarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#E2E8F0',
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  cascadeIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+  dropdownBarIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
     backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cascadeTitle: {
-    fontSize: 14,
+  dropdownBarTitle: {
+    fontSize: 13,
     fontWeight: '700',
     color: THEME.colors.ink,
   },
-  cascadeSub: {
+  dropdownBarSub: {
     fontSize: 11,
     color: THEME.colors.muted,
-    marginTop: 2,
   },
-  cascadeActiveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    maxWidth: 240,
-  },
-  cascadeActiveBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#065F46',
-    flexShrink: 1,
-  },
-  panelChevronWrap: {
-    padding: 4,
-  },
-  cascadeBody: {
-    padding: 14,
-    gap: 14,
-  },
-  breadcrumbBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  breadcrumbPath: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-    flex: 1,
-  },
-  breadcrumbAllText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#065F46',
-  },
-  breadcrumbSegment: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#047857',
-  },
-  breadcrumbSegmentCurrent: {
-    fontWeight: '800',
-    color: '#064E3B',
-  },
-  breadcrumbDivider: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6EE7B7',
-    marginHorizontal: 1,
-  },
-  breadcrumbLiveBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 10,
-    marginLeft: 4,
-  },
-  breadcrumbLiveBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#15803D',
-  },
-  btnResetFilter: {
+  btnResetDropdowns: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: '#FFF',
     borderWidth: 1,
-    borderColor: '#FECACA',
-    paddingHorizontal: 8,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
   },
-  btnResetFilterText: {
+  btnResetDropdownsText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#991B1B',
   },
-  stepBlock: {
+  dropdownsGrid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  dropdownField: {
+    flex: 1,
+    minWidth: 180,
+    gap: 4,
+  },
+  dropdownLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  selectWrap: {
+    position: 'relative',
+    width: '100%',
+  },
+  dropdownChevron: {
+    position: 'absolute',
+    right: 10,
+    top: 12,
+    pointerEvents: 'none' as any,
+  },
+  auditSummaryStrip: {
+    backgroundColor: '#F0FDF4',
+    borderTopWidth: 1,
+    borderTopColor: '#BBF7D0',
+    padding: 12,
+    gap: 10,
+  },
+  auditScopeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 8,
   },
-  stepHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  stepBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  stepBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#166534',
-    textTransform: 'uppercase',
-  },
-  stepTitle: {
+  auditScopeTitle: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
+    color: '#065F46',
   },
-  stepSubHint: {
-    fontSize: 11,
-    color: THEME.colors.muted,
-  },
-  stepSelectedEcho: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#047857',
-  },
-  stepPillsScroll: {
-    gap: 6,
-    paddingVertical: 2,
-    alignItems: 'center',
-  },
-  cascadePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  cascadePillActive: {
-    backgroundColor: '#047857',
-    borderColor: '#047857',
-  },
-  cascadePillActiveSthana: {
-    backgroundColor: '#0284C7',
-    borderColor: '#0284C7',
-  },
-  cascadePillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  cascadePillTextActive: {
-    color: '#FFF',
-    fontWeight: '700',
-  },
-  chaptersGridContainer: {
+  auditMetricsRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     flexWrap: 'wrap',
-    gap: 6,
-    paddingTop: 2,
   },
-  chapterGridPill: {
+  metricBadgeTotal: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  metricBadgeTotalText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  metricBadgeValid: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#DCFCE7',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#86EFAC',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
   },
-  chapterGridPillActive: {
-    backgroundColor: '#D97706',
-    borderColor: '#D97706',
+  metricBadgeValidText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
   },
-  chapterGridPillText: {
+  metricBadgeError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFEDD5',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  metricBadgeErrorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  auditFilterPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  auditFilterLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  auditFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+  },
+  auditFilterPillText: {
     fontSize: 11,
     fontWeight: '600',
     color: '#334155',
   },
-  chapterGridPillTextActive: {
+  auditFilterPillActiveAll: {
+    backgroundColor: '#047857',
+    borderColor: '#047857',
+  },
+  auditFilterPillActiveValid: {
+    backgroundColor: '#15803D',
+    borderColor: '#15803D',
+  },
+  auditFilterPillActiveError: {
+    backgroundColor: '#EA580C',
+    borderColor: '#EA580C',
+  },
+  auditFilterPillTextActive: {
     color: '#FFF',
     fontWeight: '700',
   },
-  dotMalformedMini: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#EF4444',
+  badgeAuditValid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeAuditValidText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  badgeAuditIssue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFEDD5',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    maxWidth: 280,
+  },
+  badgeAuditIssueText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  questionCardIssue: {
+    borderColor: '#FDBA74',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFDFB',
   },
   activeChapterFilterBar: {
     flexDirection: 'row',

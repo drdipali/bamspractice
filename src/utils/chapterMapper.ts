@@ -489,25 +489,79 @@ export function checkQuestionRemap(q: Question): {
   };
 }
 
+export interface QuestionAuditResult {
+  isValid: boolean;
+  issueReason?: string;
+  isShifted?: boolean;
+  isMalformedStem?: boolean;
+  isMissingOptions?: boolean;
+  isInvalidAnswerKey?: boolean;
+  isSamhitaMismatch?: boolean;
+  mismatchDetails?: SamhitaMismatchResult;
+}
+
+/**
+ * Full Chapter Health & Accuracy Audit for a question:
+ * Validates format, stem integrity, 4 options present, valid answer key, and Samhita citation matching.
+ */
+export function getQuestionAuditStatus(q: Question): QuestionAuditResult {
+  const stem = String(q.stem || '').trim();
+
+  // 1. Shifted column / numeric stem check
+  if (/^\d+\.?$/.test(stem) || stem.length < 5) {
+    return {
+      isValid: false,
+      issueReason: 'Numeric serial number in stem',
+      isMalformedStem: true,
+    };
+  }
+  const optA = String((q.o && q.o[0]) || (q as any).options?.[0] || '').trim();
+  if (optA.length > 25 && stem.length < 10) {
+    return {
+      isValid: false,
+      issueReason: 'Shifted row (Stem in Option A)',
+      isShifted: true,
+    };
+  }
+
+  // 2. Options validation (must have 4 non-empty options for standard MCQs)
+  const validOpts = (q.o || []).filter((opt) => String(opt || '').trim().length > 0);
+  if (validOpts.length < 4) {
+    return {
+      isValid: false,
+      issueReason: `Missing options (${validOpts.length}/4 present)`,
+      isMissingOptions: true,
+    };
+  }
+
+  // 3. Answer key validation (must be 0, 1, 2, or 3)
+  if (typeof q.c !== 'number' || q.c < 0 || q.c > 3) {
+    return {
+      isValid: false,
+      issueReason: 'Invalid answer key (not Option A–D)',
+      isInvalidAnswerKey: true,
+    };
+  }
+
+  // 4. Samhita & Citation Mismatch
+  const mismatch = detectSamhitaMismatch(q);
+  if (mismatch.hasMismatch) {
+    return {
+      isValid: false,
+      issueReason: mismatch.badgeLabel.replace(/^⚠️\s*/, ''),
+      isSamhitaMismatch: true,
+      mismatchDetails: mismatch,
+    };
+  }
+
+  return { isValid: true };
+}
+
 /**
  * Helper to determine if a question is malformed / invalid for student tests
  */
 export function isQuestionMalformed(q: Question): boolean {
-  const stem = String(q.stem || '').trim();
-  // Numeric serial number in stem (e.g. 420, 38)
-  if (/^\d+\.?$/.test(stem) || stem.length < 5) return true;
-  // Shifted row check (Option A contains question stem)
-  const optA = String((q.o && q.o[0]) || (q as any).options?.[0] || '').trim();
-  if (optA.length > 25 && stem.length < 10) return true;
-
-  // Options validation
-  const validOpts = (q.o || []).filter((opt) => String(opt || '').trim().length > 0);
-  if (validOpts.length < 2) return true;
-
-  // Correct answer index validation (0..3)
-  if (typeof q.c !== 'number' || q.c < 0 || q.c > 3) return true;
-
-  return false;
+  return !getQuestionAuditStatus(q).isValid;
 }
 
 export interface ChapterSummaryItem {
