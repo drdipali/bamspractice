@@ -28,6 +28,7 @@ import { QuizTimer } from './QuizTimer';
 import { QuestionStem } from './QuestionStem';
 import { OptionList } from './OptionList';
 import { QuestionPalette } from './QuestionPalette';
+import { isPlaceholderCitation } from '../../utils/chapterMapper';
 
 export const QuizScreen: React.FC = () => {
   const {
@@ -188,7 +189,7 @@ export const QuizScreen: React.FC = () => {
                     </Text>
                   </View>
                   <Text style={styles.explanationRef}>
-                    {currentQ.r
+                    {currentQ.r && !isPlaceholderCitation(currentQ.r, currentQ.chapterName)
                       ? `Authoritative Reference: ${currentQ.r}`
                       : 'Reference: Classical Samhita authentic source principle.'}
                   </Text>

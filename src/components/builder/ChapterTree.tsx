@@ -7,11 +7,12 @@ import {
   View,
   ActivityIndicator,
 } from 'react-native';
-import { ChevronDown, ChevronRight, Search, X, Bookmark } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Search, X, Bookmark, Check } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Chapter } from '../../types';
 import { GROUPS, RAW_TREE } from '../../constants/syllabusData';
 import { useApp } from '../../context/AppContext';
+import { isQuestionChapterVerified, isValidQuestion } from '../../utils/chapterMapper';
 
 export const ChapterTree: React.FC = () => {
   const {
@@ -21,6 +22,7 @@ export const ChapterTree: React.FC = () => {
     toggleChapter,
     toggleGroup,
     bookmarkedIds,
+    practiceMode,
   } = useApp();
 
   const [query, setQuery] = useState('');
@@ -135,12 +137,34 @@ export const ChapterTree: React.FC = () => {
 
                     if (samhitaChapters.length === 0) return null;
 
-                    const samhitaChapterIds = samhitaChapters.map((c) => c.id);
-                    const selectedCount = samhitaChapterIds.filter((id) =>
+                    const isChapterVerifiedOnly = practiceMode === 'chapter_verified';
+
+                    // Available chapter IDs based on practice mode
+                    const availableSamhitaChapterIds = samhitaChapters
+                      .filter((c) =>
+                        isChapterVerifiedOnly
+                          ? c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q))
+                          : c.qs.some(isValidQuestion)
+                      )
+                      .map((c) => c.id);
+
+                    const samhitaVerifiedTotal = samhitaChapters.reduce(
+                      (acc, c) =>
+                        acc +
+                        c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length,
+                      0
+                    );
+
+                    const samhitaTargetIds =
+                      isChapterVerifiedOnly && availableSamhitaChapterIds.length > 0
+                        ? availableSamhitaChapterIds
+                        : samhitaChapters.map((c) => c.id);
+
+                    const selectedCount = samhitaTargetIds.filter((id) =>
                       selectedChapters.includes(id)
                     ).length;
                     const isAllSelected =
-                      samhitaChapterIds.length > 0 && selectedCount === samhitaChapterIds.length;
+                      samhitaTargetIds.length > 0 && selectedCount === samhitaTargetIds.length;
                     const isPartiallySelected = selectedCount > 0 && !isAllSelected;
 
                     const samhitaKey = `s${si}`;
@@ -163,7 +187,15 @@ export const ChapterTree: React.FC = () => {
 
                           <TouchableOpacity
                             style={styles.checkboxTouch}
-                            onPress={() => toggleGroup(samhitaChapterIds, !isAllSelected)}
+                            onPress={() => {
+                              if (isChapterVerifiedOnly && availableSamhitaChapterIds.length === 0) {
+                                alert(
+                                  `No verified questions available in ${samhita.name} yet (Coming Soon). Switch to "Mixed & Mock Tests" at the top to access the unverified question bank.`
+                                );
+                                return;
+                              }
+                              toggleGroup(samhitaTargetIds, !isAllSelected);
+                            }}
                             activeOpacity={0.7}
                           >
                             <View
@@ -180,9 +212,21 @@ export const ChapterTree: React.FC = () => {
                             </Text>
                           </TouchableOpacity>
 
-                          <View style={styles.countBadge}>
-                            <Text style={styles.countBadgeText}>
-                              {selectedCount}/{samhitaChapterIds.length}
+                          <View
+                            style={[
+                              styles.countBadge,
+                              isChapterVerifiedOnly && samhitaVerifiedTotal > 0 && styles.countBadgeVerified,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.countBadgeText,
+                                isChapterVerifiedOnly && samhitaVerifiedTotal > 0 && styles.countBadgeTextVerified,
+                              ]}
+                            >
+                              {isChapterVerifiedOnly
+                                ? `${samhitaVerifiedTotal} Verified Qs`
+                                : `${selectedCount}/${samhitaTargetIds.length}`}
                             </Text>
                           </View>
                         </View>
@@ -198,12 +242,31 @@ export const ChapterTree: React.FC = () => {
 
                             if (sthanaChapters.length === 0) return null;
 
-                            const sthanaIds = sthanaChapters.map((c) => c.id);
-                            const sthanaSelectedCount = sthanaIds.filter((id) =>
+                            const availableSthanaChapterIds = sthanaChapters
+                              .filter((c) =>
+                                isChapterVerifiedOnly
+                                  ? c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q))
+                                  : c.qs.some(isValidQuestion)
+                              )
+                              .map((c) => c.id);
+
+                            const sthanaVerifiedTotal = sthanaChapters.reduce(
+                              (acc, c) =>
+                                acc +
+                                c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length,
+                              0
+                            );
+
+                            const sthanaTargetIds =
+                              isChapterVerifiedOnly && availableSthanaChapterIds.length > 0
+                                ? availableSthanaChapterIds
+                                : sthanaChapters.map((c) => c.id);
+
+                            const sthanaSelectedCount = sthanaTargetIds.filter((id) =>
                               selectedChapters.includes(id)
                             ).length;
                             const isSthanaAllSelected =
-                              sthanaIds.length > 0 && sthanaSelectedCount === sthanaIds.length;
+                              sthanaTargetIds.length > 0 && sthanaSelectedCount === sthanaTargetIds.length;
                             const isSthanaPartiallySelected =
                               sthanaSelectedCount > 0 && !isSthanaAllSelected;
 
@@ -227,9 +290,15 @@ export const ChapterTree: React.FC = () => {
 
                                   <TouchableOpacity
                                     style={styles.checkboxTouch}
-                                    onPress={() =>
-                                      toggleGroup(sthanaIds, !isSthanaAllSelected)
-                                    }
+                                    onPress={() => {
+                                      if (isChapterVerifiedOnly && availableSthanaChapterIds.length === 0) {
+                                        alert(
+                                          `No verified questions available in ${sthana[0]} yet (Coming Soon).`
+                                        );
+                                        return;
+                                      }
+                                      toggleGroup(sthanaTargetIds, !isSthanaAllSelected);
+                                    }}
                                     activeOpacity={0.7}
                                   >
                                     <View
@@ -251,9 +320,21 @@ export const ChapterTree: React.FC = () => {
                                     </Text>
                                   </TouchableOpacity>
 
-                                  <View style={styles.countBadge}>
-                                    <Text style={styles.countBadgeText}>
-                                      {sthanaSelectedCount}/{sthanaIds.length}
+                                  <View
+                                    style={[
+                                      styles.countBadge,
+                                      isChapterVerifiedOnly && sthanaVerifiedTotal > 0 && styles.countBadgeVerified,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.countBadgeText,
+                                        isChapterVerifiedOnly && sthanaVerifiedTotal > 0 && styles.countBadgeTextVerified,
+                                      ]}
+                                    >
+                                      {isChapterVerifiedOnly
+                                        ? `${sthanaVerifiedTotal} Qs`
+                                        : `${sthanaSelectedCount}/${sthanaTargetIds.length}`}
                                     </Text>
                                   </View>
                                 </View>
@@ -267,20 +348,39 @@ export const ChapterTree: React.FC = () => {
                                       chapterBookmarksCount[chapter.name] ||
                                       0;
 
+                                    const verifiedQs = chapter.qs.filter(
+                                      (q) => isQuestionChapterVerified(q) && isValidQuestion(q)
+                                    );
+                                    const allValidQs = chapter.qs.filter(isValidQuestion);
+                                    const verifiedCount = verifiedQs.length;
+                                    const hasVerified = verifiedCount > 0;
+                                    const isChapterSelectable =
+                                      !isChapterVerifiedOnly || hasVerified;
+
                                     return (
                                       <TouchableOpacity
                                         key={chapter.id}
                                         style={[
                                           styles.rowLevel3,
                                           isChSelected && styles.rowLevel3Selected,
+                                          !isChapterSelectable && styles.rowLevel3Disabled,
                                         ]}
-                                        onPress={() => toggleChapter(chapter.id)}
-                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                          if (isChapterVerifiedOnly && !hasVerified) {
+                                            alert(
+                                              `Chapter ${chapter.n} does not have verified questions yet (Coming Soon). Switch to "Mixed & Mock Tests" at the top to access the full question bank.`
+                                            );
+                                            return;
+                                          }
+                                          toggleChapter(chapter.id);
+                                        }}
+                                        activeOpacity={isChapterSelectable ? 0.7 : 0.5}
                                       >
                                         <View
                                           style={[
                                             styles.checkboxBoxSmall,
                                             isChSelected && styles.checkboxBoxActive,
+                                            !isChapterSelectable && styles.checkboxBoxDisabled,
                                           ]}
                                         >
                                           {isChSelected && (
@@ -292,6 +392,7 @@ export const ChapterTree: React.FC = () => {
                                           style={[
                                             styles.chapterLabel,
                                             isChSelected && styles.chapterLabelSelected,
+                                            !isChapterSelectable && styles.chapterLabelDisabled,
                                           ]}
                                           numberOfLines={1}
                                         >
@@ -318,11 +419,28 @@ export const ChapterTree: React.FC = () => {
                                             </View>
                                           )}
 
-                                          <View style={styles.mcqPill}>
-                                            <Text style={styles.mcqPillText}>
-                                              {chapter.qs.length} MCQs
-                                            </Text>
-                                          </View>
+                                          {isChapterVerifiedOnly ? (
+                                            hasVerified ? (
+                                              <View style={styles.mcqPillVerified}>
+                                                <Check size={10} color="#15803D" strokeWidth={3} />
+                                                <Text style={styles.mcqPillVerifiedText}>
+                                                  {verifiedCount} Verified
+                                                </Text>
+                                              </View>
+                                            ) : (
+                                              <View style={styles.mcqPillComingSoon}>
+                                                <Text style={styles.mcqPillComingSoonText}>
+                                                  Coming Soon
+                                                </Text>
+                                              </View>
+                                            )
+                                          ) : (
+                                            <View style={styles.mcqPill}>
+                                              <Text style={styles.mcqPillText}>
+                                                {allValidQs.length} MCQs
+                                              </Text>
+                                            </View>
+                                          )}
                                         </View>
                                       </TouchableOpacity>
                                     );
@@ -514,10 +632,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.line,
   },
+  countBadgeVerified: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
   countBadgeText: {
     fontSize: 11,
     color: THEME.colors.muted,
     fontWeight: '600',
+  },
+  countBadgeTextVerified: {
+    color: '#047857',
+    fontWeight: '700',
   },
   sthanaBlock: {
     marginLeft: 16,
@@ -547,6 +673,13 @@ const styles = StyleSheet.create({
   rowLevel3Selected: {
     backgroundColor: '#E6F4EA',
   },
+  rowLevel3Disabled: {
+    opacity: 0.6,
+  },
+  checkboxBoxDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
   chapterLabel: {
     fontSize: 13,
     color: THEME.colors.ink,
@@ -555,6 +688,9 @@ const styles = StyleSheet.create({
   chapterLabelSelected: {
     fontWeight: '600',
     color: THEME.colors.brand,
+  },
+  chapterLabelDisabled: {
+    color: '#94A3B8',
   },
   realTag: {
     fontSize: 11,
@@ -589,5 +725,34 @@ const styles = StyleSheet.create({
   mcqPillText: {
     fontSize: 11,
     color: THEME.colors.muted,
+  },
+  mcqPillVerified: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: THEME.radius.sm,
+  },
+  mcqPillVerifiedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  mcqPillComingSoon: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mcqPillComingSoonText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94A3B8',
   },
 });

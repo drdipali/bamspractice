@@ -37,6 +37,7 @@ import {
   ChevronRight,
   Wrench,
   Edit3,
+  CheckSquare,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -59,6 +60,8 @@ import {
   CLASSICAL_SAMHITA_SCHEMA,
   getCanonicalSthana,
   isValidClassicalTag,
+  isQuestionChapterVerified,
+  isValidQuestion,
 } from '../../utils/chapterMapper';
 import { useApp } from '../../context/AppContext';
 import { GeminiService, AIProvider } from '../../services/gemini';
@@ -187,7 +190,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [selectedSthanaFilter, setSelectedSthanaFilter] = useState<string | null>(null);
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string | null>(null);
   const [isChapterPanelExpanded, setIsChapterPanelExpanded] = useState<boolean>(true);
-  const [auditHealthFilter, setAuditHealthFilter] = useState<'all' | 'valid' | 'errors'>('all');
+  const [auditHealthFilter, setAuditHealthFilter] = useState<'all' | 'valid' | 'errors' | 'verified'>('all');
 
   // Smart Citation Auto-Mapper state
   const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState<boolean>(false);
@@ -228,6 +231,17 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [uploadFileName, setUploadFileName] = useState<string>('');
   const [uploadParseResult, setUploadParseResult] = useState<SpreadsheetParseResult | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadTargetSamhita, setUploadTargetSamhita] = useState<string>('Charaka Samhita');
+  const [uploadTargetSthana, setUploadTargetSthana] = useState<string>('Sutrasthana');
+  const [uploadTargetChapter, setUploadTargetChapter] = useState<string>('Chapter 1');
+  const [uploadMarkVerified, setUploadMarkVerified] = useState<boolean>(true);
+
+  // Multi-Select Bar State
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  const [isBatchUpdatingVerification, setIsBatchUpdatingVerification] = useState<boolean>(false);
+
+  // Edit / Form state for chapter verified toggle
+  const [isChapterVerifiedField, setIsChapterVerifiedField] = useState<boolean>(false);
 
   const loadCloudQuestions = async () => {
     setLoading(true);
@@ -272,6 +286,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setReasonText('');
     setStatement1('');
     setStatement2('');
+    setIsChapterVerifiedField(false);
     setEditingQuestion(null);
     setOriginalBeforeAI(null);
     setIsAiRephrased(false);
@@ -299,25 +314,26 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     let aText = q.assertionText || '';
     let rText = q.reasonText || '';
-    if (q.questionType === 'assertion_reason' && (!aText || !rText)) {
-      const ma = (q.stem || '').match(/Assertion\s*\(?A\)?\s*[:\/]([\s\S]*?)(?=Reason\s*\(?R\)?|$)/i);
-      const mr = (q.stem || '').match(/Reason\s*\(?R\)?\s*[:\/]([\s\S]*?)$/i);
-      if (ma && !aText) aText = ma[1].trim();
-      if (mr && !rText) rText = mr[1].trim();
+    if ((!aText || !rText) && q.stem) {
+      const ma = (q.stem || '').match(/(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?)\s*[:\/\-]([\s\S]*?)(?=(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)|$)/i);
+      const mr = (q.stem || '').match(/(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]([\s\S]*?)$/i);
+      if (ma && !aText) aText = `Assertion (A): ${ma[1].trim()}`;
+      if (mr && !rText) rText = `Reason (R): ${mr[1].trim()}`;
     }
     setAssertionText(aText);
     setReasonText(rText);
 
     let s1 = q.statement1 || '';
     let s2 = q.statement2 || '';
-    if (q.questionType === 'statement_type' && (!s1 || !s2)) {
-      const m1 = (q.stem || '').match(/Statement\s*I\s*[:\/]([\s\S]*?)(?=Statement\s*II|$)/i);
-      const m2 = (q.stem || '').match(/Statement\s*II\s*[:\/]([\s\S]*?)$/i);
+    if ((!s1 || !s2) && q.stem) {
+      const m1 = (q.stem || '').match(/(?:Statement\s*(?:I|1)|कथन\s*(?:I|1))\s*[:\/\-]([\s\S]*?)(?=(?:Statement\s*(?:II|2)|कथन\s*(?:II|2))|$)/i);
+      const m2 = (q.stem || '').match(/(?:Statement\s*(?:II|2)|कथन\s*(?:II|2))\s*[:\/\-]([\s\S]*?)$/i);
       if (m1 && !s1) s1 = `Statement I: ${m1[1].trim()}`;
       if (m2 && !s2) s2 = `Statement II: ${m2[1].trim()}`;
     }
     setStatement1(s1);
     setStatement2(s2);
+    setIsChapterVerifiedField(isQuestionChapterVerified(q));
     if (q.matchPairs && q.matchPairs.length > 0) {
       setMatchPairs(q.matchPairs);
     }
@@ -519,6 +535,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         statement1: qType === 'statement_type' ? statement1.trim() : undefined,
         statement2: qType === 'statement_type' ? statement2.trim() : undefined,
         matchPairs: qType === 'match_the_pair' ? matchPairs : undefined,
+        is_chapter_verified: isChapterVerifiedField,
+        isChapterVerified: isChapterVerifiedField,
       };
 
       if (editingQuestion) {
@@ -599,7 +617,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     reader.readAsArrayBuffer(file);
   };
 
-  // Confirm and batch upload questions to Cloud DB
+  // Confirm and batch upload questions to Cloud DB with strict target chapter & verification
   const handleConfirmBatchUpload = async () => {
     if (!uploadParseResult || uploadParseResult.validQuestions.length === 0) {
       alert('No valid questions available to upload.');
@@ -608,11 +626,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     setIsUploading(true);
     try {
-      const res = await backend.batchAddQuestions(uploadParseResult.validQuestions);
+      const targetTag = `${uploadTargetSamhita} > ${uploadTargetSthana} > ${uploadTargetChapter}`;
+      const questionsToUpload = uploadParseResult.validQuestions.map((q) => ({
+        ...q,
+        ch: targetTag,
+        chapterName: targetTag,
+        is_chapter_verified: uploadMarkVerified,
+        isChapterVerified: uploadMarkVerified,
+      }));
+
+      const res = await backend.batchAddQuestions(questionsToUpload);
       await loadCloudQuestions();
       if (refreshQuestions) refreshQuestions();
 
-      showToast(`Successfully uploaded ${res.added} questions to Cloud DB!`);
+      showToast(
+        `Successfully uploaded ${res.added} questions to ${targetTag}${
+          uploadMarkVerified ? ' (✓ Chapter-Verified)' : ''
+        }!`
+      );
       setUploadParseResult(null);
       setUploadFileName('');
       setIsUploadModalOpen(false);
@@ -620,6 +651,103 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       alert(e.message || 'Failed to upload questions.');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // Quick 1-click toggle verification status on a question card
+  const handleQuickToggleVerify = async (q: Question) => {
+    const nextState = !isQuestionChapterVerified(q);
+    try {
+      await backend.updateQuestion(q.id, {
+        is_chapter_verified: nextState,
+        isChapterVerified: nextState,
+      });
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      showToast(
+        nextState
+          ? `✓ Marked Question #${q.id} as Chapter-Verified!`
+          : `Unmarked Chapter-Verified for Question #${q.id}.`
+      );
+    } catch (err: any) {
+      alert('Failed to toggle verification: ' + err.message);
+    }
+  };
+
+  // Toggle selection for multi-select
+  const toggleSelectQuestion = (id: string | number) => {
+    const strId = String(id);
+    setSelectedQuestionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(strId)) next.delete(strId);
+      else next.add(strId);
+      return next;
+    });
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSelectedQuestionIds(new Set(displayedQuestions.map((q) => String(q.id))));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedQuestionIds(new Set());
+  };
+
+  const handleBatchSetVerified = async (verified: boolean) => {
+    if (selectedQuestionIds.size === 0) return;
+    const ids = Array.from(selectedQuestionIds);
+    setIsBatchUpdatingVerification(true);
+    try {
+      const updates = ids.map((id) => ({
+        id,
+        patch: {
+          is_chapter_verified: verified,
+          isChapterVerified: verified,
+        },
+      }));
+      await backend.updateQuestionsBatch(updates);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      setSelectedQuestionIds(new Set());
+      showToast(
+        verified
+          ? `✓ Marked ${ids.length} question(s) as Chapter-Verified!`
+          : `Unmarked Chapter-Verified for ${ids.length} question(s).`
+      );
+    } catch (err: any) {
+      alert('Failed to update questions: ' + err.message);
+    } finally {
+      setIsBatchUpdatingVerification(false);
+    }
+  };
+
+  // 1-Click Promote Entire Chapter to Verified
+  const handleMarkEntireChapterVerified = async () => {
+    if (filteredQuestions.length === 0) return;
+    const count = filteredQuestions.length;
+    const chapterLabel = [selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).join(' › ');
+    const confirmed = confirm(
+      `Mark all ${count} question(s) in "${chapterLabel}" as Chapter-Verified?\n\n` +
+        `These questions will immediately appear in Student Chapter-Wise Practice Mode.`
+    );
+    if (!confirmed) return;
+    setIsBatchUpdatingVerification(true);
+    try {
+      const updates = filteredQuestions.map((q) => ({
+        id: q.id,
+        patch: {
+          is_chapter_verified: true,
+          isChapterVerified: true,
+        },
+      }));
+      await backend.updateQuestionsBatch(updates);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      showToast(`✓ Successfully verified all ${count} questions in ${chapterLabel}!`);
+    } catch (err: any) {
+      alert('Failed to verify chapter: ' + err.message);
+    } finally {
+      setIsBatchUpdatingVerification(false);
     }
   };
 
@@ -795,6 +923,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         if (!isBrokenShiftedQuestion(q)) return false;
       } else if (selectedTypeFilter === 'citation_mismatch') {
         if (!detectSamhitaMismatch(q).hasMismatch) return false;
+      } else if (selectedTypeFilter === 'chapter_verified') {
+        if (!isQuestionChapterVerified(q)) return false;
       } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
@@ -840,11 +970,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         }
       }
 
-      // Chapter Health & Accuracy Filter ('all' | 'valid' | 'errors')
+      // Chapter Health & Accuracy Filter ('all' | 'valid' | 'errors' | 'verified')
       if (auditHealthFilter !== 'all') {
         const audit = getQuestionAuditStatus(q);
         if (auditHealthFilter === 'valid' && !audit.isValid) return false;
         if (auditHealthFilter === 'errors' && audit.isValid) return false;
+        if (auditHealthFilter === 'verified' && !isQuestionChapterVerified(q)) return false;
       }
 
       if (searchQuery.trim()) {
@@ -1024,7 +1155,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     let validCount = 0;
     let errorCount = 0;
+    let verifiedCount = 0;
     inScope.forEach((q) => {
+      if (isQuestionChapterVerified(q)) {
+        verifiedCount++;
+      }
       if (getQuestionAuditStatus(q).isValid) {
         validCount++;
       } else {
@@ -1036,6 +1171,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       total: inScope.length,
       valid: validCount,
       errors: errorCount,
+      verified: verifiedCount,
     };
   }, [questions, selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter]);
 
@@ -1104,6 +1240,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       }
     });
     return counts;
+  }, [questions]);
+
+  const verifiedCount = useMemo(() => {
+    return questions.filter(isQuestionChapterVerified).length;
   }, [questions]);
 
   return (
@@ -1273,6 +1413,149 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             </View>
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={true}>
+              {/* Step 1: Strict Classical Target Chapter Selector */}
+              <View style={styles.uploadTargetCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Compass size={16} color="#047857" />
+                  <Text style={styles.uploadTargetTitle}>1. Target Classical Samhita, Sthana &amp; Chapter *</Text>
+                </View>
+                <Text style={styles.uploadTargetSub}>
+                  Select where these questions belong. Every row in this upload will be mapped to this exact chapter (ignoring fallback defaults).
+                </Text>
+
+                <View style={styles.uploadSelectorsRow}>
+                  {/* Samhita Selector */}
+                  <View style={styles.uploadSelectCol}>
+                    <Text style={styles.uploadSelectLabel}>Samhita / Subject</Text>
+                    <select
+                      value={uploadTargetSamhita}
+                      onChange={(e) => {
+                        const newSamhita = e.target.value;
+                        setUploadTargetSamhita(newSamhita);
+                        const schema = CLASSICAL_SAMHITA_SCHEMA[newSamhita];
+                        if (schema && schema.sthanas.length > 0) {
+                          setUploadTargetSthana(schema.sthanas[0].name);
+                        }
+                        setUploadTargetChapter('Chapter 1');
+                      }}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {Object.keys(CLASSICAL_SAMHITA_SCHEMA).map((sName) => (
+                        <option key={sName} value={sName}>
+                          {sName}
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+
+                  {/* Sthana Selector */}
+                  <View style={styles.uploadSelectCol}>
+                    <Text style={styles.uploadSelectLabel}>Sthana / Section</Text>
+                    <select
+                      value={uploadTargetSthana}
+                      onChange={(e) => {
+                        setUploadTargetSthana(e.target.value);
+                        setUploadTargetChapter('Chapter 1');
+                      }}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {(CLASSICAL_SAMHITA_SCHEMA[uploadTargetSamhita]?.sthanas || []).map((sth) => (
+                        <option key={sth.name} value={sth.name}>
+                          {sth.name} ({sth.maxChapters} Chs)
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+
+                  {/* Chapter Selector */}
+                  <View style={styles.uploadSelectCol}>
+                    <Text style={styles.uploadSelectLabel}>Chapter</Text>
+                    <select
+                      value={uploadTargetChapter}
+                      onChange={(e) => setUploadTargetChapter(e.target.value)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {Array.from(
+                        {
+                          length:
+                            CLASSICAL_SAMHITA_SCHEMA[uploadTargetSamhita]?.sthanas.find(
+                              (s) => s.name === uploadTargetSthana
+                            )?.maxChapters || 30,
+                        },
+                        (_, i) => `Chapter ${i + 1}`
+                      ).map((ch) => (
+                        <option key={ch} value={ch}>
+                          {ch}
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+                </View>
+
+                {/* Checked-by-default Toggle: Mark as Chapter-Verified */}
+                <TouchableOpacity
+                  style={styles.uploadVerifyToggleRow}
+                  onPress={() => setUploadMarkVerified(!uploadMarkVerified)}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.checkboxBoxSmall,
+                      uploadMarkVerified && { backgroundColor: '#059669', borderColor: '#059669' },
+                    ]}
+                  >
+                    {uploadMarkVerified && <Check size={11} color="#FFF" strokeWidth={3} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.uploadVerifyToggleText}>
+                      ✅ Mark uploaded questions as Chapter-Verified
+                    </Text>
+                    <Text style={styles.uploadVerifyToggleSub}>
+                      Enables these questions immediately in Student Chapter-Wise Practice Mode.
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.targetPreviewBadge}>
+                  <Text style={styles.targetPreviewBadgeLabel}>Target Mapping:</Text>
+                  <Text style={styles.targetPreviewBadgeTag}>
+                    {uploadTargetSamhita} › {uploadTargetSthana} › {uploadTargetChapter}
+                  </Text>
+                  {uploadMarkVerified && (
+                    <Text style={styles.targetPreviewBadgeVerified}>✓ Chapter-Verified</Text>
+                  )}
+                </View>
+              </View>
+
+              <Text style={styles.uploadStep2Title}>2. Choose Spreadsheet File (.xlsx, .xls, .csv)</Text>
+
               {/* File Picker Box */}
               <View style={styles.dropZone}>
                 <Upload size={32} color={THEME.colors.brand} />
@@ -1363,9 +1646,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                       </Text>
                       {uploadParseResult.validQuestions.slice(0, 3).map((q, qIdx) => (
                         <View key={qIdx} style={styles.sampleCard}>
-                          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
-                            <Text style={styles.sampleBadge}>{q.chapterName}</Text>
-                            <Text style={styles.sampleRefBadge}>{q.r}</Text>
+                          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <Text style={styles.sampleBadge}>
+                              {uploadTargetSamhita} › {uploadTargetSthana} › {uploadTargetChapter}
+                            </Text>
+                            {uploadMarkVerified && (
+                              <Text style={styles.sampleVerifiedBadge}>✓ Chapter-Verified</Text>
+                            )}
+                            {q.r ? <Text style={styles.sampleRefBadge}>{q.r}</Text> : null}
                           </View>
                           <Text style={styles.sampleStem}>{q.stem}</Text>
                           <View style={styles.sampleOptionsRow}>
@@ -1504,6 +1792,47 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   />
                 </View>
               </View>
+
+              {/* Chapter-Verified Toggle in Edit Modal */}
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginTop: 6,
+                  marginBottom: 12,
+                  padding: 9,
+                  borderRadius: 6,
+                  backgroundColor: isChapterVerifiedField ? '#ECFDF5' : '#F8FAFC',
+                  borderWidth: 1,
+                  borderColor: isChapterVerifiedField ? '#A7F3D0' : '#E2E8F0',
+                }}
+                onPress={() => setIsChapterVerifiedField(!isChapterVerifiedField)}
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[
+                    styles.checkboxBoxSmall,
+                    isChapterVerifiedField && { backgroundColor: '#059669', borderColor: '#059669' },
+                  ]}
+                >
+                  {isChapterVerifiedField && <Check size={11} color="#FFF" strokeWidth={3} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: '700',
+                      color: isChapterVerifiedField ? '#047857' : '#334155',
+                    }}
+                  >
+                    {isChapterVerifiedField ? '✓ Marked as Chapter-Verified' : 'Mark as Chapter-Verified'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#64748B' }}>
+                    Verified questions appear in Student Chapter-Wise Practice Mode.
+                  </Text>
+                </View>
+              </TouchableOpacity>
 
               {/* Difficulty & Correct Answer */}
               <View style={styles.row2}>
@@ -2112,6 +2441,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     {scopeMetrics.valid.toLocaleString()} Valid
                   </Text>
                 </View>
+                <View style={styles.metricBadgeVerified}>
+                  <Check size={11} color="#047857" strokeWidth={2.5} />
+                  <Text style={styles.metricBadgeVerifiedText}>
+                    {scopeMetrics.verified.toLocaleString()} Verified
+                  </Text>
+                </View>
                 <View
                   style={[
                     styles.metricBadgeError,
@@ -2132,6 +2467,19 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     {scopeMetrics.errors === 1 ? 'Error' : 'Errors'}
                   </Text>
                 </View>
+
+                {(selectedChapterFilter || selectedSthanaFilter) && (
+                  <TouchableOpacity
+                    style={styles.btnPromoteChapterVerified}
+                    onPress={handleMarkEntireChapterVerified}
+                    activeOpacity={0.8}
+                  >
+                    <CheckCircle2 size={13} color="#FFF" />
+                    <Text style={styles.btnPromoteChapterVerifiedText}>
+                      ✓ Mark Chapter Verified
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
 
@@ -2177,6 +2525,29 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   ]}
                 >
                   ✅ Valid Only ({scopeMetrics.valid.toLocaleString()})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.auditFilterPill,
+                  auditHealthFilter === 'verified' && styles.auditFilterPillActiveVerified,
+                ]}
+                onPress={() => setAuditHealthFilter('verified')}
+                activeOpacity={0.8}
+              >
+                <Check
+                  size={12}
+                  color={auditHealthFilter === 'verified' ? '#FFF' : '#047857'}
+                />
+                <Text
+                  style={[
+                    styles.auditFilterPillText,
+                    auditHealthFilter === 'verified' && styles.auditFilterPillTextActive,
+                    auditHealthFilter !== 'verified' && { color: '#047857' },
+                  ]}
+                >
+                  ✓ Verified Only ({scopeMetrics.verified.toLocaleString()})
                 </Text>
               </TouchableOpacity>
 
@@ -2268,6 +2639,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               { id: 'assertion_reason', label: `Assertion / Reason (${typeCounts.assertion_reason})` },
               { id: 'match_the_pair', label: `Match Pair (${typeCounts.match_the_pair})` },
               { id: 'statement_type', label: `Statement (${typeCounts.statement_type})` },
+              ...(verifiedCount > 0
+                ? [
+                    {
+                      id: 'chapter_verified',
+                      label: `✓ Verified (${verifiedCount})`,
+                      isVerifiedPill: true,
+                    },
+                  ]
+                : []),
               ...(mismatchQuestions.length > 0
                 ? [
                     {
@@ -2292,6 +2672,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 style={[
                   styles.filterChip,
                   selectedTypeFilter === f.id && styles.filterChipActive,
+                  (f as any).isVerifiedPill && styles.filterChipVerified,
+                  (f as any).isVerifiedPill && selectedTypeFilter === f.id && styles.filterChipVerifiedActive,
                   (f as any).isMismatchPill && styles.filterChipMismatch,
                   (f as any).isMismatchPill && selectedTypeFilter === f.id && styles.filterChipMismatchActive,
                   (f as any).isBrokenPill && styles.filterChipBroken,
@@ -2303,6 +2685,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   style={[
                     styles.filterChipText,
                     selectedTypeFilter === f.id && styles.filterChipTextActive,
+                    (f as any).isVerifiedPill && styles.filterChipVerifiedText,
+                    (f as any).isVerifiedPill && selectedTypeFilter === f.id && styles.filterChipVerifiedTextActive,
                     (f as any).isMismatchPill && styles.filterChipMismatchText,
                     (f as any).isMismatchPill && selectedTypeFilter === f.id && styles.filterChipMismatchTextActive,
                     (f as any).isBrokenPill && styles.filterChipBrokenText,
@@ -2445,12 +2829,76 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           </View>
         )}
 
+        {/* Multi-Select Floating / Sticky Action Bar */}
+        {selectedQuestionIds.size > 0 && (
+          <View style={styles.multiSelectBar}>
+            <View style={styles.multiSelectInfo}>
+              <CheckCircle2 size={16} color="#047857" />
+              <Text style={styles.multiSelectText}>
+                {selectedQuestionIds.size} Question{selectedQuestionIds.size > 1 ? 's' : ''} Selected
+              </Text>
+            </View>
+
+            <View style={styles.multiSelectActions}>
+              <TouchableOpacity
+                style={[styles.btnMultiSelectAction, isBatchUpdatingVerification && { opacity: 0.7 }]}
+                onPress={() => handleBatchSetVerified(true)}
+                disabled={isBatchUpdatingVerification}
+                activeOpacity={0.8}
+              >
+                {isBatchUpdatingVerification ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Check size={12} color="#FFF" strokeWidth={2.5} />
+                    <Text style={styles.btnMultiSelectActionText}>Mark Selected Verified</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnMultiSelectUnverify, isBatchUpdatingVerification && { opacity: 0.7 }]}
+                onPress={() => handleBatchSetVerified(false)}
+                disabled={isBatchUpdatingVerification}
+                activeOpacity={0.8}
+              >
+                <X size={12} color="#475569" strokeWidth={2} />
+                <Text style={styles.btnMultiSelectUnverifyText}>Unmark Verified</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnMultiSelectClear}
+                onPress={handleDeselectAll}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.btnMultiSelectClearText}>Deselect All</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Counter Header with Jump-to-Question and Edited Counter */}
         <View style={styles.tableHeader}>
           <View style={{ flex: 1, minWidth: 200 }}>
-            <Text style={styles.tableTitle}>
-              Cloud Question Bank ({filteredQuestions.length} matching)
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text style={styles.tableTitle}>
+                Cloud Question Bank ({filteredQuestions.length} matching)
+              </Text>
+              {filteredQuestions.length > 0 && (
+                <TouchableOpacity
+                  style={styles.btnSelectAllVisible}
+                  onPress={handleSelectAllFiltered}
+                  activeOpacity={0.8}
+                >
+                  <CheckSquare size={13} color="#047857" />
+                  <Text style={styles.btnSelectAllVisibleText}>
+                    {selectedQuestionIds.size > 0 && selectedQuestionIds.size >= displayedQuestions.length
+                      ? 'Deselect Visible'
+                      : `Select Visible (${Math.min(visibleCount, filteredQuestions.length)})`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
               <Text style={styles.tableSubtitle}>
                 Showing {Math.min(visibleCount, filteredQuestions.length)} of {filteredQuestions.length}
@@ -2538,6 +2986,21 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   {/* Top Badges & Action Buttons */}
                   <View style={styles.cardHeaderRow}>
                     <View style={styles.badgeWrapper}>
+                      {/* Multi-Select Checkbox */}
+                      <TouchableOpacity
+                        style={[
+                          styles.cardSelectCheckbox,
+                          selectedQuestionIds.has(String(q.id)) && styles.cardSelectCheckboxActive,
+                        ]}
+                        onPress={() => toggleSelectQuestion(q.id)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        activeOpacity={0.8}
+                      >
+                        {selectedQuestionIds.has(String(q.id)) && (
+                          <Check size={10} color="#FFF" strokeWidth={3} />
+                        )}
+                      </TouchableOpacity>
+
                       {/* Question Serial Number Badge (#1, #2, #3...) */}
                       <View style={styles.qIndexBadge}>
                         <Text style={styles.qIndexBadgeText}>#{globalIndex}</Text>
@@ -2549,6 +3012,28 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           {QUESTION_TYPE_LABELS[q.questionType] || 'Standard MCQ'}
                         </Text>
                       </View>
+
+                      {/* Chapter-Verified Badge (Quick 1-click toggle) */}
+                      {isQuestionChapterVerified(q) ? (
+                        <TouchableOpacity
+                          style={styles.badgeVerified}
+                          onPress={() => handleQuickToggleVerify(q)}
+                          activeOpacity={0.8}
+                          title="Click to toggle verification status"
+                        >
+                          <Check size={10} color="#047857" strokeWidth={2.5} />
+                          <Text style={styles.badgeVerifiedText}>✓ Verified</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.badgeUnverifiedBtn}
+                          onPress={() => handleQuickToggleVerify(q)}
+                          activeOpacity={0.8}
+                          title="Click to mark as Chapter-Verified"
+                        >
+                          <Text style={styles.badgeUnverifiedBtnText}>+ Verify</Text>
+                        </TouchableOpacity>
+                      )}
 
                       {/* Chapter Health & Accuracy Status Badge */}
                       {audit.isValid ? (
@@ -4852,5 +5337,284 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  metricBadgeVerified: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#6EE7B7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  metricBadgeVerifiedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  btnPromoteChapterVerified: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#059669',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  btnPromoteChapterVerifiedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  auditFilterPillActiveVerified: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  filterChipVerified: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  filterChipVerifiedActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  filterChipVerifiedText: {
+    color: '#047857',
+  },
+  filterChipVerifiedTextActive: {
+    color: '#FFF',
+  },
+  multiSelectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  multiSelectInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  multiSelectText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  multiSelectActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  btnMultiSelectAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#059669',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  btnMultiSelectActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  btnMultiSelectUnverify: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  btnMultiSelectUnverifyText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  btnMultiSelectClear: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  btnMultiSelectClearText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  btnSelectAllVisible: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  btnSelectAllVisibleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  cardSelectCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF',
+    marginRight: 2,
+  },
+  cardSelectCheckboxActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  badgeVerified: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeVerifiedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  badgeUnverifiedBtn: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeUnverifiedBtnText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  uploadTargetCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+  },
+  uploadTargetTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  uploadTargetSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 12,
+  },
+  uploadSelectorsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  uploadSelectCol: {
+    flex: 1,
+    minWidth: 140,
+  },
+  uploadSelectLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  uploadVerifyToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  uploadVerifyToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  uploadVerifyToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  targetPreviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  targetPreviewBadgeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  targetPreviewBadgeTag: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  targetPreviewBadgeVerified: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  uploadStep2Title: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 10,
+  },
+  sampleVerifiedBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
   },
 });

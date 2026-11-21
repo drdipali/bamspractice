@@ -7,7 +7,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Play, ShoppingBag, ListTree } from 'lucide-react-native';
+import { Play, ShoppingBag, ListTree, BookOpen, Layers, CheckCircle2 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Header } from '../common/Header';
 import { ChapterTree } from './ChapterTree';
@@ -16,9 +16,10 @@ import { BookmarksPanel } from './BookmarksPanel';
 import { useApp } from '../../context/AppContext';
 import { Chapter } from '../../types';
 import { allocateQuestions } from '../../utils/allocator';
+import { isQuestionChapterVerified, isValidQuestion } from '../../utils/chapterMapper';
 
 export const BuilderScreen: React.FC = () => {
-  const { chapters, selectedChapters, config, startQuiz } = useApp();
+  const { chapters, selectedChapters, config, startQuiz, practiceMode, setPracticeMode } = useApp();
   const { width } = useWindowDimensions();
   const isTablet = width >= 820;
 
@@ -27,8 +28,16 @@ export const BuilderScreen: React.FC = () => {
   const activeChapters = useMemo(() => {
     return selectedChapters
       .map((id) => chapters.find((c) => c.id === id || c.name === id))
-      .filter((c): c is Chapter => c !== undefined);
-  }, [selectedChapters, chapters]);
+      .filter((c): c is Chapter => c !== undefined)
+      .map((c) => ({
+        ...c,
+        qs: c.qs.filter((q) =>
+          practiceMode === 'chapter_verified'
+            ? isQuestionChapterVerified(q) && isValidQuestion(q)
+            : isValidQuestion(q)
+        ),
+      }));
+  }, [selectedChapters, chapters, practiceMode]);
 
   const alloc = useMemo(() => {
     return allocateQuestions(activeChapters, config);
@@ -37,9 +46,68 @@ export const BuilderScreen: React.FC = () => {
   return (
     <View style={styles.container}>
       <Header
-        title="Build a practice test"
-        subtitle="Tick chapters from any Samhita or subject."
+        title={practiceMode === 'chapter_verified' ? 'Chapter-Wise Practice' : 'Mixed Practice & Mock Tests'}
+        subtitle={
+          practiceMode === 'chapter_verified'
+            ? 'Practicing strictly verified, chapter-accurate questions.'
+            : 'Access the full 15,000+ question bank across all subjects.'
+        }
       />
+
+      {/* Practice Mode Switcher: Chapter-Wise Verified vs Mixed / Mock Practice */}
+      <View style={styles.practiceModeContainer}>
+        <View style={styles.practiceModeSegment}>
+          <TouchableOpacity
+            style={[
+              styles.modeSegmentBtn,
+              practiceMode === 'chapter_verified' && styles.modeSegmentBtnActiveVerified,
+            ]}
+            onPress={() => setPracticeMode('chapter_verified')}
+            activeOpacity={0.8}
+          >
+            <View style={styles.modeIconTitleRow}>
+              <BookOpen
+                size={16}
+                color={practiceMode === 'chapter_verified' ? '#047857' : THEME.colors.muted}
+              />
+              <Text
+                style={[
+                  styles.modeSegmentTitle,
+                  practiceMode === 'chapter_verified' && styles.modeSegmentTitleActiveVerified,
+                ]}
+              >
+                Chapter-Wise Practice
+              </Text>
+            </View>
+            <Text style={styles.modeSegmentSub}>✓ Verified accurate questions only</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.modeSegmentBtn,
+              practiceMode === 'mixed_mock' && styles.modeSegmentBtnActiveMock,
+            ]}
+            onPress={() => setPracticeMode('mixed_mock')}
+            activeOpacity={0.8}
+          >
+            <View style={styles.modeIconTitleRow}>
+              <Layers
+                size={16}
+                color={practiceMode === 'mixed_mock' ? '#1D4ED8' : THEME.colors.muted}
+              />
+              <Text
+                style={[
+                  styles.modeSegmentTitle,
+                  practiceMode === 'mixed_mock' && styles.modeSegmentTitleActiveMock,
+                ]}
+              >
+                Mixed &amp; Mock Tests
+              </Text>
+            </View>
+            <Text style={styles.modeSegmentSub}>15,000+ Question Bank</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Mobile Tab Switcher */}
       {!isTablet && (
@@ -156,6 +224,74 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.colors.bg,
+  },
+  practiceModeContainer: {
+    backgroundColor: THEME.colors.surface,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.colors.line,
+  },
+  practiceModeSegment: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    gap: 4,
+    maxWidth: 720,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  modeSegmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  modeSegmentBtnActiveVerified: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  modeSegmentBtnActiveMock: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#2563EB',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  modeIconTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  modeSegmentTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.muted,
+  },
+  modeSegmentTitleActiveVerified: {
+    color: '#047857',
+  },
+  modeSegmentTitleActiveMock: {
+    color: '#1D4ED8',
+  },
+  modeSegmentSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    textAlign: 'center',
   },
   tabBar: {
     flexDirection: 'row',

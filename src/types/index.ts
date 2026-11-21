@@ -1,6 +1,7 @@
 export type Difficulty = 0 | 1 | 2; // 0: Easy, 1: Medium, 2: Hard
 export type Language = 'en' | 'hi' | 'both';
 export type QuizMode = 'learning' | 'test';
+export type StudentPracticeMode = 'chapter_verified' | 'mixed_mock';
 export type DistributionType = 'pooled' | 'equal' | 'proportional' | 'manual';
 export type ActiveView = 'auth' | 'build' | 'quiz' | 'result' | 'admin';
 export * from './auth';
@@ -34,6 +35,8 @@ export interface Question {
   statement2?: string;         // For statement_type
   matchPairs?: MatchPair[];    // For match_the_pair
   createdAt?: string;
+  is_chapter_verified?: boolean; // Verified for strict chapter-wise practice
+  isChapterVerified?: boolean;   // CamelCase alias
   hi?: {
     stem: string;
     o: string[];

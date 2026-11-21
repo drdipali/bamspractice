@@ -10,9 +10,11 @@ import {
   QuizResults,
   QuizSession,
   SavedPracticeSet,
+  StudentPracticeMode,
   UserRecord,
 } from '../types';
 import { shuffle } from '../utils/allocator';
+import { isQuestionChapterVerified, isValidQuestion } from '../utils/chapterMapper';
 import {
   loadDraft,
   loadLanguage,
@@ -33,6 +35,8 @@ export interface AppContextType {
   navigateToAdmin: () => void;
   language: Language;
   setLanguage: (lang: Language) => void;
+  practiceMode: StudentPracticeMode;
+  setPracticeMode: (mode: StudentPracticeMode) => void;
   view: ActiveView;
   setView: (view: ActiveView) => void;
   // Dynamic chapters & questions from cloud database
@@ -87,6 +91,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [language, setLangState] = useState<Language>('en');
+  const [practiceMode, setPracticeMode] = useState<StudentPracticeMode>('chapter_verified');
   const [view, setView] = useState<ActiveView>('auth');
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [allQuestions, setAllQuestions] = useState<Record<string | number, Question>>({});
@@ -266,16 +271,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Dynamic Quiz Generation from Cloud Database
   const startQuiz = async (customIds?: (string | number)[], forcedMode?: QuizMode) => {
     let targetQuestions: Question[] = [];
+    const verifiedOnly = practiceMode === 'chapter_verified';
 
     if (customIds && customIds.length > 0) {
       targetQuestions = customIds
         .map((id) => allQuestions[id])
-        .filter((q): q is Question => q !== undefined);
+        .filter(
+          (q): q is Question =>
+            q !== undefined &&
+            isValidQuestion(q) &&
+            (!verifiedOnly || isQuestionChapterVerified(q))
+        );
     } else {
       if (selectedChapters.length === 0) return;
 
       // Query database dynamically for questions matching selected chapters
-      const matchingQuestions = await backend.getQuestionsByChapters(selectedChapters);
+      // In chapter_verified mode, strictly fetch verified + valid questions only
+      const matchingQuestions = await backend.getQuestionsByChapters(selectedChapters, verifiedOnly);
 
       // Filter by selected difficulties
       let filtered = matchingQuestions.filter((q) => config.diffs.includes(q.d));
@@ -290,7 +302,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (targetQuestions.length === 0) {
-      setStatusMessage('No questions available for the selected chapters.');
+      setStatusMessage(
+        verifiedOnly
+          ? 'No verified questions available for the selected chapter(s) yet. (Labeled "Coming Soon")'
+          : 'No valid questions available for the selected chapters.'
+      );
       return;
     }
 
@@ -565,6 +581,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         navigateToAdmin,
         language,
         setLanguage,
+        practiceMode,
+        setPracticeMode,
         view,
         setView,
         chapters,

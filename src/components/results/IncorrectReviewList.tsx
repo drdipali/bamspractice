@@ -4,6 +4,7 @@ import { AlertCircle, Bookmark, Check, CheckCircle2, Flag, HelpCircle, XCircle }
 import { THEME, OPTION_LABELS } from '../../constants/theme';
 import { Language, Question, QuizSession } from '../../types';
 import { useApp } from '../../context/AppContext';
+import { isPlaceholderCitation } from '../../utils/chapterMapper';
 
 interface IncorrectReviewListProps {
   wrongQuestions: Question[];
@@ -211,10 +212,10 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
                 )}
 
                 {/* Samhita Reference */}
-                {q.r && (
+                {q.r && !isPlaceholderCitation(q.r, q.chapterName) && (
                   <View style={styles.refBox}>
                     <Text style={styles.refText}>
-                      Reference: Charaka Samhita, Sutrasthana {q.r}
+                      Reference: {q.r}
                     </Text>
                   </View>
                 )}

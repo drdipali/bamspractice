@@ -13,6 +13,7 @@ import { getChapterPath } from '../../constants/syllabusData';
 import { Chapter, Difficulty, DistributionType, QuizMode, SavedPracticeSet } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { allocateQuestions } from '../../utils/allocator';
+import { isQuestionChapterVerified, isValidQuestion } from '../../utils/chapterMapper';
 import { SegmentedControl } from '../common/SegmentedControl';
 import { SaveSetModal } from './SaveSetModal';
 
@@ -32,6 +33,7 @@ export const BasketSummary: React.FC = () => {
     deleteSet,
     startQuiz,
     statusMessage,
+    practiceMode,
   } = useApp();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -39,8 +41,16 @@ export const BasketSummary: React.FC = () => {
   const activeChapters = useMemo(() => {
     return selectedChapters
       .map((id) => chapters.find((c) => c.id === id || c.name === id))
-      .filter((c): c is Chapter => c !== undefined);
-  }, [selectedChapters, chapters]);
+      .filter((c): c is Chapter => c !== undefined)
+      .map((c) => ({
+        ...c,
+        qs: c.qs.filter((q) =>
+          practiceMode === 'chapter_verified'
+            ? isQuestionChapterVerified(q) && isValidQuestion(q)
+            : isValidQuestion(q)
+        ),
+      }));
+  }, [selectedChapters, chapters, practiceMode]);
 
   // Unique sources
   const sourceCount = useMemo(() => {

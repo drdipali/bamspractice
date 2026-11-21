@@ -4,6 +4,7 @@ import { Chapter, Question } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
 import { ALL_CHAPTERS } from '../constants/syllabusData';
 import { normalizeQuestionStem } from '../utils/spreadsheetHelper';
+import { isQuestionChapterVerified, isValidQuestion } from '../utils/chapterMapper';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -330,11 +331,27 @@ class BackendService {
       // Apply overrides and deletions
       const baseQuestions = INITIAL_SEED_QUESTIONS
         .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
-        .map((q) => (this.editedQuestions[String(q.id)] ? this.editedQuestions[String(q.id)] : q));
+        .map((q) => {
+          const edited = this.editedQuestions[String(q.id)];
+          const target = edited ? edited : q;
+          return {
+            ...target,
+            is_chapter_verified: target.is_chapter_verified ?? target.isChapterVerified ?? true,
+            isChapterVerified: target.is_chapter_verified ?? target.isChapterVerified ?? true,
+          };
+        });
 
       const activeCustom = customQuestions
         .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
-        .map((q) => (this.editedQuestions[String(q.id)] ? this.editedQuestions[String(q.id)] : q));
+        .map((q) => {
+          const edited = this.editedQuestions[String(q.id)];
+          const target = edited ? edited : q;
+          return {
+            ...target,
+            is_chapter_verified: Boolean(target.is_chapter_verified ?? target.isChapterVerified),
+            isChapterVerified: Boolean(target.is_chapter_verified ?? target.isChapterVerified),
+          };
+        });
 
       this.questions = [...activeCustom, ...baseQuestions];
     } catch (e) {
@@ -553,7 +570,10 @@ class BackendService {
     return [...this.questions];
   }
 
-  async getQuestionsByChapters(chapterIdsOrNames: (string | number)[]): Promise<Question[]> {
+  async getQuestionsByChapters(
+    chapterIdsOrNames: (string | number)[],
+    verifiedOnly = false
+  ): Promise<Question[]> {
     await this.initialize();
     const allChapters = await this.getChapters();
     const set = new Set(chapterIdsOrNames.map((c) => c.toString().trim().toLowerCase()));
@@ -561,12 +581,18 @@ class BackendService {
     const result: Question[] = [];
     const seen = new Set<string | number>();
 
+    const checkCandidate = (q: Question): boolean => {
+      if (!isValidQuestion(q)) return false;
+      if (verifiedOnly && !isQuestionChapterVerified(q)) return false;
+      return true;
+    };
+
     // 1. Cloud-authored questions matching selected chapters
     this.questions.forEach((q) => {
       const chName = (q.chapterName || q.ch?.toString() || '').trim().toLowerCase();
       const chId = q.ch?.toString().trim().toLowerCase();
       if (set.has(chName) || set.has(chId)) {
-        if (!seen.has(q.id)) {
+        if (!seen.has(q.id) && checkCandidate(q)) {
           seen.add(q.id);
           result.push(q);
         }
@@ -580,7 +606,7 @@ class BackendService {
       const chPathAlt = `${ch.sam} > ${ch.sth} > ${ch.name}`.toLowerCase();
       if (set.has(chId) || set.has(chPath) || set.has(chPathAlt)) {
         ch.qs.forEach((q) => {
-          if (!seen.has(q.id)) {
+          if (!seen.has(q.id) && checkCandidate(q)) {
             seen.add(q.id);
             result.push(q);
           }
@@ -614,11 +640,14 @@ class BackendService {
     await this.initialize();
 
     const id = `q_custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const isVerified = Boolean(questionData.is_chapter_verified ?? questionData.isChapterVerified);
     const newQuestion: Question = {
       id,
       ...questionData,
       ch: questionData.chapterName || questionData.ch,
       chapterName: questionData.chapterName || questionData.ch.toString(),
+      is_chapter_verified: isVerified,
+      isChapterVerified: isVerified,
       createdAt: new Date().toISOString(),
     };
 
@@ -643,11 +672,14 @@ class BackendService {
       }
 
       const id = `q_custom_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+      const isVerified = Boolean(qData.is_chapter_verified ?? qData.isChapterVerified);
       addedQuestions.push({
         id,
         ...qData,
         ch: qData.chapterName,
         chapterName: qData.chapterName,
+        is_chapter_verified: isVerified,
+        isChapterVerified: isVerified,
         createdAt: new Date().toISOString(),
       });
     });
@@ -704,12 +736,20 @@ class BackendService {
         } else {
           // Overwrite existing question with updated sheet data
           const strId = String(existing.id);
+          const isVerified =
+            qData.is_chapter_verified !== undefined
+              ? qData.is_chapter_verified
+              : qData.isChapterVerified !== undefined
+              ? qData.isChapterVerified
+              : existing.is_chapter_verified;
           const updated: Question = {
             ...existing,
             ...qData,
             id: existing.id,
             ch: qData.chapterName || existing.chapterName || existing.ch,
             chapterName: qData.chapterName || existing.chapterName,
+            is_chapter_verified: isVerified,
+            isChapterVerified: isVerified,
           };
 
           const qIdx = this.questions.findIndex((q) => String(q.id) === strId);
@@ -723,11 +763,14 @@ class BackendService {
       } else {
         // Brand new question to insert
         const newId = `q_custom_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+        const isVerified = Boolean(qData.is_chapter_verified ?? qData.isChapterVerified);
         const newQ: Question = {
           id: newId,
           ...qData,
           ch: qData.chapterName || 'Uncategorized / Needs Review > General > Chapter 1',
           chapterName: qData.chapterName || 'Uncategorized / Needs Review > General > Chapter 1',
+          is_chapter_verified: isVerified,
+          isChapterVerified: isVerified,
           createdAt: now,
         };
         toInsert.push(newQ);
@@ -801,11 +844,21 @@ class BackendService {
       throw new Error(`Question with id ${id} not found.`);
     }
 
+    const existing = this.questions[index];
+    const isVerified =
+      patch.is_chapter_verified !== undefined
+        ? patch.is_chapter_verified
+        : patch.isChapterVerified !== undefined
+        ? patch.isChapterVerified
+        : existing.is_chapter_verified;
+
     const updated: Question = {
-      ...this.questions[index],
+      ...existing,
       ...patch,
-      ch: patch.chapterName || this.questions[index].chapterName || this.questions[index].ch,
-      chapterName: patch.chapterName || this.questions[index].chapterName,
+      ch: patch.chapterName || existing.chapterName || existing.ch,
+      chapterName: patch.chapterName || existing.chapterName,
+      is_chapter_verified: isVerified,
+      isChapterVerified: isVerified,
     };
 
     this.questions[index] = updated;
@@ -828,11 +881,20 @@ class BackendService {
       const index = this.questions.findIndex((q) => String(q.id) === strId);
       if (index !== -1) {
         const existing = this.questions[index];
+        const isVerified =
+          item.patch.is_chapter_verified !== undefined
+            ? item.patch.is_chapter_verified
+            : item.patch.isChapterVerified !== undefined
+            ? item.patch.isChapterVerified
+            : existing.is_chapter_verified;
+
         const updated: Question = {
           ...existing,
           ...item.patch,
           ch: item.patch.chapterName || existing.chapterName || existing.ch,
           chapterName: item.patch.chapterName || existing.chapterName,
+          is_chapter_verified: isVerified,
+          isChapterVerified: isVerified,
         };
         this.questions[index] = updated;
         this.editedQuestions[strId] = updated;

@@ -860,6 +860,42 @@ export function isQuestionMalformed(q: Question): boolean {
   return !getQuestionAuditStatus(q).isValid;
 }
 
+/**
+ * Returns true if the question passes all validation checks (correct format, 4 options, valid key, no mismatch)
+ */
+export function isValidQuestion(q: Question): boolean {
+  return getQuestionAuditStatus(q).isValid;
+}
+
+/**
+ * Checks whether a question is explicitly marked as Chapter-Verified.
+ */
+export function isQuestionChapterVerified(q: Question): boolean {
+  return Boolean(q.is_chapter_verified ?? q.isChapterVerified);
+}
+
+/**
+ * Checks whether a citation string is just a placeholder (e.g. contains ">", matches chapter tag, or is bare ">").
+ * In student practice and mock tests, placeholder citations must be hidden.
+ */
+export function isPlaceholderCitation(ref?: string, chapterName?: string): boolean {
+  if (!ref || !ref.trim()) return true;
+  const clean = ref.trim();
+  if (clean === '>' || clean === '-' || clean === '--' || clean === '.' || clean === '---') return true;
+  if (clean.includes('>')) return true;
+  if (chapterName && clean.toLowerCase() === chapterName.trim().toLowerCase()) return true;
+  if (
+    clean.toLowerCase().startsWith('charaka samhita >') ||
+    clean.toLowerCase().startsWith('sushruta samhita >') ||
+    clean.toLowerCase().startsWith('ashtanga hridaya >') ||
+    clean.toLowerCase().startsWith('uncategorized')
+  ) {
+    return true;
+  }
+  if (/^chapter\s*\d+$/i.test(clean)) return true;
+  return false;
+}
+
 export interface ChapterSummaryItem {
   id: string; // e.g. "Charaka Samhita > Sutrasthana > Chapter 1"
   name: string; // "Chapter 1"
@@ -869,6 +905,7 @@ export interface ChapterSummaryItem {
   total: number;
   valid: number;
   malformed: number;
+  verified: number;
 }
 
 export interface SthanaSummaryItem {
@@ -878,6 +915,7 @@ export interface SthanaSummaryItem {
   total: number;
   valid: number;
   malformed: number;
+  verified: number;
   chapters: ChapterSummaryItem[];
 }
 
@@ -886,6 +924,7 @@ export interface SubjectSummaryItem {
   total: number;
   valid: number;
   malformed: number;
+  verified: number;
   sthanas: SthanaSummaryItem[];
 }
 
@@ -900,18 +939,21 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
       total: number;
       valid: number;
       malformed: number;
+      verified: number;
       sthanaMap: Record<
         string,
         {
           total: number;
           valid: number;
           malformed: number;
+          verified: number;
           chapterMap: Record<
             string,
             {
               total: number;
               valid: number;
               malformed: number;
+              verified: number;
               fullBreadcrumb: string;
             }
           >;
@@ -935,25 +977,33 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
     }
 
     if (!subjectMap[subject]) {
-      subjectMap[subject] = { total: 0, valid: 0, malformed: 0, sthanaMap: {} };
+      subjectMap[subject] = { total: 0, valid: 0, malformed: 0, verified: 0, sthanaMap: {} };
     }
     if (!subjectMap[subject].sthanaMap[sthana]) {
-      subjectMap[subject].sthanaMap[sthana] = { total: 0, valid: 0, malformed: 0, chapterMap: {} };
+      subjectMap[subject].sthanaMap[sthana] = { total: 0, valid: 0, malformed: 0, verified: 0, chapterMap: {} };
     }
     if (!subjectMap[subject].sthanaMap[sthana].chapterMap[chapter]) {
       subjectMap[subject].sthanaMap[sthana].chapterMap[chapter] = {
         total: 0,
         valid: 0,
         malformed: 0,
+        verified: 0,
         fullBreadcrumb: `${subject} > ${sthana} > ${chapter}`,
       };
     }
 
     const malformed = isQuestionMalformed(q);
+    const verified = isQuestionChapterVerified(q);
 
     subjectMap[subject].total += 1;
     subjectMap[subject].sthanaMap[sthana].total += 1;
     subjectMap[subject].sthanaMap[sthana].chapterMap[chapter].total += 1;
+
+    if (verified && !malformed) {
+      subjectMap[subject].verified += 1;
+      subjectMap[subject].sthanaMap[sthana].verified += 1;
+      subjectMap[subject].sthanaMap[sthana].chapterMap[chapter].verified += 1;
+    }
 
     if (malformed) {
       subjectMap[subject].malformed += 1;
@@ -994,6 +1044,7 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
                 total: chData.total,
                 valid: chData.valid,
                 malformed: chData.malformed,
+                verified: chData.verified,
               };
             });
 
@@ -1004,6 +1055,7 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
             total: sthData.total,
             valid: sthData.valid,
             malformed: sthData.malformed,
+            verified: sthData.verified,
             chapters,
           };
         });
@@ -1013,6 +1065,7 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
         total: subjData.total,
         valid: subjData.valid,
         malformed: subjData.malformed,
+        verified: subjData.verified,
         sthanas,
       };
     });
