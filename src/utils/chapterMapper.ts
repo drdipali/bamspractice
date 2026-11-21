@@ -112,13 +112,13 @@ export function detectChapterInfo(
   // Existing breadcrumb check
   else if (context?.existingChapter && context.existingChapter.includes('>')) {
     const parts = context.existingChapter.split('>').map((p) => p.trim());
-    subject = parts[0] || 'Charaka Samhita';
+    subject = parts[0] || 'Uncategorized / Needs Review';
     subjectSource = 'existing';
   } else if (context?.defaultSubject) {
     subject = context.defaultSubject;
     subjectSource = 'default';
   } else {
-    subject = 'Charaka Samhita';
+    subject = 'Uncategorized / Needs Review';
     subjectSource = 'default';
   }
 
@@ -127,7 +127,23 @@ export function detectChapterInfo(
   const searchPool = `${refLower} ${combinedContext}`;
 
   if (/uttaratantra|uttara|uttar|उत्तरتन्त्र|उत्तरतन्त्र|उत्तरस्थान|उत्तर|su\.?\s*ut|ah\.?\s*ut/i.test(searchPool)) {
-    sthana = subject === 'Sushruta Samhita' ? 'Uttaratantra' : 'Uttarasthana';
+    // Charaka Samhita strictly has 8 Sthanas and NO Uttaratantra / Uttarasthana!
+    if (subject === 'Charaka Samhita' || subject === 'Uncategorized / Needs Review' || !subject) {
+      if (/ashtang|aṣṭāṅga|अष्टाङ्ग|vagbhat|वाग्भट|a\.?\s*h\.?/i.test(searchPool)) {
+        subject = 'Ashtanga Hridaya';
+        sthana = 'Uttarasthana';
+      } else {
+        subject = 'Sushruta Samhita';
+        sthana = 'Uttaratantra';
+      }
+      subjectSource = 'citation';
+    } else if (subject === 'Sushruta Samhita') {
+      sthana = 'Uttaratantra';
+    } else if (subject === 'Ashtanga Hridaya') {
+      sthana = 'Uttarasthana';
+    } else {
+      sthana = 'Uttaratantra';
+    }
   } else if (/nidan|nidāna|निदानस्थान|निदान|ca\.?\s*ni|su\.?\s*ni|ah\.?\s*ni|च\.?\s*नि|सु\.?\s*नि/i.test(searchPool)) {
     sthana = 'Nidanasthana';
   } else if (/viman|vimāna|विमानस्थान|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(searchPool)) {
@@ -152,9 +168,13 @@ export function detectChapterInfo(
     // If context has existing sthana
     if (context?.existingChapter && context.existingChapter.includes('>')) {
       const parts = context.existingChapter.split('>').map((p) => p.trim());
-      sthana = parts[1] || 'Sutrasthana';
+      sthana = parts[1] || (subject === 'Uncategorized / Needs Review' ? 'General' : 'Sutrasthana');
     } else {
-      sthana = subject.includes('Nidana') ? 'Nidanasthana' : 'Sutrasthana';
+      sthana = subject.includes('Nidana')
+        ? 'Nidanasthana'
+        : subject === 'Uncategorized / Needs Review'
+        ? 'General'
+        : 'Sutrasthana';
     }
   }
 
@@ -241,7 +261,7 @@ export function detectChapterInfo(
 
 export interface SamhitaMismatchResult {
   hasMismatch: boolean;
-  type: 'samhita_conflict' | 'impossible_chapter' | 'none';
+  type: 'samhita_conflict' | 'impossible_chapter' | 'impossible_sthana' | 'none';
   citationSamhita?: string;
   claimedSamhita?: string;
   badgeLabel?: string;
@@ -249,7 +269,61 @@ export interface SamhitaMismatchResult {
   suggestedTag?: string;
 }
 
-// Classical maximum chapter limits per Samhita & Sthana
+export interface SthanaDefinition {
+  name: string;
+  maxChapters: number;
+  aliases?: string[];
+}
+
+export interface ClassicalSamhitaDefinition {
+  name: string;
+  totalChapters: number;
+  sthanas: SthanaDefinition[];
+}
+
+// Strict Classical Samhita-Sthana Schema
+export const CLASSICAL_SAMHITA_SCHEMA: Record<string, ClassicalSamhitaDefinition> = {
+  'Charaka Samhita': {
+    name: 'Charaka Samhita',
+    totalChapters: 120,
+    sthanas: [
+      { name: 'Sutrasthana', maxChapters: 30, aliases: ['sutra', 'sūtra', 'सूत्रस्थान', 'सूत्र', 'सू'] },
+      { name: 'Nidanasthana', maxChapters: 8, aliases: ['nidana', 'nidāna', 'निदानस्थान', 'निदान', 'नि'] },
+      { name: 'Vimanasthana', maxChapters: 8, aliases: ['vimana', 'vimāna', 'विमानस्थान', 'विमान', 'वि'] },
+      { name: 'Sharirasthana', maxChapters: 8, aliases: ['sharira', 'śārīra', 'शारीरस्थान', 'शारीर', 'शा'] },
+      { name: 'Indriyasthana', maxChapters: 12, aliases: ['indriya', 'इन्द्रियस्थान', 'इन्द्रिय', 'इन्'] },
+      { name: 'Chikitsasthana', maxChapters: 30, aliases: ['chikitsa', 'cikitsā', 'चिकित्सास्थान', 'चिकित्सा', 'चि'] },
+      { name: 'Kalpasthana', maxChapters: 12, aliases: ['kalpa', 'कल्पस्थान', 'कल्प', 'क'] },
+      { name: 'Siddhisthana', maxChapters: 12, aliases: ['siddhi', 'सिद्धिस्थान', 'सिद्धि', 'सि'] },
+    ],
+  },
+  'Sushruta Samhita': {
+    name: 'Sushruta Samhita',
+    totalChapters: 186,
+    sthanas: [
+      { name: 'Sutrasthana', maxChapters: 46, aliases: ['sutra', 'sūtra', 'सूत्रस्थान', 'सूत्र', 'सू'] },
+      { name: 'Nidanasthana', maxChapters: 16, aliases: ['nidana', 'nidāna', 'निदानस्थान', 'निदान', 'नि'] },
+      { name: 'Sharirasthana', maxChapters: 10, aliases: ['sharira', 'śārīra', 'शारीरस्थान', 'शारीर', 'शा'] },
+      { name: 'Chikitsasthana', maxChapters: 40, aliases: ['chikitsa', 'cikitsā', 'चिकित्सास्थान', 'चिकित्सा', 'चि'] },
+      { name: 'Kalpasthana', maxChapters: 8, aliases: ['kalpa', 'कल्पस्थान', 'कल्प', 'क'] },
+      { name: 'Uttaratantra', maxChapters: 66, aliases: ['uttaratantra', 'uttara', 'uttar', 'उत्तरतन्त्र', 'उत्तरस्थान', 'उत्तर', 'उ'] },
+    ],
+  },
+  'Ashtanga Hridaya': {
+    name: 'Ashtanga Hridaya',
+    totalChapters: 120,
+    sthanas: [
+      { name: 'Sutrasthana', maxChapters: 30, aliases: ['sutra', 'sūtra', 'सूत्रस्थान', 'सूत्र', 'सू'] },
+      { name: 'Sharirasthana', maxChapters: 6, aliases: ['sharira', 'śārīra', 'शारीरस्थान', 'शारीर', 'शा'] },
+      { name: 'Nidanasthana', maxChapters: 16, aliases: ['nidana', 'nidāna', 'निदानस्थान', 'निदान', 'नि'] },
+      { name: 'Chikitsasthana', maxChapters: 22, aliases: ['chikitsa', 'cikitsā', 'चिकित्सास्थान', 'चिकित्सा', 'चि'] },
+      { name: 'Kalpasiddhisthana', maxChapters: 6, aliases: ['kalpasiddhi', 'kalpasiddhisthana', 'kalpa', 'kalpasthana', 'कल्पसिद्धि', 'कल्प', 'क'] },
+      { name: 'Uttarasthana', maxChapters: 40, aliases: ['uttarasthana', 'uttara', 'uttar', 'उत्तरस्थान', 'उत्तरतन्त्र', 'उत्तर', 'उ'] },
+    ],
+  },
+};
+
+// Classical maximum chapter limits per Samhita & Sthana (backwards compatible map)
 export const SAMHITA_MAX_CHAPTERS: Record<string, Record<string, number>> = {
   'Charaka Samhita': {
     Sutrasthana: 30,
@@ -274,15 +348,35 @@ export const SAMHITA_MAX_CHAPTERS: Record<string, Record<string, number>> = {
     Sharirasthana: 6,
     Nidanasthana: 16,
     Chikitsasthana: 22,
+    Kalpasiddhisthana: 6,
     Kalpasthana: 6,
     Uttarasthana: 40,
   },
 };
 
 /**
+ * Returns the canonical Sthana definition if it validly belongs to the given Samhita,
+ * or null if the Sthana is impossible for that Samhita (e.g. Uttarasthana on Charaka).
+ */
+export function getCanonicalSthana(samhitaName: string, sthanaName: string): SthanaDefinition | null {
+  const samhitaDef = CLASSICAL_SAMHITA_SCHEMA[samhitaName];
+  if (!samhitaDef) return null;
+  const cleanSth = (sthanaName || '').trim().toLowerCase();
+  for (const sth of samhitaDef.sthanas) {
+    if (sth.name.toLowerCase() === cleanSth) return sth;
+    if (cleanSth.includes(sth.name.toLowerCase())) return sth;
+    if (sth.aliases?.some((alias) => cleanSth.includes(alias.toLowerCase()))) {
+      return sth;
+    }
+  }
+  return null;
+}
+
+/**
  * Detects whether a question has:
  * 1. A Samhita conflict (e.g. citation mentions Sushruta/su.su while Question Text or Chapter Tag mentions Charaka)
- * 2. An impossible chapter number for that Samhita/Sthana (e.g. Charaka Sutra > 30, Charaka Nidana > 8, Sushruta Sutra > 46).
+ * 2. An impossible Sthana for that Samhita (e.g. Charaka Samhita > Uttarasthana / Uttaratantra)
+ * 3. An impossible chapter number for that Samhita/Sthana (e.g. Charaka Sutra > 30, Charaka Nidana > 8, Sushruta Sutra > 46).
  */
 export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
   const stem = String(q.stem || '');
@@ -365,34 +459,68 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
     };
   }
 
-  // Check Condition 2: Impossible Chapter Number for Samhita / Sthana
+  // Check Condition 2 & 3: Impossible Sthana or Impossible Chapter Number
   if (tag.includes('>')) {
     const tagParts = tag.split('>').map((s) => s.trim());
     const samhitaName = tagParts[0];
     const sthanaName = tagParts[1];
     const chStr = tagParts[2] || '';
     const chMatch = chStr.match(/(\d+)/);
+    const chNum = chMatch ? parseInt(chMatch[1], 10) : 1;
 
-    if (samhitaName && sthanaName && chMatch) {
-      const chNum = parseInt(chMatch[1], 10);
-      const limits = SAMHITA_MAX_CHAPTERS[samhitaName];
-      if (limits) {
-        const limitKey = Object.keys(limits).find((k) =>
-          sthanaName.toLowerCase().includes(k.toLowerCase())
-        );
-        if (limitKey) {
-          const maxAllowed = limits[limitKey];
-          if (chNum > maxAllowed) {
-            return {
-              hasMismatch: true,
-              type: 'impossible_chapter',
-              citationSamhita: citationSamhita || undefined,
-              claimedSamhita: samhitaName,
-              badgeLabel: `⚠️ Impossible Chapter: ${samhitaName} ${limitKey} has max ${maxAllowed} chapters (Tagged as Ch ${chNum})`,
-              detailedMessage: `${samhitaName} ${limitKey} only contains ${maxAllowed} chapters. Tagging as Chapter ${chNum} is invalid.`,
-              suggestedTag: detectedTarget.fullChapterName,
-            };
+    if (samhitaName && sthanaName) {
+      const classicalSchema = CLASSICAL_SAMHITA_SCHEMA[samhitaName];
+
+      if (classicalSchema) {
+        const canonicalSthana = getCanonicalSthana(samhitaName, sthanaName);
+
+        // A. Impossible Sthana (e.g. Charaka Samhita with Uttarasthana / Uttaratantra)
+        if (!canonicalSthana) {
+          let targetSubject = 'Sushruta Samhita';
+          let targetSthana = 'Uttaratantra';
+          if (/ashtang|aṣṭāṅga|vagbhat|वाग्भट|a\.h\.|ah\./i.test(citationPool)) {
+            targetSubject = 'Ashtanga Hridaya';
+            targetSthana = 'Uttarasthana';
           }
+          if (chNum > 40) {
+            // Ashtanga Uttarasthana only has 40 chapters, so > 40 must be Sushruta
+            targetSubject = 'Sushruta Samhita';
+            targetSthana = 'Uttaratantra';
+          }
+          const suggestedTag = `${targetSubject} > ${targetSthana} > Chapter ${chNum}`;
+
+          return {
+            hasMismatch: true,
+            type: 'impossible_sthana',
+            citationSamhita: citationSamhita || targetSubject,
+            claimedSamhita: samhitaName,
+            badgeLabel: `⚠️ Impossible Sthana: ${samhitaName} has no ${sthanaName}`,
+            detailedMessage: `${samhitaName} strictly contains 8 classical Sthanas and has no ${sthanaName}. Auto-reassign to ${suggestedTag}.`,
+            suggestedTag,
+          };
+        }
+
+        // B. Impossible Chapter Number (e.g. Charaka Sutra > 30, Charaka Nidana > 8)
+        if (chNum > canonicalSthana.maxChapters) {
+          let suggestedTag = detectedTarget.fullChapterName;
+          if (suggestedTag === tag) {
+            // If detectedTarget still matched the invalid tag, check if verse belongs to Sushruta
+            if (samhitaName === 'Charaka Samhita' && canonicalSthana.name === 'Sutrasthana' && chNum <= 46) {
+              suggestedTag = `Sushruta Samhita > Sutrasthana > Chapter ${chNum}`;
+            } else {
+              suggestedTag = `${samhitaName} > ${canonicalSthana.name} > Chapter ${canonicalSthana.maxChapters}`;
+            }
+          }
+
+          return {
+            hasMismatch: true,
+            type: 'impossible_chapter',
+            citationSamhita: citationSamhita || undefined,
+            claimedSamhita: samhitaName,
+            badgeLabel: `⚠️ Impossible Chapter: ${samhitaName} ${canonicalSthana.name} has max ${canonicalSthana.maxChapters} chapters (Tagged as Ch ${chNum})`,
+            detailedMessage: `${samhitaName} ${canonicalSthana.name} only contains ${canonicalSthana.maxChapters} chapters. Tagging as Chapter ${chNum} is invalid.`,
+            suggestedTag,
+          };
         }
       }
     }
@@ -625,15 +753,15 @@ export function buildChapterHierarchy(questions: Question[]): SubjectSummaryItem
   > = {};
 
   questions.forEach((q) => {
-    const rawTag = String(q.chapterName || q.ch || 'Charaka Samhita > Sutrasthana > Chapter 1').trim();
+    const rawTag = String(q.chapterName || q.ch || 'Uncategorized / Needs Review > General > Chapter 1').trim();
     const parts = rawTag.split('>').map((s) => s.trim());
 
-    let subject = parts[0] || 'Charaka Samhita';
-    let sthana = parts[1] || 'Sutrasthana';
+    let subject = parts[0] || 'Uncategorized / Needs Review';
+    let sthana = parts[1] || (subject.includes('Uncategorized') ? 'General' : 'Sutrasthana');
     let chapter = parts[2] || (parts[1] && parts[1].toLowerCase().includes('chapter') ? parts[1] : 'Chapter 1');
 
     if (!parts[1] && !parts[2]) {
-      subject = 'General Ayurveda';
+      subject = 'Uncategorized / Needs Review';
       sthana = 'General';
       chapter = rawTag || 'Chapter 1';
     }

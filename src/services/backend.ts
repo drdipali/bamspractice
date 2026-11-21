@@ -726,8 +726,8 @@ class BackendService {
         const newQ: Question = {
           id: newId,
           ...qData,
-          ch: qData.chapterName || 'Charaka Samhita > Sutrasthana > Chapter 1',
-          chapterName: qData.chapterName || 'Charaka Samhita > Sutrasthana > Chapter 1',
+          ch: qData.chapterName || 'Uncategorized / Needs Review > General > Chapter 1',
+          chapterName: qData.chapterName || 'Uncategorized / Needs Review > General > Chapter 1',
           createdAt: now,
         };
         toInsert.push(newQ);

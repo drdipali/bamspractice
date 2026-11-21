@@ -35,6 +35,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronRight,
+  Wrench,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -47,12 +48,15 @@ import {
 import {
   buildChapterHierarchy,
   checkQuestionRemap,
+  detectChapterInfo,
   detectSamhitaMismatch,
   getQuestionAuditStatus,
   isQuestionMalformed,
   SubjectSummaryItem,
   ChapterSummaryItem,
   SthanaSummaryItem,
+  CLASSICAL_SAMHITA_SCHEMA,
+  getCanonicalSthana,
 } from '../../utils/chapterMapper';
 import { useApp } from '../../context/AppContext';
 import { GeminiService, AIProvider } from '../../services/gemini';
@@ -140,6 +144,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
   const [isDeletingBroken, setIsDeletingBroken] = useState<boolean>(false);
+  const [isRepairingBroken, setIsRepairingBroken] = useState<boolean>(false);
 
   // AI Interactive Assistant state
   const [isAiRephrasing, setIsAiRephrasing] = useState<boolean>(false);
@@ -194,7 +199,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   // Form State (for Add or Edit)
   const [qType, setQType] = useState<QuestionType>('standard');
-  const [chapterName, setChapterName] = useState<string>('Charaka Samhita > Sutrasthana > Chapter 1');
+  const [chapterName, setChapterName] = useState<string>('Uncategorized / Needs Review > General > Chapter 1');
   const [refSource, setRefSource] = useState<string>('');
   const [difficulty, setDifficulty] = useState<Difficulty>(1);
   const [stem, setStem] = useState<string>('');
@@ -247,7 +252,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Reset Form
   const resetFormFields = () => {
     setQType('standard');
-    setChapterName('Charaka Samhita > Sutrasthana > Chapter 1');
+    const defaultTag =
+      [selectedSubjectFilter, selectedSthanaFilter, selectedChapterFilter].filter(Boolean).length === 3
+        ? `${selectedSubjectFilter} > ${selectedSthanaFilter} > ${selectedChapterFilter}`
+        : 'Uncategorized / Needs Review > General > Chapter 1';
+    setChapterName(defaultTag);
     setRefSource('');
     setDifficulty(1);
     setStem('');
@@ -719,6 +728,54 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
   };
 
+  // Auto-Repair all flagged shifted/broken rows in one click
+  const handleAutoRepairBrokenRows = async () => {
+    if (brokenQuestions.length === 0) return;
+    const count = brokenQuestions.length;
+    const confirmed = confirm(
+      `Auto-repair ${count} shifted question(s) directly in Cloud DB?\n\n` +
+        `This will:\n` +
+        `1. Move the question text from Option A into the Question Stem.\n` +
+        `2. Shift Options B, C, D into Options A, B, C.\n` +
+        `3. Automatically detect the correct Samhita, Sthana & Chapter from the citation (e.g. Charaka Sutra 26/32 -> Ch 26).\n\n` +
+        `Proceed with repair?`
+    );
+    if (!confirmed) return;
+
+    setIsRepairingBroken(true);
+    try {
+      const updates = brokenQuestions.map((q) => {
+        const realStem = String(q.o?.[0] || (q as any).options?.[0] || '').trim();
+        const realOptA = String(q.o?.[1] || (q as any).options?.[1] || '').trim();
+        const realOptB = String(q.o?.[2] || (q as any).options?.[2] || '').trim();
+        const realOptC = String(q.o?.[3] || (q as any).options?.[3] || '').trim();
+        const realOptD = 'None of the above / उपर्युक्त में से कोई नहीं';
+
+        const detected = detectChapterInfo(q.r, q.explanation, undefined, realStem);
+
+        return {
+          id: q.id,
+          patch: {
+            stem: realStem,
+            o: [realOptA, realOptB, realOptC, realOptD],
+            ch: detected.fullChapterName,
+            chapterName: detected.fullChapterName,
+          },
+        };
+      });
+
+      await backend.updateQuestionsBatch(updates);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      setSelectedTypeFilter('all');
+      showToast(`🛠️ Successfully repaired ${count} shifted question(s)!`);
+    } catch (err: any) {
+      alert(`Failed to repair broken rows: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsRepairingBroken(false);
+    }
+  };
+
   // Cascading 3-Step Chapter Filter Helper: Reset all 3 tiers
   const handleResetCascadingFilter = () => {
     setSelectedSubjectFilter(null);
@@ -835,6 +892,62 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     return activeSubjectObj ? activeSubjectObj.sthanas : [];
   }, [activeSubjectObj]);
 
+  const canonicalSchemaForSubject = useMemo(() => {
+    if (!selectedSubjectFilter) return null;
+    return CLASSICAL_SAMHITA_SCHEMA[selectedSubjectFilter] || null;
+  }, [selectedSubjectFilter]);
+
+  const { canonicalSthanasDisplay, impossibleSthanasDisplay } = useMemo(() => {
+    if (!selectedSubjectFilter || !canonicalSchemaForSubject) {
+      return {
+        canonicalSthanasDisplay: availableSthanas.map((s) => ({
+          name: s.name,
+          total: s.total,
+          valid: s.valid,
+          malformed: s.malformed,
+          maxChapters: undefined as number | undefined,
+        })),
+        impossibleSthanasDisplay: [],
+      };
+    }
+
+    // Canonical Sthanas from the official schema
+    const canonicalList = canonicalSchemaForSubject.sthanas.map((schemaSth) => {
+      // Find matching sthana in DB if any
+      const found = availableSthanas.find((s) => {
+        const clean = s.name.trim().toLowerCase();
+        return (
+          clean === schemaSth.name.toLowerCase() ||
+          clean.includes(schemaSth.name.toLowerCase()) ||
+          schemaSth.aliases?.some((a) => clean.includes(a.toLowerCase()))
+        );
+      });
+      return {
+        name: schemaSth.name,
+        total: found ? found.total : 0,
+        valid: found ? found.valid : 0,
+        malformed: found ? found.malformed : 0,
+        maxChapters: schemaSth.maxChapters,
+      };
+    });
+
+    // Any sthana currently in DB that is NOT canonical for this Samhita (e.g. Uttarasthana in Charaka)
+    const impossibleList = availableSthanas.filter((s) => {
+      return !getCanonicalSthana(selectedSubjectFilter, s.name);
+    });
+
+    return {
+      canonicalSthanasDisplay: canonicalList,
+      impossibleSthanasDisplay: impossibleList,
+    };
+  }, [selectedSubjectFilter, canonicalSchemaForSubject, availableSthanas]);
+
+  const activeSthanaMaxChapters = useMemo(() => {
+    if (!selectedSubjectFilter || !selectedSthanaFilter) return null;
+    const canonical = getCanonicalSthana(selectedSubjectFilter, selectedSthanaFilter);
+    return canonical ? canonical.maxChapters : null;
+  }, [selectedSubjectFilter, selectedSthanaFilter]);
+
   const activeSthanaObj = useMemo(() => {
     if (!activeSubjectObj || !selectedSthanaFilter) return null;
     return (
@@ -869,13 +982,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const scopeMetrics = useMemo(() => {
     const inScope = questions.filter((q) => {
       if (!selectedSubjectFilter) return true;
-      const rawTag = String(q.chapterName || q.ch || 'Charaka Samhita > Sutrasthana > Chapter 1').trim();
+      const rawTag = String(q.chapterName || q.ch || 'Uncategorized / Needs Review > General > Chapter 1').trim();
       const parts = rawTag.split('>').map((s) => s.trim());
-      let qSubj = parts[0] || 'Charaka Samhita';
-      let qSthana = parts[1] || 'Sutrasthana';
+      let qSubj = parts[0] || 'Uncategorized / Needs Review';
+      let qSthana = parts[1] || (qSubj.includes('Uncategorized') ? 'General' : 'Sutrasthana');
       let qChapter = parts[2] || (parts[1] && parts[1].toLowerCase().includes('chapter') ? parts[1] : 'Chapter 1');
       if (!parts[1] && !parts[2]) {
-        qSubj = 'General Ayurveda';
+        qSubj = 'Uncategorized / Needs Review';
         qSthana = 'General';
         qChapter = rawTag || 'Chapter 1';
       }
@@ -1843,11 +1956,32 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     <option value="">
                       All Sthanas ({activeSubjectObj?.total.toLocaleString() || 0})
                     </option>
-                    {availableSthanas.map((sth) => (
-                      <option key={sth.name} value={sth.name}>
-                        {sth.name} ({sth.total.toLocaleString()})
-                      </option>
-                    ))}
+                    {canonicalSchemaForSubject ? (
+                      <>
+                        <optgroup label={`Classical Sthanas (${canonicalSchemaForSubject.sthanas.length})`}>
+                          {canonicalSthanasDisplay.map((sth) => (
+                            <option key={sth.name} value={sth.name}>
+                              {sth.name} ({sth.total.toLocaleString()} Qs • {sth.maxChapters} Chs)
+                            </option>
+                          ))}
+                        </optgroup>
+                        {impossibleSthanasDisplay.length > 0 && (
+                          <optgroup label="⚠️ Impossible / Invalid Sthanas (Needs Auto-Remap)">
+                            {impossibleSthanasDisplay.map((sth) => (
+                              <option key={sth.name} value={sth.name}>
+                                ⚠️ {sth.name} (Impossible for {selectedSubjectFilter} — {sth.total.toLocaleString()} Qs)
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </>
+                    ) : (
+                      availableSthanas.map((sth) => (
+                        <option key={sth.name} value={sth.name}>
+                          {sth.name} ({sth.total.toLocaleString()})
+                        </option>
+                      ))
+                    )}
                   </>
                 )}
               </select>
@@ -1907,10 +2041,20 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                       All Chapters in {selectedSthanaFilter} ({activeSthanaObj?.total.toLocaleString() || 0})
                     </option>
                     {availableChapters.map((ch) => {
-                      const warningSuffix = ch.malformed > 0 ? ` (⚠️ ${ch.malformed})` : '';
+                      const chNumMatch = ch.name.match(/(\d+)/);
+                      const chNum = chNumMatch ? parseInt(chNumMatch[1], 10) : 0;
+                      const isImpossibleCh = activeSthanaMaxChapters !== null && chNum > activeSthanaMaxChapters;
+
+                      let warningSuffix = '';
+                      if (isImpossibleCh) {
+                        warningSuffix = ` (⚠️ Exceeds max ${activeSthanaMaxChapters})`;
+                      } else if (ch.malformed > 0) {
+                        warningSuffix = ` (⚠️ ${ch.malformed})`;
+                      }
+
                       return (
                         <option key={ch.name} value={ch.name}>
-                          {ch.name} — {ch.total.toLocaleString()} Qs{warningSuffix}
+                          {isImpossibleCh ? '⚠️ ' : ''}{ch.name} — {ch.total.toLocaleString()} Qs{warningSuffix}
                         </option>
                       );
                     })}
@@ -2248,9 +2392,27 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               </TouchableOpacity>
 
               <TouchableOpacity
+                style={[styles.btnRepairBroken, isRepairingBroken && { opacity: 0.7 }]}
+                onPress={handleAutoRepairBrokenRows}
+                disabled={isRepairingBroken || isDeletingBroken}
+                activeOpacity={0.8}
+              >
+                {isRepairingBroken ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Wrench size={13} color="#FFF" />
+                    <Text style={styles.btnRepairBrokenText}>
+                      Auto-Repair Shifted ({brokenQuestions.length})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={[styles.btnDeleteBroken, isDeletingBroken && { opacity: 0.7 }]}
                 onPress={handleDeleteAllBrokenRows}
-                disabled={isDeletingBroken}
+                disabled={isDeletingBroken || isRepairingBroken}
                 activeOpacity={0.8}
               >
                 {isDeletingBroken ? (
@@ -3864,6 +4026,20 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   btnDeleteBrokenText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  btnRepairBroken: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    backgroundColor: '#D97706',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnRepairBrokenText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#FFF',
