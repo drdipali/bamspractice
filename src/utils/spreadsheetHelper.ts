@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { Difficulty, MatchPair, Question, QuestionType } from '../types';
+import { detectChapterInfo, ContextHints } from './chapterMapper';
 
 export interface SpreadsheetParseResult {
   validQuestions: Omit<Question, 'id'>[];
@@ -320,13 +321,16 @@ export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string
     blankrows: false,
   });
 
-  return parseSpreadsheetRows(rawRows);
+  return parseSpreadsheetRows(rawRows, contextHint);
 }
 
 /**
  * Parses an Excel (.xlsx/.xls) or CSV buffer and extracts questions from ALL worksheets/tabs.
  */
-export function parseWorkbookAllTabs(buffer: ArrayBuffer | Uint8Array | string): WorkbookTabResult[] {
+export function parseWorkbookAllTabs(
+  buffer: ArrayBuffer | Uint8Array | string,
+  contextHint?: ContextHints
+): WorkbookTabResult[] {
   let workbook: XLSX.WorkBook;
 
   try {
@@ -362,7 +366,11 @@ export function parseWorkbookAllTabs(buffer: ArrayBuffer | Uint8Array | string):
       blankrows: false,
     });
 
-    const parsed = parseSpreadsheetRows(rawRows);
+    const parsed = parseSpreadsheetRows(rawRows, {
+      fileName: contextHint?.fileName,
+      tabName: sheetName,
+      defaultSubject: contextHint?.defaultSubject,
+    });
     results.push({
       sheetName,
       totalRows: parsed.totalRows,
@@ -379,7 +387,10 @@ export function parseWorkbookAllTabs(buffer: ArrayBuffer | Uint8Array | string):
  * with automatic header detection (named headers vs positional layout),
  * smart serial-number column detection (+1 column shift handling), and UTF-8 preservation.
  */
-export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
+export function parseSpreadsheetRows(
+  rawRows: any[][],
+  contextHint?: ContextHints
+): SpreadsheetParseResult {
   if (!rawRows || rawRows.length < 1) {
     return {
       validQuestions: [],
@@ -605,40 +616,21 @@ export function parseSpreadsheetRows(rawRows: any[][]): SpreadsheetParseResult {
       continue;
     }
 
-    // 3. Resolve Full Chapter Mapping
+    // 3. Resolve Full Chapter Mapping using Smart Ayurveda Citation & Context Detector
     let fullChapterName = '';
     if (subject && sthana && chapter) {
       const cleanCh = chapter.toLowerCase().includes('chapter') ? chapter : `Chapter ${chapter}`;
       fullChapterName = `${subject} > ${sthana} > ${cleanCh}`;
-    } else if (chapter) {
-      if (chapter.includes('>')) {
-        fullChapterName = chapter;
-      } else if (sthana) {
-        fullChapterName = `${subject || 'Charaka Samhita'} > ${sthana} > ${chapter}`;
-      } else {
-        fullChapterName = chapter;
-      }
-    } else if (effectiveRef) {
-      // Try resolving chapter from reference text like "ca.su 1/1", "च.सू - 1/58", "ca.su 30 /33", "Charaka Sutra 25/40"
-      const lowerRef = effectiveRef.toLowerCase();
-      let refSthana = 'Sutrasthana';
-      if (/nidan|निदान|ca\.?\s*ni|च\.?\s*नि/i.test(lowerRef)) refSthana = 'Nidanasthana';
-      else if (/viman|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(lowerRef)) refSthana = 'Vimanasthana';
-      else if (/sharir|शारीर|ca\.?\s*sha|च\.?\s*शा/i.test(lowerRef)) refSthana = 'Sharirasthana';
-      else if (/indriya|इन्द्रिय|ca\.?\s*in|च\.?\s*इन्/i.test(lowerRef)) refSthana = 'Indriyasthana';
-      else if (/chikitsa|चिकित्सा|ca\.?\s*chi|च\.?\s*चि/i.test(lowerRef)) refSthana = 'Chikitsasthana';
-      else if (/kalpa|कल्प|ca\.?\s*kal|च\.?\s*कल्/i.test(lowerRef)) refSthana = 'Kalpasthana';
-      else if (/siddhi|सिद्धि|ca\.?\s*si|च\.?\s*सि/i.test(lowerRef)) refSthana = 'Siddhisthana';
-      else if (/sutra|सूत्र|ca\.?\s*su|च\.?\s*सू/i.test(lowerRef)) refSthana = 'Sutrasthana';
-
-      const chMatch =
-        effectiveRef.match(/(?:ca\.?\s*\w+|च\.?\s*\w+)?\s*[-–]?\s*(\d{1,2})\s*[\/:]\s*\d+/i) ||
-        effectiveRef.match(/(\d{1,2})\s*[\/:]\s*\d+/) ||
-        effectiveRef.match(/chapter\s*(\d{1,2})/i);
-      const chNum = chMatch ? chMatch[1] : '1';
-      fullChapterName = `Charaka Samhita > ${refSthana} > Chapter ${chNum}`;
+    } else if (chapter && chapter.includes('>')) {
+      fullChapterName = chapter;
     } else {
-      fullChapterName = 'Charaka Samhita > Sutrasthana > Chapter 1';
+      const detected = detectChapterInfo(effectiveRef, explanation, {
+        fileName: contextHint?.fileName,
+        tabName: contextHint?.tabName,
+        existingChapter: chapter || sthana,
+        defaultSubject: subject || contextHint?.defaultSubject,
+      });
+      fullChapterName = detected.fullChapterName;
     }
 
     // 4. Determine Question Type

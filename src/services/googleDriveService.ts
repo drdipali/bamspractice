@@ -502,7 +502,10 @@ export class GoogleDriveService {
 
             const valuesData = await valuesRes.json();
             const rawRows: any[][] = valuesData.values || [];
-            const parseResult = parseSpreadsheetRows(rawRows);
+            const parseResult = parseSpreadsheetRows(rawRows, {
+              fileName: file.name,
+              tabName: title,
+            });
 
             sheetTabs.push({
               tabName: title,
@@ -544,7 +547,7 @@ export class GoogleDriveService {
 
         if (exportRes.ok) {
           const buffer = await exportRes.arrayBuffer();
-          const tabResults = parseWorkbookAllTabs(buffer);
+          const tabResults = parseWorkbookAllTabs(buffer, { fileName: file.name });
           const sheetTabs: DriveTabScan[] = tabResults.map((t, idx) => ({
             tabName: t.sheetName,
             sheetId: idx,
@@ -625,7 +628,7 @@ export class GoogleDriveService {
         }
 
         const buffer = await downloadRes.arrayBuffer();
-        const tabResults = parseWorkbookAllTabs(buffer);
+        const tabResults = parseWorkbookAllTabs(buffer, { fileName: file.name });
 
         const sheetTabs: DriveTabScan[] = tabResults.map((t, idx) => ({
           tabName: t.sheetName,

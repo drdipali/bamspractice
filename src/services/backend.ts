@@ -817,6 +817,37 @@ class BackendService {
     return updated;
   }
 
+  async updateQuestionsBatch(
+    updates: { id: string | number; patch: Partial<Question> }[]
+  ): Promise<number> {
+    await this.initialize();
+    let updatedCount = 0;
+
+    for (const item of updates) {
+      const strId = String(item.id);
+      const index = this.questions.findIndex((q) => String(q.id) === strId);
+      if (index !== -1) {
+        const existing = this.questions[index];
+        const updated: Question = {
+          ...existing,
+          ...item.patch,
+          ch: item.patch.chapterName || existing.chapterName || existing.ch,
+          chapterName: item.patch.chapterName || existing.chapterName,
+        };
+        this.questions[index] = updated;
+        this.editedQuestions[strId] = updated;
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
+      await this.persistCustomQuestions();
+    }
+
+    return updatedCount;
+  }
+
   async getEditedQuestionIds(): Promise<string[]> {
     await this.initialize();
     return Object.keys(this.editedQuestions);

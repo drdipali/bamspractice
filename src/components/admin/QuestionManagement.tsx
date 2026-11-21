@@ -31,6 +31,10 @@ import {
   RotateCcw,
   Send,
   FolderSync,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -40,6 +44,14 @@ import {
   downloadSampleTemplate,
   SpreadsheetParseResult,
 } from '../../utils/spreadsheetHelper';
+import {
+  buildChapterHierarchy,
+  checkQuestionRemap,
+  isQuestionMalformed,
+  SubjectSummaryItem,
+  ChapterSummaryItem,
+  SthanaSummaryItem,
+} from '../../utils/chapterMapper';
 import { useApp } from '../../context/AppContext';
 import { GeminiService, AIProvider } from '../../services/gemini';
 import { AISettingsModal } from './AISettingsModal';
@@ -160,6 +172,20 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   // Progress Tracking: Set of Question IDs edited
   const [editedIds, setEditedIds] = useState<Set<string>>(new Set());
+
+  // Chapter-wise Coverage and Filtering state
+  const [selectedChapterFilter, setSelectedChapterFilter] = useState<string | null>(null);
+  const [isChapterPanelExpanded, setIsChapterPanelExpanded] = useState<boolean>(true);
+  const [chapterSearchQuery, setChapterSearchQuery] = useState<string>('');
+  const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({});
+  const [expandedSthanas, setExpandedSthanas] = useState<Record<string, boolean>>({});
+
+  // Smart Citation Auto-Mapper state
+  const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState<boolean>(false);
+  const [remapCandidates, setRemapCandidates] = useState<
+    { question: Question; remapInfo: ReturnType<typeof checkQuestionRemap> }[]
+  >([]);
+  const [isApplyingRemap, setIsApplyingRemap] = useState<boolean>(false);
 
   // Quick Jump Input
   const [jumpNumber, setJumpNumber] = useState<string>('');
@@ -691,17 +717,125 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
         return false;
       }
+      if (selectedChapterFilter) {
+        const qBreadcrumb = (q.chapterName || String(q.ch) || '').toLowerCase();
+        const filterLower = selectedChapterFilter.toLowerCase();
+        if (!qBreadcrumb.includes(filterLower)) {
+          return false;
+        }
+      }
       if (searchQuery.trim()) {
         const text = `${q.stem} ${q.chapterName || ''} ${q.r || ''} ${q.explanation || ''}`.toLowerCase();
         return text.includes(searchQuery.toLowerCase().trim());
       }
       return true;
     });
-  }, [questions, selectedTypeFilter, searchQuery]);
+  }, [questions, selectedTypeFilter, selectedChapterFilter, searchQuery]);
 
   const displayedQuestions = useMemo(() => {
     return filteredQuestions.slice(0, visibleCount);
   }, [filteredQuestions, visibleCount]);
+
+  // Build hierarchical chapter breakdown
+  const chapterHierarchy = useMemo(() => {
+    return buildChapterHierarchy(questions);
+  }, [questions]);
+
+  // Total unique chapters count across all subjects
+  const totalChaptersCount = useMemo(() => {
+    let count = 0;
+    chapterHierarchy.forEach((s) => {
+      s.sthanas.forEach((st) => {
+        count += st.chapters.length;
+      });
+    });
+    return count;
+  }, [chapterHierarchy]);
+
+  // Filter chapter breakdown by quick search query
+  const filteredChapterHierarchy = useMemo(() => {
+    if (!chapterSearchQuery.trim()) return chapterHierarchy;
+    const q = chapterSearchQuery.toLowerCase().trim();
+
+    return chapterHierarchy
+      .map((subj) => {
+        const matchingSthanas = subj.sthanas
+          .map((sth) => {
+            const matchingChapters = sth.chapters.filter(
+              (ch) =>
+                ch.name.toLowerCase().includes(q) ||
+                ch.fullBreadcrumb.toLowerCase().includes(q) ||
+                ch.sthana.toLowerCase().includes(q)
+            );
+            const sthMatches =
+              sth.name.toLowerCase().includes(q) ||
+              sth.fullBreadcrumb.toLowerCase().includes(q);
+
+            if (sthMatches) {
+              return sth;
+            }
+            if (matchingChapters.length > 0) {
+              return {
+                ...sth,
+                chapters: matchingChapters,
+              };
+            }
+            return null;
+          })
+          .filter(Boolean) as SthanaSummaryItem[];
+
+        const subjMatches = subj.name.toLowerCase().includes(q);
+        if (subjMatches) {
+          return subj;
+        }
+        if (matchingSthanas.length > 0) {
+          return {
+            ...subj,
+            sthanas: matchingSthanas,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean) as SubjectSummaryItem[];
+  }, [chapterHierarchy, chapterSearchQuery]);
+
+  // Smart Citation Auto-Mapper handlers
+  const handleOpenAutoFixModal = () => {
+    const candidates: { question: Question; remapInfo: ReturnType<typeof checkQuestionRemap> }[] = [];
+    questions.forEach((q) => {
+      const res = checkQuestionRemap(q);
+      if (res.needsRemap) {
+        candidates.push({ question: q, remapInfo: res });
+      }
+    });
+
+    setRemapCandidates(candidates);
+    setIsAutoFixModalOpen(true);
+  };
+
+  const handleApplyAutoRemap = async () => {
+    if (remapCandidates.length === 0) return;
+    setIsApplyingRemap(true);
+    try {
+      const updates = remapCandidates.map((c) => ({
+        id: c.question.id,
+        patch: {
+          chapterName: c.remapInfo.suggestedTag,
+          ch: c.remapInfo.suggestedTag,
+        },
+      }));
+
+      const count = await backend.updateQuestionsBatch(updates);
+      await loadCloudQuestions();
+      if (refreshQuestions) refreshQuestions();
+      showToast(`🔄 Successfully updated chapter tags for ${count} question(s)!`);
+      setIsAutoFixModalOpen(false);
+    } catch (err: any) {
+      alert(`Failed to auto-remap questions: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsApplyingRemap(false);
+    }
+  };
 
   // Breakdown metrics
   const typeCounts = useMemo(() => {
@@ -811,6 +945,17 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           >
             <FolderSync size={16} color="#1D4ED8" />
             <Text style={styles.btnGoogleDriveText}>Google Drive Sync</Text>
+          </TouchableOpacity>
+
+          {/* Auto-Fix Chapter Tags from Citations */}
+          <TouchableOpacity
+            style={styles.btnAutoFixChapters}
+            onPress={handleOpenAutoFixModal}
+            activeOpacity={0.8}
+            accessibilityLabel="Auto-Fix Chapter Tags from Citations"
+          >
+            <RefreshCw size={15} color="#4338CA" />
+            <Text style={styles.btnAutoFixChaptersText}>Auto-Fix Chapter Tags</Text>
           </TouchableOpacity>
 
           {/* Download Sample Template Dropdown / Action */}
@@ -1443,6 +1588,267 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       )}
 
       {/* ============================================================== */}
+      {/* 2.5 CHAPTER-WISE QUESTION COVERAGE PANEL                      */}
+      {/* ============================================================== */}
+      <View style={styles.chapterCoverageContainer}>
+        <TouchableOpacity
+          style={styles.chapterPanelHeader}
+          onPress={() => setIsChapterPanelExpanded(!isChapterPanelExpanded)}
+          activeOpacity={0.8}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, flexWrap: 'wrap' }}>
+            <View style={styles.chapterPanelIconWrap}>
+              <BookOpen size={18} color="#047857" />
+            </View>
+            <View>
+              <Text style={styles.chapterPanelTitle}>📊 Chapter-wise Question Coverage</Text>
+              <Text style={styles.chapterPanelSub}>
+                {chapterHierarchy.length} Subjects • {totalChaptersCount} Chapters across Cloud DB
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {selectedChapterFilter && (
+              <TouchableOpacity
+                style={styles.activeFilterPill}
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  setSelectedChapterFilter(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.activeFilterPillText} numberOfLines={1}>
+                  Filter: {selectedChapterFilter}
+                </Text>
+                <X size={12} color="#065F46" />
+              </TouchableOpacity>
+            )}
+            <View style={styles.panelChevronWrap}>
+              {isChapterPanelExpanded ? (
+                <ChevronUp size={18} color={THEME.colors.muted} />
+              ) : (
+                <ChevronDown size={18} color={THEME.colors.muted} />
+              )}
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {isChapterPanelExpanded && (
+          <View style={styles.chapterPanelBody}>
+            {/* Quick Search inside Chapters */}
+            <View style={styles.chapterSearchBar}>
+              <Search size={14} color={THEME.colors.muted} />
+              <TextInput
+                style={styles.chapterSearchInput}
+                value={chapterSearchQuery}
+                onChangeText={setChapterSearchQuery}
+                placeholder="Search chapter, sthana, or subject (e.g. Sutra 45, Chikitsa 3, Sushrut)..."
+                placeholderTextColor={THEME.colors.muted}
+              />
+              {chapterSearchQuery ? (
+                <TouchableOpacity onPress={() => setChapterSearchQuery('')}>
+                  <X size={14} color={THEME.colors.muted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Hierarchical Tree of Subjects -> Sthanas -> Chapters */}
+            <View style={styles.subjectsTree}>
+              {filteredChapterHierarchy.length === 0 ? (
+                <View style={styles.noChaptersFound}>
+                  <Text style={styles.noChaptersFoundText}>
+                    No chapters match &quot;{chapterSearchQuery}&quot;
+                  </Text>
+                </View>
+              ) : (
+                filteredChapterHierarchy.map((subj) => {
+                  const isSubjExpanded = expandedSubjects[subj.name] !== false; // default expanded
+                  const isSubjActive = selectedChapterFilter === subj.name;
+
+                  return (
+                    <View key={subj.name} style={styles.subjectTreeCard}>
+                      <View
+                        style={[
+                          styles.subjectTreeHeader,
+                          isSubjActive && styles.subjectTreeHeaderActive,
+                        ]}
+                      >
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}
+                          onPress={() =>
+                            setExpandedSubjects((prev) => ({
+                              ...prev,
+                              [subj.name]: !isSubjExpanded,
+                            }))
+                          }
+                          activeOpacity={0.7}
+                        >
+                          <ChevronRight
+                            size={16}
+                            color={THEME.colors.ink}
+                            style={{
+                              transform: [{ rotate: isSubjExpanded ? '90deg' : '0deg' }],
+                            }}
+                          />
+                          <Text style={styles.subjectTreeName}>{subj.name}</Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.badgesCluster}>
+                          <View style={styles.badgeTotalCount}>
+                            <Text style={styles.badgeTotalCountText}>{subj.total} total</Text>
+                          </View>
+                          <View style={styles.badgeValidCount}>
+                            <Text style={styles.badgeValidCountText}>✓ {subj.valid} Live</Text>
+                          </View>
+                          {subj.malformed > 0 && (
+                            <View style={styles.badgeMalformedCount}>
+                              <Text style={styles.badgeMalformedCountText}>⚠ {subj.malformed} Malformed</Text>
+                            </View>
+                          )}
+                          <TouchableOpacity
+                            style={[styles.btnFilterRow, isSubjActive && styles.btnFilterRowActive]}
+                            onPress={() => setSelectedChapterFilter(isSubjActive ? null : subj.name)}
+                          >
+                            <Text
+                              style={[
+                                styles.btnFilterRowText,
+                                isSubjActive && styles.btnFilterRowTextActive,
+                              ]}
+                            >
+                              {isSubjActive ? 'Active Filter' : 'Filter'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      {isSubjExpanded && (
+                        <View style={styles.sthanaContainer}>
+                          {subj.sthanas.map((sth) => {
+                            const isSthExpanded = expandedSthanas[sth.fullBreadcrumb] !== false;
+                            const isSthActive = selectedChapterFilter === sth.fullBreadcrumb;
+
+                            return (
+                              <View key={sth.fullBreadcrumb} style={styles.sthanaCard}>
+                                <View
+                                  style={[
+                                    styles.sthanaHeader,
+                                    isSthActive && styles.sthanaHeaderActive,
+                                  ]}
+                                >
+                                  <TouchableOpacity
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
+                                    onPress={() =>
+                                      setExpandedSthanas((prev) => ({
+                                        ...prev,
+                                        [sth.fullBreadcrumb]: !isSthExpanded,
+                                      }))
+                                    }
+                                    activeOpacity={0.7}
+                                  >
+                                    <ChevronRight
+                                      size={14}
+                                      color={THEME.colors.muted}
+                                      style={{
+                                        transform: [{ rotate: isSthExpanded ? '90deg' : '0deg' }],
+                                      }}
+                                    />
+                                    <Text style={styles.sthanaName}>{sth.name}</Text>
+                                    <Text style={styles.sthanaSub}>({sth.chapters.length} Ch)</Text>
+                                  </TouchableOpacity>
+
+                                  <View style={styles.badgesCluster}>
+                                    <View style={styles.badgeValidMini}>
+                                      <Text style={styles.badgeValidMiniText}>{sth.valid} live</Text>
+                                    </View>
+                                    {sth.malformed > 0 && (
+                                      <View style={styles.badgeMalformedMini}>
+                                        <Text style={styles.badgeMalformedMiniText}>
+                                          {sth.malformed} malformed
+                                        </Text>
+                                      </View>
+                                    )}
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.btnFilterMini,
+                                        isSthActive && styles.btnFilterMiniActive,
+                                      ]}
+                                      onPress={() =>
+                                        setSelectedChapterFilter(isSthActive ? null : sth.fullBreadcrumb)
+                                      }
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.btnFilterMiniText,
+                                          isSthActive && styles.btnFilterMiniTextActive,
+                                        ]}
+                                      >
+                                        {isSthActive ? 'Active' : 'Filter'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+
+                                {isSthExpanded && (
+                                  <View style={styles.chaptersGrid}>
+                                    {sth.chapters.map((ch) => {
+                                      const isChActive = selectedChapterFilter === ch.fullBreadcrumb;
+                                      return (
+                                        <TouchableOpacity
+                                          key={ch.fullBreadcrumb}
+                                          style={[
+                                            styles.chapterPill,
+                                            isChActive && styles.chapterPillActive,
+                                          ]}
+                                          onPress={() =>
+                                            setSelectedChapterFilter(isChActive ? null : ch.fullBreadcrumb)
+                                          }
+                                          activeOpacity={0.7}
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.chapterPillName,
+                                              isChActive && styles.chapterPillNameActive,
+                                            ]}
+                                          >
+                                            {ch.name}
+                                          </Text>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                            <Text
+                                              style={[
+                                                styles.chapterPillTotal,
+                                                isChActive && styles.chapterPillTotalActive,
+                                              ]}
+                                            >
+                                              {ch.total}
+                                            </Text>
+                                            {ch.malformed > 0 && (
+                                              <View
+                                                style={styles.dotMalformed}
+                                                accessibilityLabel={`${ch.malformed} malformed`}
+                                              />
+                                            )}
+                                          </View>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* ============================================================== */}
       {/* 3. QUESTIONS LIST & FILTERS                                    */}
       {/* ============================================================== */}
       <View style={styles.cardContainer}>
@@ -1463,6 +1869,25 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               </TouchableOpacity>
             ) : null}
           </View>
+
+          {/* Active Chapter Filter Bar */}
+          {selectedChapterFilter && (
+            <View style={styles.activeChapterFilterBar}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
+                <BookOpen size={14} color="#047857" />
+                <Text style={styles.activeChapterFilterText}>
+                  Filtered to Chapter: <Text style={{ fontWeight: '700' }}>{selectedChapterFilter}</Text> ({filteredQuestions.length} matching)
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.btnClearChapterFilter}
+                onPress={() => setSelectedChapterFilter(null)}
+              >
+                <X size={13} color="#991B1B" />
+                <Text style={styles.btnClearChapterFilterText}>Clear Chapter Filter</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Type Filter Pills */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPillScroll}>
@@ -1833,6 +2258,117 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         onImportSuccess={handleGoogleDriveImportSuccess}
         existingQuestions={questions}
       />
+
+      {/* Auto-Fix Chapter Tags from Citations Modal */}
+      {isAutoFixModalOpen && (
+        <Portal>
+          <View style={styles.modalBackdrop}>
+            <View style={[styles.modalDialog, { maxWidth: 760 }]}>
+              <View style={styles.modalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <RefreshCw size={20} color="#4338CA" />
+                  <View>
+                    <Text style={styles.modalTitle}>Smart Citation Auto-Mapper</Text>
+                    <Text style={styles.modalSub}>
+                      Automatically detect Subject, Sthana &amp; Chapter from citations and shloka references
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => setIsAutoFixModalOpen(false)}>
+                  <X size={20} color={THEME.colors.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.modalBody}>
+                {remapCandidates.length === 0 ? (
+                  <View style={styles.remapEmptyState}>
+                    <CheckCircle2 size={40} color="#059669" />
+                    <Text style={styles.remapEmptyTitle}>All Questions Already Tagged Accurately!</Text>
+                    <Text style={styles.remapEmptyText}>
+                      Every question in Cloud DB has a chapter tag that matches its textual citations.
+                    </Text>
+                  </View>
+                ) : (
+                  <View>
+                    <View style={styles.remapSummaryBox}>
+                      <Text style={styles.remapSummaryTitle}>
+                        Found {remapCandidates.length} Question(s) with Mismatched or Generic Chapter Tags
+                      </Text>
+                      <Text style={styles.remapSummaryDesc}>
+                        These questions currently have default tags (e.g. Charaka Samhita &gt; Sutrasthana &gt; Chapter 1),
+                        but their textual citations reference Sushruta Samhita, Ashtanga Hridaya, or other specific chapters.
+                        Review the preview below and click &quot;Apply Auto-Remap&quot; to update them in bulk.
+                      </Text>
+                    </View>
+
+                    <View style={styles.remapPreviewList}>
+                      {remapCandidates.slice(0, 50).map((c, idx) => (
+                        <View key={idx} style={styles.remapItemCard}>
+                          <View style={styles.remapItemHeader}>
+                            <Text style={styles.remapStem} numberOfLines={2}>
+                              #{questions.findIndex((q) => q.id === c.question.id) + 1}. {c.question.stem}
+                            </Text>
+                          </View>
+                          <Text style={styles.remapCitationText} numberOfLines={1}>
+                            <Text style={{ fontWeight: '700' }}>Citation: </Text>
+                            {c.question.r || c.question.explanation || '—'}
+                          </Text>
+                          <View style={styles.remapTagsRow}>
+                            <View style={styles.tagOld}>
+                              <Text style={styles.tagOldText} numberOfLines={1}>
+                                {c.remapInfo.currentTag}
+                              </Text>
+                            </View>
+                            <ArrowRight size={14} color={THEME.colors.muted} />
+                            <View style={styles.tagNew}>
+                              <Text style={styles.tagNewText} numberOfLines={1}>
+                                {c.remapInfo.suggestedTag}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                      {remapCandidates.length > 50 && (
+                        <Text style={styles.remapMoreNotice}>
+                          + {remapCandidates.length - 50} more questions will also be updated in bulk
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.btnCancel}
+                  onPress={() => setIsAutoFixModalOpen(false)}
+                >
+                  <Text style={styles.btnCancelText}>Cancel</Text>
+                </TouchableOpacity>
+
+                {remapCandidates.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.btnConfirmRemap, isApplyingRemap && { opacity: 0.6 }]}
+                    onPress={handleApplyAutoRemap}
+                    disabled={isApplyingRemap}
+                  >
+                    {isApplyingRemap ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <RefreshCw size={15} color="#FFF" />
+                    )}
+                    <Text style={styles.btnConfirmRemapText}>
+                      {isApplyingRemap
+                        ? 'Applying...'
+                        : `Confirm & Apply Auto-Remap (${remapCandidates.length})`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+        </Portal>
+      )}
     </View>
   );
 };
@@ -3002,5 +3538,461 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     flex: 1,
     lineHeight: 15,
+  },
+  btnAutoFixChapters: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnAutoFixChaptersText: {
+    color: '#4338CA',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  chapterCoverageContainer: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.colors.line,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  chapterPanelHeader: {
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  chapterPanelIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chapterPanelTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  chapterPanelSub: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+    marginTop: 2,
+  },
+  activeFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+    maxWidth: 220,
+  },
+  activeFilterPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  panelChevronWrap: {
+    padding: 4,
+  },
+  chapterPanelBody: {
+    padding: 14,
+    gap: 12,
+  },
+  chapterSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  chapterSearchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: THEME.colors.ink,
+    outlineWidth: 0 as any,
+  },
+  subjectsTree: {
+    gap: 10,
+  },
+  noChaptersFound: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  noChaptersFoundText: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+  },
+  subjectTreeCard: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    overflow: 'hidden',
+  },
+  subjectTreeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FAFAFA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  subjectTreeHeaderActive: {
+    backgroundColor: '#ECFDF5',
+    borderBottomColor: '#A7F3D0',
+  },
+  subjectTreeName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.ink,
+  },
+  badgesCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  badgeTotalCount: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  badgeTotalCountText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  badgeValidCount: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  badgeValidCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  badgeMalformedCount: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  badgeMalformedCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  btnFilterRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  btnFilterRowActive: {
+    backgroundColor: THEME.colors.brand,
+    borderColor: THEME.colors.brand,
+  },
+  btnFilterRowText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: THEME.colors.ink,
+  },
+  btnFilterRowTextActive: {
+    color: '#FFF',
+  },
+  sthanaContainer: {
+    padding: 10,
+    gap: 8,
+    backgroundColor: '#FCFCFD',
+  },
+  sthanaCard: {
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    padding: 10,
+    gap: 8,
+  },
+  sthanaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  sthanaHeaderActive: {
+    backgroundColor: '#F0FDF4',
+    padding: 4,
+    borderRadius: 6,
+  },
+  sthanaName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  sthanaSub: {
+    fontSize: 11,
+    color: THEME.colors.muted,
+  },
+  badgeValidMini: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  badgeValidMiniText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  badgeMalformedMini: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  badgeMalformedMiniText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  btnFilterMini: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  btnFilterMiniActive: {
+    backgroundColor: '#047857',
+    borderColor: '#047857',
+  },
+  btnFilterMiniText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  btnFilterMiniTextActive: {
+    color: '#FFF',
+  },
+  chaptersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingTop: 4,
+  },
+  chapterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  chapterPillActive: {
+    backgroundColor: '#047857',
+    borderColor: '#047857',
+  },
+  chapterPillName: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  chapterPillNameActive: {
+    color: '#FFF',
+  },
+  chapterPillTotal: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  chapterPillTotalActive: {
+    color: '#E6F4EA',
+  },
+  dotMalformed: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EF4444',
+  },
+  activeChapterFilterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginVertical: 8,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  activeChapterFilterText: {
+    fontSize: 12,
+    color: '#065F46',
+  },
+  btnClearChapterFilter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  btnClearChapterFilterText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  remapEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 36,
+    gap: 10,
+  },
+  remapEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  remapEmptyText: {
+    fontSize: 12,
+    color: THEME.colors.muted,
+    textAlign: 'center',
+  },
+  remapSummaryBox: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    gap: 4,
+  },
+  remapSummaryTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#3730A3',
+  },
+  remapSummaryDesc: {
+    fontSize: 11,
+    color: '#4F46E5',
+    lineHeight: 16,
+  },
+  remapPreviewList: {
+    gap: 8,
+  },
+  remapItemCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    padding: 10,
+    gap: 6,
+  },
+  remapItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  remapStem: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.colors.ink,
+    lineHeight: 16,
+  },
+  remapCitationText: {
+    fontSize: 11,
+    color: '#475569',
+  },
+  remapTagsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  tagOld: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  tagOldText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#991B1B',
+  },
+  tagNew: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  tagNewText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  remapMoreNotice: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textAlign: 'center',
+    paddingVertical: 6,
+  },
+  btnConfirmRemap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#4338CA',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  btnConfirmRemapText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
