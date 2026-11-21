@@ -615,7 +615,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       const buffer = e.target?.result as ArrayBuffer;
       if (buffer) {
         try {
-          const result = parseSpreadsheetBuffer(buffer);
+          const result = parseSpreadsheetBuffer(buffer, { fileName: file.name });
           setUploadParseResult(result);
         } catch (err: any) {
           alert('Failed to parse file: ' + err.message);
@@ -673,7 +673,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       }
 
       // 3. Parse spreadsheet buffer with strict UTF-8 preservation & column-shift auto-healing
-      const parsed = parseSpreadsheetBuffer(csvOrBuffer);
+      const parsed = parseSpreadsheetBuffer(csvOrBuffer, { fileName: 'Google Sheet Link' });
       if (parsed.validQuestions.length === 0) {
         throw new Error(
           'No valid questions could be extracted from this sheet. Please make sure the sheet contains Question Text, Options A-D, and Correct Answer.'

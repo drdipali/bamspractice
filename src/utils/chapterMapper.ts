@@ -844,7 +844,7 @@ export function getQuestionAuditStatus(q: Question): QuestionAuditResult {
   if (mismatch.hasMismatch) {
     return {
       isValid: false,
-      issueReason: mismatch.badgeLabel.replace(/^⚠️\s*/, ''),
+      issueReason: mismatch.badgeLabel ? mismatch.badgeLabel.replace(/^⚠️\s*/, '') : 'Samhita / Citation Mismatch',
       isSamhitaMismatch: true,
       mismatchDetails: mismatch,
     };

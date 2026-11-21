@@ -306,13 +306,20 @@ export interface WorkbookTabResult {
  * Parses any uploaded ArrayBuffer (XLSX, XLS, or CSV) or raw CSV text
  * with strict UTF-8 preservation for Sanskrit, Hindi (Devanagari) and IAST diacritics.
  */
-export function parseSpreadsheetBuffer(buffer: ArrayBuffer | Uint8Array | string): SpreadsheetParseResult {
+export function parseSpreadsheetBuffer(
+  buffer: ArrayBuffer | Uint8Array | string,
+  contextHint?: ContextHints
+): SpreadsheetParseResult {
   let workbook: XLSX.WorkBook;
 
-  if (typeof buffer === 'string') {
-    workbook = XLSX.read(buffer, { type: 'string', codepage: 65001 });
-  } else {
-    workbook = XLSX.read(new Uint8Array(buffer), { type: 'array', codepage: 65001 });
+  try {
+    if (typeof buffer === 'string') {
+      workbook = XLSX.read(buffer, { type: 'string', codepage: 65001 });
+    } else {
+      workbook = XLSX.read(new Uint8Array(buffer), { type: 'array', codepage: 65001 });
+    }
+  } catch (err: any) {
+    throw new Error(`Failed to parse file: ${err.message || 'Corrupted or unsupported format'}`);
   }
 
   const firstSheetName = workbook.SheetNames[0];

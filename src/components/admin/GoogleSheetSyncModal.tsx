@@ -105,7 +105,7 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
       const csvText = await fetchGoogleSheetCsv(trimmed);
 
       // 2. Parse using strict UTF-8 decoder
-      const parsed = parseSpreadsheetBuffer(csvText);
+      const parsed = parseSpreadsheetBuffer(csvText, { fileName: 'Google Sheet Sync' });
 
       if (parsed.validQuestions.length === 0) {
         throw new Error(
@@ -143,7 +143,7 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
       const buffer = e.target?.result as ArrayBuffer;
       if (buffer) {
         try {
-          const parsed = parseSpreadsheetBuffer(buffer);
+          const parsed = parseSpreadsheetBuffer(buffer, { fileName: file.name });
           if (parsed.validQuestions.length === 0) {
             throw new Error(
               'No valid questions found in this file. Please verify it contains Question Text, Options A-D, and Correct Answer.'
