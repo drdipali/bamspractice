@@ -36,6 +36,7 @@ import {
   ChevronUp,
   ChevronRight,
   Wrench,
+  Edit3,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
@@ -57,6 +58,7 @@ import {
   SthanaSummaryItem,
   CLASSICAL_SAMHITA_SCHEMA,
   getCanonicalSthana,
+  isValidClassicalTag,
 } from '../../utils/chapterMapper';
 import { useApp } from '../../context/AppContext';
 import { GeminiService, AIProvider } from '../../services/gemini';
@@ -191,6 +193,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [isAutoFixModalOpen, setIsAutoFixModalOpen] = useState<boolean>(false);
   const [remapCandidates, setRemapCandidates] = useState<
     { question: Question; remapInfo: ReturnType<typeof checkQuestionRemap> }[]
+  >([]);
+  const [manualReviewCandidates, setManualReviewCandidates] = useState<
+    { question: Question; mismatch: ReturnType<typeof detectSamhitaMismatch> }[]
   >([]);
   const [isApplyingRemap, setIsApplyingRemap] = useState<boolean>(false);
 
@@ -1036,15 +1041,25 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   // Smart Citation Auto-Mapper handlers
   const handleOpenAutoFixModal = () => {
-    const candidates: { question: Question; remapInfo: ReturnType<typeof checkQuestionRemap> }[] = [];
+    const autoFixable: { question: Question; remapInfo: ReturnType<typeof checkQuestionRemap> }[] = [];
+    const manualReview: { question: Question; mismatch: ReturnType<typeof detectSamhitaMismatch> }[] = [];
+
     questions.forEach((q) => {
       const res = checkQuestionRemap(q);
-      if (res.needsRemap) {
-        candidates.push({ question: q, remapInfo: res });
+      const currentTag = String(q.chapterName || q.ch || '').trim();
+
+      if (res.needsRemap && res.suggestedTag !== currentTag && isValidClassicalTag(res.suggestedTag)) {
+        autoFixable.push({ question: q, remapInfo: res });
+      } else {
+        const mismatch = detectSamhitaMismatch(q);
+        if (mismatch.hasMismatch) {
+          manualReview.push({ question: q, mismatch });
+        }
       }
     });
 
-    setRemapCandidates(candidates);
+    setRemapCandidates(autoFixable);
+    setManualReviewCandidates(manualReview);
     setIsAutoFixModalOpen(true);
   };
 
@@ -2622,36 +2637,69 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           </Text>
                         </View>
                       </View>
-                      {mismatch.suggestedTag ? (
-                        <TouchableOpacity
-                          style={styles.btnCardQuickFixTag}
-                          onPress={async () => {
-                            try {
-                              await backend.updateQuestion(q.id, {
-                                chapterName: mismatch.suggestedTag,
-                                ch: mismatch.suggestedTag,
-                              });
-                              setQuestions((prev) =>
-                                prev.map((item) =>
-                                  item.id === q.id
-                                    ? { ...item, chapterName: mismatch.suggestedTag, ch: mismatch.suggestedTag }
-                                    : item
-                                )
-                              );
-                              setEditedIds((prev) => new Set(prev).add(String(q.id)));
-                              showToast(`Auto-fixed chapter tag to "${mismatch.suggestedTag}"`);
-                            } catch (err: any) {
-                              console.error('Failed to quick-fix chapter tag:', err);
-                            }
-                          }}
-                          activeOpacity={0.8}
-                        >
-                          <Sparkles size={11} color="#FFF" />
-                          <Text style={styles.btnCardQuickFixTagText}>
-                            Fix Tag to: {mismatch.suggestedTag}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
+                      {(() => {
+                        const currentTag = String(q.chapterName || q.ch || '').trim();
+                        const hasValidAutoFix = Boolean(
+                          mismatch.suggestedTag &&
+                          mismatch.suggestedTag !== currentTag &&
+                          isValidClassicalTag(mismatch.suggestedTag)
+                        );
+
+                        if (hasValidAutoFix) {
+                          return (
+                            <TouchableOpacity
+                              style={styles.btnCardQuickFixTag}
+                              onPress={async () => {
+                                try {
+                                  await backend.updateQuestion(q.id, {
+                                    chapterName: mismatch.suggestedTag!,
+                                    ch: mismatch.suggestedTag!,
+                                  });
+                                  setQuestions((prev) =>
+                                    prev.map((item) =>
+                                      item.id === q.id
+                                        ? { ...item, chapterName: mismatch.suggestedTag!, ch: mismatch.suggestedTag! }
+                                        : item
+                                    )
+                                  );
+                                  setEditedIds((prev) => new Set(prev).add(String(q.id)));
+                                  showToast(`Auto-fixed chapter tag to "${mismatch.suggestedTag}"`);
+                                } catch (err: any) {
+                                  console.error('Failed to quick-fix chapter tag:', err);
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Sparkles size={11} color="#FFF" />
+                              <Text style={styles.btnCardQuickFixTagText}>
+                                Fix Tag to: {mismatch.suggestedTag}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        }
+
+                        return (
+                          <TouchableOpacity
+                            style={styles.btnCardEditManually}
+                            onPress={() => {
+                              setEditingQuestion(q);
+                              setQType(q.questionType || 'standard');
+                              setChapterName(q.chapterName || String(q.ch) || 'Uncategorized / Needs Review > General > Chapter 1');
+                              setRefSource(q.r || '');
+                              setDifficulty(q.d || 1);
+                              setStem(q.stem || '');
+                              setOptions(q.o || ['', '', '', '']);
+                              setCorrectAnswer(typeof q.c === 'number' ? q.c : 0);
+                              setExplanation(q.explanation || '');
+                              setIsAddFormOpen(true);
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Edit3 size={11} color="#FFF" />
+                            <Text style={styles.btnCardEditManuallyText}>Edit Manually</Text>
+                          </TouchableOpacity>
+                        );
+                      })()}
                     </View>
                   )}
 
@@ -2794,24 +2842,99 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               </View>
 
               <ScrollView style={styles.modalBody}>
-                {remapCandidates.length === 0 ? (
+                {/* Live Status Strip */}
+                {(remapCandidates.length > 0 || manualReviewCandidates.length > 0) && (
+                  <View style={styles.modalStatusStrip}>
+                    <View style={styles.statusBadgeGreen}>
+                      <CheckCircle2 size={13} color="#15803D" />
+                      <Text style={styles.statusBadgeGreenText}>
+                        Auto-fixable: {remapCandidates.length}
+                      </Text>
+                    </View>
+                    <View style={[styles.statusBadgeAmber, manualReviewCandidates.length === 0 && { opacity: 0.6 }]}>
+                      <AlertTriangle size={13} color="#D97706" />
+                      <Text style={styles.statusBadgeAmberText}>
+                        Needs Manual Review: {manualReviewCandidates.length}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Case 1: Truly all questions are clean */}
+                {remapCandidates.length === 0 && manualReviewCandidates.length === 0 ? (
                   <View style={styles.remapEmptyState}>
                     <CheckCircle2 size={40} color="#059669" />
                     <Text style={styles.remapEmptyTitle}>All Questions Already Tagged Accurately!</Text>
                     <Text style={styles.remapEmptyText}>
-                      Every question in Cloud DB has a chapter tag that matches its textual citations.
+                      Every question in Cloud DB has a valid classical chapter tag that matches its textual citations.
                     </Text>
                   </View>
+                ) : remapCandidates.length === 0 && manualReviewCandidates.length > 0 ? (
+                  /* Case 2: Only manual reviews exist (none auto-fixable) */
+                  <View>
+                    <View style={styles.remapManualNoticeBox}>
+                      <AlertTriangle size={32} color="#D97706" />
+                      <Text style={styles.remapManualTitle}>
+                        {manualReviewCandidates.length} Question(s) Need Manual Review
+                      </Text>
+                      <Text style={styles.remapManualDesc}>
+                        These questions have Samhita or chapter mismatches, but their textual citations cannot be safely auto-mapped with 100% certainty. Please review or edit them manually using the cards below.
+                      </Text>
+                    </View>
+
+                    <View style={styles.remapPreviewList}>
+                      {manualReviewCandidates.slice(0, 50).map((c, idx) => (
+                        <View key={idx} style={styles.remapItemCard}>
+                          <View style={styles.remapItemHeader}>
+                            <Text style={styles.remapStem} numberOfLines={2}>
+                              #{questions.findIndex((q) => q.id === c.question.id) + 1}. {c.question.stem}
+                            </Text>
+                            <TouchableOpacity
+                              style={styles.btnCardEditManually}
+                              onPress={() => {
+                                setIsAutoFixModalOpen(false);
+                                setEditingQuestion(c.question);
+                                setQType(c.question.questionType || 'standard');
+                                setChapterName(c.question.chapterName || String(c.question.ch) || 'Uncategorized / Needs Review > General > Chapter 1');
+                                setRefSource(c.question.r || '');
+                                setDifficulty(c.question.d || 1);
+                                setStem(c.question.stem || '');
+                                setOptions(c.question.o || ['', '', '', '']);
+                                setCorrectAnswer(typeof c.question.c === 'number' ? c.question.c : 0);
+                                setExplanation(c.question.explanation || '');
+                                setIsAddFormOpen(true);
+                              }}
+                            >
+                              <Edit3 size={11} color="#FFF" />
+                              <Text style={styles.btnCardEditManuallyText}>Edit</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={styles.remapCitationText} numberOfLines={1}>
+                            <Text style={{ fontWeight: '700' }}>Citation: </Text>
+                            {c.question.r || c.question.explanation || '—'}
+                          </Text>
+                          <View style={{ marginTop: 6 }}>
+                            <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '600' }}>
+                              {c.mismatch.badgeLabel}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                              Current Tag: {c.question.chapterName || c.question.ch}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
                 ) : (
+                  /* Case 3: Auto-fixable candidates exist */
                   <View>
                     <View style={styles.remapSummaryBox}>
                       <Text style={styles.remapSummaryTitle}>
-                        Found {remapCandidates.length} Question(s) with Mismatched or Generic Chapter Tags
+                        Found {remapCandidates.length} Question(s) with Auto-Fixable Chapter Tags
                       </Text>
                       <Text style={styles.remapSummaryDesc}>
-                        These questions currently have default tags (e.g. Charaka Samhita &gt; Sutrasthana &gt; Chapter 1),
-                        but their textual citations reference Sushruta Samhita, Ashtanga Hridaya, or other specific chapters.
-                        Review the preview below and click &quot;Apply Auto-Remap&quot; to update them in bulk.
+                        These questions have classical textual citations pointing to a specific Samhita, Sthana &amp; Chapter.
+                        Review the preview below and click &quot;Confirm &amp; Apply Auto-Remap&quot; to update them in bulk.
                       </Text>
                     </View>
 
@@ -2848,6 +2971,47 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                         </Text>
                       )}
                     </View>
+
+                    {manualReviewCandidates.length > 0 && (
+                      <View style={{ marginTop: 20 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400E', marginBottom: 8 }}>
+                          ⚠️ {manualReviewCandidates.length} Additional Question(s) Require Manual Review:
+                        </Text>
+                        <View style={styles.remapPreviewList}>
+                          {manualReviewCandidates.slice(0, 10).map((c, idx) => (
+                            <View key={idx} style={[styles.remapItemCard, { borderColor: '#FDE68A', backgroundColor: '#FFFDF5' }]}>
+                              <View style={styles.remapItemHeader}>
+                                <Text style={styles.remapStem} numberOfLines={2}>
+                                  #{questions.findIndex((q) => q.id === c.question.id) + 1}. {c.question.stem}
+                                </Text>
+                                <TouchableOpacity
+                                  style={styles.btnCardEditManually}
+                                  onPress={() => {
+                                    setIsAutoFixModalOpen(false);
+                                    setEditingQuestion(c.question);
+                                    setQType(c.question.questionType || 'standard');
+                                    setChapterName(c.question.chapterName || String(c.question.ch) || 'Uncategorized / Needs Review > General > Chapter 1');
+                                    setRefSource(c.question.r || '');
+                                    setDifficulty(c.question.d || 1);
+                                    setStem(c.question.stem || '');
+                                    setOptions(c.question.o || ['', '', '', '']);
+                                    setCorrectAnswer(typeof c.question.c === 'number' ? c.question.c : 0);
+                                    setExplanation(c.question.explanation || '');
+                                    setIsAddFormOpen(true);
+                                  }}
+                                >
+                                  <Edit3 size={11} color="#FFF" />
+                                  <Text style={styles.btnCardEditManuallyText}>Edit</Text>
+                                </TouchableOpacity>
+                              </View>
+                              <Text style={{ fontSize: 11, color: '#C2410C', fontWeight: '600', marginTop: 4 }}>
+                                {c.mismatch.badgeLabel}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    )}
                   </View>
                 )}
               </ScrollView>
@@ -4214,6 +4378,82 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#FFF',
+  },
+  btnCardEditManually: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#475569',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    alignSelf: 'flex-start',
+  },
+  btnCardEditManuallyText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  modalStatusStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  statusBadgeGreen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  statusBadgeGreenText: {
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusBadgeAmber: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  statusBadgeAmberText: {
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  remapManualNoticeBox: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    borderRadius: 8,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  remapManualTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400E',
+    marginTop: 8,
+  },
+  remapManualDesc: {
+    fontSize: 12,
+    color: '#B45309',
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 17,
   },
   btnAutoFixChapters: {
     backgroundColor: '#EEF2FF',

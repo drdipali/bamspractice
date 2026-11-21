@@ -9,6 +9,63 @@ export function convertDevanagariNumerals(str: string): string {
   return str.replace(/[०-९]/g, (w) => String(devanagariDigits.indexOf(w)));
 }
 
+/**
+ * Normalizes citation and reference strings by:
+ * 1. Converting Devanagari numerals (०-९) to standard digits (0-9).
+ * 2. Applying Unicode NFD normalization and stripping all combining diacritical marks
+ *    so sūtrasthānam -> sutrasthanam, śārīra -> sarira, cikitsā -> cikitsa, nidāna -> nidana.
+ * 3. Lowercasing and trimming.
+ */
+export function normalizeCitationText(str: string): string {
+  if (!str) return '';
+  const devanagariDigits = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+  let s = str.replace(/[०-९]/g, (w) => String(devanagariDigits.indexOf(w)));
+  s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return s.toLowerCase().trim();
+}
+
+/**
+ * Extracts only the citation prefix (the first ~60-70 characters or before Sanskrit verses)
+ * so that Sthana keywords are NEVER matched from inside the Sanskrit shloka body.
+ */
+export function extractCitationPrefix(citation?: string, explanation?: string, stem?: string): string {
+  // 1. If explicit citation / reference column exists:
+  if (citation && citation.trim()) {
+    const clean = citation.trim();
+    // Stop at verse delimiters like ॥, |, or newline if they appear early
+    const verseBreak = clean.search(/[॥|\n]/);
+    if (verseBreak > 0 && verseBreak <= 75) {
+      return clean.slice(0, verseBreak).trim();
+    }
+    return clean.slice(0, 65).trim();
+  }
+
+  // 2. Check if stem starts with a classical citation or shloka header
+  if (stem && stem.trim()) {
+    const cleanStem = stem.trim();
+    if (/^(?:su|ca|ah|ss|cs|सु|च|अष्टाङ्ग|अष्टांग|सुश्रुत|चरक|sushrut|charak|ashtang)/i.test(cleanStem)) {
+      const verseBreak = cleanStem.search(/[॥|\n]/);
+      if (verseBreak > 0 && verseBreak <= 75) {
+        return cleanStem.slice(0, verseBreak).trim();
+      }
+      return cleanStem.slice(0, 65).trim();
+    }
+  }
+
+  // 3. Check if explanation contains an explicit classical citation pattern e.g. "(su.su 45/194)"
+  if (explanation && explanation.trim()) {
+    const cleanExp = explanation.trim();
+    const mExplicit = cleanExp.match(
+      /(?:(?:su|ca|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*\d{1,3}\s*[\/:]\s*\d+)|(?:(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*\d{1,3})/i
+    );
+    if (mExplicit && mExplicit[0]) {
+      return mExplicit[0].trim();
+    }
+  }
+
+  return '';
+}
+
 export interface DetectedChapterInfo {
   subject: string;
   sthana: string;
@@ -36,35 +93,40 @@ export function detectChapterInfo(
   context?: ContextHints,
   stem?: string
 ): DetectedChapterInfo {
-  const rawRef = `${citation || ''} ${explanation || ''} ${(stem || '').slice(0, 350)}`.trim();
-  const normalizedRef = convertDevanagariNumerals(rawRef);
-  const normalizedFileName = convertDevanagariNumerals(context?.fileName || '');
-  const normalizedTabName = convertDevanagariNumerals(context?.tabName || '');
-  const combinedContext = `${normalizedFileName} ${normalizedTabName}`.toLowerCase();
+  // 1. Extract only the citation prefix (~60 chars) - NEVER search the full Sanskrit shloka body for Sthana keywords!
+  const prefixRaw = extractCitationPrefix(citation, explanation, stem);
+  const normalizedPrefix = normalizeCitationText(prefixRaw);
+  const normalizedFileName = normalizeCitationText(context?.fileName || '');
+  const normalizedTabName = normalizeCitationText(context?.tabName || '');
+  const combinedContext = `${normalizedFileName} ${normalizedTabName}`.trim();
+  const searchPrefix = `${normalizedPrefix} ${combinedContext}`.trim();
+
+  // Full normalized reference pool (used only for Samhita detection fallback or fraction fallback)
+  const fullNormalizedRef = normalizeCitationText(`${citation || ''} ${explanation || ''} ${(stem || '').slice(0, 100)}`);
 
   // 1. Detect Subject / Samhita
   let subject = '';
   let subjectSource: DetectedChapterInfo['source'] = 'default';
 
-  const refLower = normalizedRef.toLowerCase();
-
   // Sushruta Samhita check
   if (
-    /sushrut|suśruta|सुश्रुत|su\.?\s*(?:su|ni|sha|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
-      refLower
-    )
+    /sushrut|susruta|suśruta|सुश्रुत|su\s*\.\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
+      searchPrefix
+    ) ||
+    /sushrut|susruta|suśruta|सुश्रुत/i.test(fullNormalizedRef)
   ) {
     subject = 'Sushruta Samhita';
     subjectSource = 'citation';
-  } else if (/sushrut|suśruta|सुश्रुत/i.test(combinedContext)) {
+  } else if (/sushrut|susruta|suśruta|सुश्रुत/i.test(combinedContext)) {
     subject = 'Sushruta Samhita';
     subjectSource = context?.fileName ? 'filename' : 'tabname';
   }
   // Charaka Samhita check
   else if (
-    /charak|caraka|चरक|ca\.?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
-      refLower
-    )
+    /charak|caraka|चरक|ca\s*\.\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
+      searchPrefix
+    ) ||
+    /charak|caraka|चरक/i.test(fullNormalizedRef)
   ) {
     subject = 'Charaka Samhita';
     subjectSource = 'citation';
@@ -74,38 +136,39 @@ export function detectChapterInfo(
   }
   // Ashtanga Hridaya check
   else if (
-    /ashtang|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hṛdaya|हृदय|vagbhat|वाग्भट|a\.?\s*h\.?|a\.?\s*s\.?/i.test(
-      refLower
-    )
+    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hrdaya|हृदय|vagbhat|vāgbhaṭa|वाग्भट|a\s*\.\s*h\s*\.?|a\s*\.\s*s\s*\.?/i.test(
+      searchPrefix
+    ) ||
+    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|vagbhat|वाग्भट/i.test(fullNormalizedRef)
   ) {
     subject = 'Ashtanga Hridaya';
     subjectSource = 'citation';
-  } else if (/ashtang|hridaya|vagbhat|अष्टाङ्ग|हृदय/i.test(combinedContext)) {
+  } else if (/ashtang|astanga|hridaya|vagbhat|अष्टाङ्ग|हृदय/i.test(combinedContext)) {
     subject = 'Ashtanga Hridaya';
     subjectSource = 'filename';
   }
   // Sharangadhara Samhita check
-  else if (/sharang|śārṅga|शार्ङ्गधर|शारंगधर/i.test(refLower) || /sharang|शार्ङ्गधर/i.test(combinedContext)) {
+  else if (/sharang|śārṅga|शार्ङ्गधर|शारंगधर/i.test(searchPrefix) || /sharang|शार्ङ्गधर/i.test(combinedContext)) {
     subject = 'Sharangadhara Samhita';
     subjectSource = 'citation';
   }
   // Madhava Nidana check
-  else if (/madhava|mādhava|माधव/i.test(refLower) || /madhav|माधव/i.test(combinedContext)) {
+  else if (/madhava|mādhava|माधव/i.test(searchPrefix) || /madhav|माधव/i.test(combinedContext)) {
     subject = 'Madhava Nidana';
     subjectSource = 'citation';
   }
   // Kashyapa Samhita check
-  else if (/kashyap|kāśyapa|काश्यप/i.test(refLower) || /kashyap|काश्यप/i.test(combinedContext)) {
+  else if (/kashyap|kāśyapa|काश्यप/i.test(searchPrefix) || /kashyap|काश्यप/i.test(combinedContext)) {
     subject = 'Kashyapa Samhita';
     subjectSource = 'citation';
   }
   // Dravyaguna
-  else if (/dravyaguna|द्रव्यगुण/i.test(refLower) || /dravyaguna|द्रव्यगुण/i.test(combinedContext)) {
+  else if (/dravyaguna|द्रव्यगुण/i.test(searchPrefix) || /dravyaguna|द्रव्यगुण/i.test(combinedContext)) {
     subject = 'Dravyaguna Vijnana';
     subjectSource = 'citation';
   }
   // Rasa Shastra
-  else if (/rasashastra|bhaishajya|रसशास्त्र|भैषज्य/i.test(refLower) || /rasa|bhaishajya/i.test(combinedContext)) {
+  else if (/rasashastra|bhaishajya|रसशास्त्र|भैषज्य/i.test(searchPrefix) || /rasa|bhaishajya/i.test(combinedContext)) {
     subject = 'Rasa Shastra & Bhaishajya Kalpana';
     subjectSource = 'citation';
   }
@@ -122,14 +185,17 @@ export function detectChapterInfo(
     subjectSource = 'default';
   }
 
-  // 2. Detect Sthana (Section)
+  // 2. Detect Sthana (Section) - STRICTLY ON CITATION PREFIX & CONTEXT, NEVER ON SHLOKA BODY
   let sthana = '';
-  const searchPool = `${refLower} ${combinedContext}`;
 
-  if (/uttaratantra|uttara|uttar|उत्तरتन्त्र|उत्तरतन्त्र|उत्तरस्थान|उत्तर|su\.?\s*ut|ah\.?\s*ut/i.test(searchPool)) {
+  if (
+    /uttaratantra|uttaratantram|uttarasthana|uttarasthanam|uttara|uttar|\but\b|उत्तरتन्त्र|उत्तरतन्त्र|उत्तरस्थान|उत्तर|su\.?\s*ut|ah\.?\s*ut|ss\s*[-–.]?\s*ut|सु\.?\s*उ/i.test(
+      searchPrefix
+    )
+  ) {
     // Charaka Samhita strictly has 8 Sthanas and NO Uttaratantra / Uttarasthana!
     if (subject === 'Charaka Samhita' || subject === 'Uncategorized / Needs Review' || !subject) {
-      if (/ashtang|aṣṭāṅga|अष्टाङ्ग|vagbhat|वाग्भट|a\.?\s*h\.?/i.test(searchPool)) {
+      if (/ashtang|astanga|अष्टाङ्ग|vagbhat|vagbhata|वाग्भट|a\.?\s*h\.?/i.test(searchPrefix)) {
         subject = 'Ashtanga Hridaya';
         sthana = 'Uttarasthana';
       } else {
@@ -144,25 +210,63 @@ export function detectChapterInfo(
     } else {
       sthana = 'Uttaratantra';
     }
-  } else if (/nidan|nidāna|निदानस्थान|निदान|ca\.?\s*ni|su\.?\s*ni|ah\.?\s*ni|च\.?\s*नि|सु\.?\s*नि/i.test(searchPool)) {
+  } else if (
+    /nidanasthana|nidanasthanam|nidana|\bni\b|निदानस्थानम्|निदानस्थान|निदान|ca\.?\s*ni|su\.?\s*ni|ah\.?\s*ni|च\.?\s*नि|सु\.?\s*नि/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Nidanasthana';
-  } else if (/viman|vimāna|विमानस्थान|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(searchPool)) {
+  } else if (
+    /vimanasthana|vimanasthanam|vimana|\bvi\b|विमानस्थानम्|विमानस्थान|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Vimanasthana';
-  } else if (/sharir|śārīra|शारीरस्थान|शारीर|ca\.?\s*sha|su\.?\s*sha|ah\.?\s*sha|च\.?\s*शा|सु\.?\s*शा/i.test(searchPool)) {
+  } else if (
+    /sharirasthana|sarirasthana|sharirasthanam|sarirasthanam|sharira|sarira|\bsha\b|शारीरस्थानम्|शारीरस्थान|शारीर|ca\.?\s*sha|su\.?\s*sha|ah\.?\s*sha|च\.?\s*शा|सु\.?\s*शा/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Sharirasthana';
-  } else if (/indriya|इन्द्रियस्थान|इन्द्रिय|ca\.?\s*in|च\.?\s*इन्/i.test(searchPool)) {
+  } else if (
+    /indriyasthana|indriyasthanam|indriya|\bin\b|इन्द्रियस्थानम्|इन्द्रियस्थान|इन्द्रिय|ca\.?\s*in|च\.?\s*इन्/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Indriyasthana';
-  } else if (/chikitsa|cikitsā|चिकित्सास्थान|चिकित्सा|ca\.?\s*ci|ca\.?\s*chi|su\.?\s*ci|su\.?\s*chi|च\.?\s*चि|सु\.?\s*चि/i.test(searchPool)) {
+  } else if (
+    /chikitsasthana|cikitsasthana|chikitsasthanam|cikitsasthanam|chikitsa|cikitsa|\bci\b|\bchi\b|चिकित्सास्थानम्|चिकित्सास्थान|चिकित्सा|ca\.?\s*ci|ca\.?\s*chi|su\.?\s*ci|su\.?\s*chi|च\.?\s*चि|सु\.?\s*चि/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Chikitsasthana';
-  } else if (/kalpa|कल्पस्थान|कल्प|ca\.?\s*ka|ca\.?\s*kal|su\.?\s*ka|su\.?\s*kal|च\.?\s*क|सु\.?\s*क/i.test(searchPool)) {
+  } else if (
+    /kalpasiddhisthana|kalpasiddhisthanam|kalpasiddhi|कल्पसिद्धिस्थानम्|कल्पसिद्धि/i.test(
+      searchPrefix
+    )
+  ) {
+    sthana = 'Kalpasiddhisthana';
+  } else if (
+    /kalpasthana|kalpasthanam|kalpa|\bka\b|कल्पस्थानम्|कल्पस्थान|कल्प|ca\.?\s*ka|ca\.?\s*kal|su\.?\s*ka|su\.?\s*kal|च\.?\s*क|सु\.?\s*क/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Kalpasthana';
-  } else if (/siddhi|सिद्धिस्थान|सिद्धि|ca\.?\s*si|च\.?\s*सि/i.test(searchPool)) {
+  } else if (
+    /siddhisthana|siddhisthanam|siddhi|\bsi\b|सिद्धिस्थानम्|सिद्धिस्थान|सिद्धि|ca\.?\s*si|च\.?\s*सि/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Siddhisthana';
-  } else if (/purva|पूर्व/i.test(searchPool) && subject.includes('Sharangadhara')) {
+  } else if (/purva|पूर्व/i.test(searchPrefix) && subject.includes('Sharangadhara')) {
     sthana = 'Purva Khanda';
-  } else if (/madhyama|मध्यम/i.test(searchPool) && subject.includes('Sharangadhara')) {
+  } else if (/madhyama|मध्यम/i.test(searchPrefix) && subject.includes('Sharangadhara')) {
     sthana = 'Madhyama Khanda';
-  } else if (/sutra|sūtra|सूत्रस्थानम्|सूत्रस्थान|सूत्र|ca\.?\s*su|su\.?\s*su|ah\.?\s*su|च\.?\s*सू|सु\.?\s*सू/i.test(searchPool)) {
+  } else if (
+    /sutrasthana|sutrasthanam|sutra|\bsu\b|सूत्रस्थानम्|सूत्रस्थान|सूत्र|ca\.?\s*su|su\.?\s*su|ah\.?\s*su|च\.?\s*सू|सु\.?\s*सू/i.test(
+      searchPrefix
+    )
+  ) {
     sthana = 'Sutrasthana';
   } else {
     // If context has existing sthana
@@ -181,52 +285,60 @@ export function detectChapterInfo(
   // 3. Detect Chapter Number
   let chNum = '';
 
-  // Pattern A: Classical shloka citation with chapter prefix: e.g. "sūtrasthānam 45/12", "सूत्रस्थानम् ४५/२", "sutra 45/1"
-  const mCitationWithSthana = refLower.match(
-    /(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*(\d{1,3})/i
+  // Pattern A: Sthana name followed by chapter number in searchPrefix
+  const mCitationWithSthana = searchPrefix.match(
+    /(?:sutrasthanam|sutrasthana|सूत्रस्थानम्|सूत्रस्थान|sutra|सूत्र|chikitsasthanam|cikitsasthanam|चिकित्सास्थानम्|uttaratantra|uttarasthana|उत्तरतन्त्र|उत्तरस्थान|nidanasthanam|nidana|निदानस्थान|निदान|sarirasthana|sharirasthana|शारीरस्थान|sharira|sarira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*(\d{1,3})/i
   );
   if (mCitationWithSthana && mCitationWithSthana[1]) {
     chNum = mCitationWithSthana[1];
   }
 
-  // Pattern B: Classical fraction citation e.g. "ca.su 1/115", "su.su 45/12", "च.सू - 1/115", "45/12", "26 / 8"
+  // Pattern B: Classical fraction citation e.g. "ca.su 1/115", "su.su 45/12", "च.सू - 1/115", "45/12", "26 / 8" in searchPrefix
   if (!chNum) {
-    const mFraction = refLower.match(
-      /(?:ca|su|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*(\d{1,3})\s*[\/:]\s*\d+/i
+    const mFraction = searchPrefix.match(
+      /(?:ca|su|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*(\d{1,3})\s*[\/:]\s*\d+/i
     );
     if (mFraction && mFraction[1]) {
       chNum = mFraction[1];
     }
   }
 
-  // Pattern C: Plain fraction "45/12" or "45:12" in citation
+  // Pattern C: Plain fraction "45/12" or "45:12" in searchPrefix
   if (!chNum) {
-    const mPlainFraction = refLower.match(/\b(\d{1,3})\s*[\/:]\s*\d+\b/);
+    const mPlainFraction = searchPrefix.match(/\b(\d{1,3})\s*[\/:]\s*\d+\b/);
     if (mPlainFraction && mPlainFraction[1]) {
       chNum = mPlainFraction[1];
     }
   }
 
-  // Pattern D: Explicit "Chapter 45", "Ch 45", "Ch. 45", "Adhyaya 45" in citation or context
+  // Pattern D: Explicit "Chapter 45", "Ch 45", "Ch. 45", "Adhyaya 45" in searchPrefix
   if (!chNum) {
-    const mExplicit = `${refLower} ${combinedContext}`.match(
-      /(?:chapter|adhyaya|अध्याय|ch\.?)\s*[:\-–]?\s*(\d{1,3})/i
-    );
+    const mExplicit = searchPrefix.match(/(?:chapter|adhyaya|अध्याय|ch\.?)\s*[:\-–]?\s*(\d{1,3})/i);
     if (mExplicit && mExplicit[1]) {
       chNum = mExplicit[1];
     }
   }
 
-  // Pattern E: Tab Name or File Name is just a number (e.g. "45", "Ch 45", "Sutra 45")
+  // Pattern E: Tab Name or File Name is just a number
   if (!chNum && context?.tabName) {
-    const tabClean = normalizedTabName.trim();
+    const tabClean = normalizeCitationText(context.tabName);
     const mTab = tabClean.match(/^(?:chapter|ch\.?|adhyaya)?\s*(\d{1,3})$/i) || tabClean.match(/\b(\d{1,3})\b/);
     if (mTab && mTab[1]) {
       chNum = mTab[1];
     }
   }
 
-  // Pattern F: Existing chapter number if already present in question
+  // Pattern F: If not found in prefix, fallback to looking in the normalized full reference for a fraction
+  if (!chNum) {
+    const mFullFraction = fullNormalizedRef.match(
+      /(?:ca|su|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*(\d{1,3})\s*[\/:]\s*\d+/i
+    ) || fullNormalizedRef.match(/\b(\d{1,3})\s*[\/:]\s*\d+\b/);
+    if (mFullFraction && mFullFraction[1]) {
+      chNum = mFullFraction[1];
+    }
+  }
+
+  // Pattern G: Existing chapter number if already present in question
   if (!chNum && context?.existingChapter) {
     const mExist = context.existingChapter.match(/chapter\s*(\d{1,3})/i) || context.existingChapter.match(/\b(\d{1,3})\b/);
     if (mExist && mExist[1]) {
@@ -373,6 +485,33 @@ export function getCanonicalSthana(samhitaName: string, sthanaName: string): Sth
 }
 
 /**
+ * Verifies if a chapter tag is a valid classical tag:
+ * - Must be formatted as "Subject > Sthana > Chapter N"
+ * - N must be a valid number >= 1
+ * - If the Samhita is in CLASSICAL_SAMHITA_SCHEMA:
+ *   - Sthana must be a valid canonical Sthana
+ *   - N must not exceed the classical maxChapters for that Sthana
+ */
+export function isValidClassicalTag(tag?: string): boolean {
+  if (!tag || !tag.includes('>')) return false;
+  const parts = tag.split('>').map((p) => p.trim());
+  if (parts.length < 3) return false;
+  const [samhita, sthana, chapterStr] = parts;
+  const chMatch = chapterStr.match(/(\d+)/);
+  if (!chMatch) return false;
+  const chNum = parseInt(chMatch[1], 10);
+  if (chNum < 1) return false;
+
+  const schema = CLASSICAL_SAMHITA_SCHEMA[samhita];
+  if (schema) {
+    const canonical = getCanonicalSthana(samhita, sthana);
+    if (!canonical) return false; // Impossible sthana for this Samhita
+    if (chNum > canonical.maxChapters) return false; // Impossible chapter number
+  }
+  return true;
+}
+
+/**
  * Detects whether a question has:
  * 1. A Samhita conflict (e.g. citation mentions Sushruta/su.su while Question Text or Chapter Tag mentions Charaka)
  * 2. An impossible Sthana for that Samhita (e.g. Charaka Samhita > Uttarasthana / Uttaratantra)
@@ -384,31 +523,34 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
   const exp = String(q.explanation || '');
   const tag = String(q.chapterName || q.ch || '').trim();
 
-  // Combine reference, explanation, and first 350 chars of stem (where shlokas/citations often appear)
-  const citationPool = `${ref} ${exp} ${stem.slice(0, 350)}`;
-  const normalizedCitationPool = convertDevanagariNumerals(citationPool).toLowerCase();
+  // Extract prefix and normalize
+  const prefixRaw = extractCitationPrefix(ref, exp, stem);
+  const normalizedPrefix = normalizeCitationText(prefixRaw);
+  const fullNormalized = normalizeCitationText(`${ref} ${exp} ${stem.slice(0, 100)}`);
 
   // 1. Detect which Samhita the citation actually points to
   let citationSamhita: 'Sushruta Samhita' | 'Charaka Samhita' | 'Ashtanga Hridaya' | null = null;
   let citationEvidence = '';
 
+  const searchSamhita = `${normalizedPrefix} ${fullNormalized}`;
+
   if (
-    /su\.?\s*(?:su|ni|sha|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|sushrut|suśruta|सुश्रुत|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
-      normalizedCitationPool
+    /su\s*\.\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|sushrut|susruta|suśruta|सुश्रुत|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
+      searchSamhita
     )
   ) {
     citationSamhita = 'Sushruta Samhita';
     citationEvidence = 'Sushruta (su.su)';
   } else if (
-    /ca\.?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|charak|caraka|चरक|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
-      normalizedCitationPool
+    /ca\s*\.\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|charak|caraka|चरक|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
+      searchSamhita
     )
   ) {
     citationSamhita = 'Charaka Samhita';
     citationEvidence = 'Charaka (ca.su)';
   } else if (
-    /ashtang|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hṛdaya|हृदय|vagbhat|वाग्भट|a\.?\s*h\.?|a\.?\s*s\.?/i.test(
-      normalizedCitationPool
+    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hrdaya|हृदय|vagbhat|vāgbhaṭa|वाग्भट|a\s*\.\s*h\s*\.?|a\s*\.\s*s\s*\.?/i.test(
+      searchSamhita
     )
   ) {
     citationSamhita = 'Ashtanga Hridaya';
@@ -416,38 +558,47 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
   }
 
   // 2. Detect which Samhita is claimed by Chapter Tag and Question Text
-  const tagLower = tag.toLowerCase();
-  const stemLower = stem.toLowerCase();
+  const tagNormalized = normalizeCitationText(tag);
+  const stemNormalized = normalizeCitationText(stem);
 
   let claimedSamhita: 'Charaka Samhita' | 'Sushruta Samhita' | 'Ashtanga Hridaya' | null = null;
   if (
-    tagLower.includes('charaka') ||
-    stemLower.includes('acharya charak') ||
-    stemLower.includes('चरक के मतानुसार') ||
-    stemLower.includes('charaka samhita')
+    tagNormalized.includes('charak') ||
+    stemNormalized.includes('acharya charak') ||
+    stemNormalized.includes('चरक के मतानुसार') ||
+    stemNormalized.includes('charaka samhita')
   ) {
     claimedSamhita = 'Charaka Samhita';
   } else if (
-    tagLower.includes('sushrut') ||
-    stemLower.includes('sushruta') ||
-    stemLower.includes('सुश्रुत')
+    tagNormalized.includes('sushrut') ||
+    stemNormalized.includes('sushruta') ||
+    stemNormalized.includes('सुश्रुत')
   ) {
     claimedSamhita = 'Sushruta Samhita';
   } else if (
-    tagLower.includes('ashtang') ||
-    stemLower.includes('ashtanga') ||
-    stemLower.includes('अष्टाङ्ग')
+    tagNormalized.includes('ashtang') ||
+    stemNormalized.includes('ashtanga') ||
+    stemNormalized.includes('अष्टाङ्ग')
   ) {
     claimedSamhita = 'Ashtanga Hridaya';
   }
 
-  // Auto-detect best target tag using detectChapterInfo (inspecting citation + stem + explanation)
+  // Auto-detect best target tag using detectChapterInfo (inspecting citation prefix + stem + explanation)
   const detectedTarget = detectChapterInfo(ref, exp, { existingChapter: tag }, stem);
 
   // Check Condition 1: Samhita conflict between Citation vs Tag / Question text
   if (citationSamhita && claimedSamhita && citationSamhita !== claimedSamhita) {
     const citationShort = citationSamhita.replace(' Samhita', '');
     const claimedShort = claimedSamhita.replace(' Samhita', '');
+
+    let candidateTag = detectedTarget.fullChapterName;
+    if (!candidateTag.startsWith(citationSamhita)) {
+      candidateTag = `${citationSamhita} > ${detectedTarget.sthana} > ${detectedTarget.chapter}`;
+    }
+
+    const validSuggestedTag =
+      candidateTag !== tag && isValidClassicalTag(candidateTag) ? candidateTag : undefined;
+
     return {
       hasMismatch: true,
       type: 'samhita_conflict',
@@ -455,7 +606,7 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
       claimedSamhita,
       badgeLabel: `⚠️ Samhita Mismatch: Citation is ${citationShort}, Tag/Text says ${claimedShort}`,
       detailedMessage: `Citation points to ${citationSamhita} (${citationEvidence}), but the question is tagged or worded as ${claimedSamhita}.`,
-      suggestedTag: detectedTarget.fullChapterName,
+      suggestedTag: validSuggestedTag,
     };
   }
 
@@ -478,16 +629,17 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
         if (!canonicalSthana) {
           let targetSubject = 'Sushruta Samhita';
           let targetSthana = 'Uttaratantra';
-          if (/ashtang|aṣṭāṅga|vagbhat|वाग्भट|a\.h\.|ah\./i.test(citationPool)) {
+          if (/ashtang|astanga|vagbhat|वाग्भट|a\.h\.|ah\./i.test(fullNormalized)) {
             targetSubject = 'Ashtanga Hridaya';
             targetSthana = 'Uttarasthana';
           }
           if (chNum > 40) {
-            // Ashtanga Uttarasthana only has 40 chapters, so > 40 must be Sushruta
             targetSubject = 'Sushruta Samhita';
             targetSthana = 'Uttaratantra';
           }
-          const suggestedTag = `${targetSubject} > ${targetSthana} > Chapter ${chNum}`;
+          const candidateTag = `${targetSubject} > ${targetSthana} > Chapter ${chNum}`;
+          const validSuggestedTag =
+            candidateTag !== tag && isValidClassicalTag(candidateTag) ? candidateTag : undefined;
 
           return {
             hasMismatch: true,
@@ -495,22 +647,23 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
             citationSamhita: citationSamhita || targetSubject,
             claimedSamhita: samhitaName,
             badgeLabel: `⚠️ Impossible Sthana: ${samhitaName} has no ${sthanaName}`,
-            detailedMessage: `${samhitaName} strictly contains 8 classical Sthanas and has no ${sthanaName}. Auto-reassign to ${suggestedTag}.`,
-            suggestedTag,
+            detailedMessage: `${samhitaName} strictly contains 8 classical Sthanas and has no ${sthanaName}. Auto-reassign to ${candidateTag}.`,
+            suggestedTag: validSuggestedTag,
           };
         }
 
         // B. Impossible Chapter Number (e.g. Charaka Sutra > 30, Charaka Nidana > 8)
         if (chNum > canonicalSthana.maxChapters) {
-          let suggestedTag = detectedTarget.fullChapterName;
-          if (suggestedTag === tag) {
-            // If detectedTarget still matched the invalid tag, check if verse belongs to Sushruta
+          let candidateTag = detectedTarget.fullChapterName;
+          if (candidateTag === tag || !isValidClassicalTag(candidateTag)) {
             if (samhitaName === 'Charaka Samhita' && canonicalSthana.name === 'Sutrasthana' && chNum <= 46) {
-              suggestedTag = `Sushruta Samhita > Sutrasthana > Chapter ${chNum}`;
+              candidateTag = `Sushruta Samhita > Sutrasthana > Chapter ${chNum}`;
             } else {
-              suggestedTag = `${samhitaName} > ${canonicalSthana.name} > Chapter ${canonicalSthana.maxChapters}`;
+              candidateTag = `${samhitaName} > ${canonicalSthana.name} > Chapter ${canonicalSthana.maxChapters}`;
             }
           }
+          const validSuggestedTag =
+            candidateTag !== tag && isValidClassicalTag(candidateTag) ? candidateTag : undefined;
 
           return {
             hasMismatch: true,
@@ -519,7 +672,7 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
             claimedSamhita: samhitaName,
             badgeLabel: `⚠️ Impossible Chapter: ${samhitaName} ${canonicalSthana.name} has max ${canonicalSthana.maxChapters} chapters (Tagged as Ch ${chNum})`,
             detailedMessage: `${samhitaName} ${canonicalSthana.name} only contains ${canonicalSthana.maxChapters} chapters. Tagging as Chapter ${chNum} is invalid.`,
-            suggestedTag,
+            suggestedTag: validSuggestedTag,
           };
         }
       }
@@ -552,7 +705,12 @@ export function checkQuestionRemap(q: Question): {
 
   // Check if Samhita mismatch exists
   const mismatch = detectSamhitaMismatch(q);
-  if (mismatch.hasMismatch && mismatch.suggestedTag && mismatch.suggestedTag !== currentTag) {
+  if (
+    mismatch.hasMismatch &&
+    mismatch.suggestedTag &&
+    mismatch.suggestedTag !== currentTag &&
+    isValidClassicalTag(mismatch.suggestedTag)
+  ) {
     return {
       needsRemap: true,
       currentTag,
@@ -565,10 +723,16 @@ export function checkQuestionRemap(q: Question): {
     !currentTag ||
     currentTag === 'Charaka Samhita > Sutrasthana > Chapter 1' ||
     currentTag === 'Chapter 1' ||
-    currentTag === '1';
+    currentTag === '1' ||
+    currentTag.startsWith('Uncategorized');
 
-  // If currently generic and detected is different
-  if (isCurrentGeneric && detected.fullChapterName !== 'Charaka Samhita > Sutrasthana > Chapter 1') {
+  // If currently generic and detected is a specific valid tag
+  if (
+    isCurrentGeneric &&
+    detected.fullChapterName !== currentTag &&
+    detected.fullChapterName !== 'Charaka Samhita > Sutrasthana > Chapter 1' &&
+    isValidClassicalTag(detected.fullChapterName)
+  ) {
     return {
       needsRemap: true,
       currentTag: currentTag || 'Charaka Samhita > Sutrasthana > Chapter 1',
@@ -581,7 +745,9 @@ export function checkQuestionRemap(q: Question): {
   if (
     detected.subject !== 'Charaka Samhita' &&
     currentTag.startsWith('Charaka Samhita') &&
-    detected.source === 'citation'
+    detected.source === 'citation' &&
+    detected.fullChapterName !== currentTag &&
+    isValidClassicalTag(detected.fullChapterName)
   ) {
     return {
       needsRemap: true,
@@ -599,7 +765,9 @@ export function checkQuestionRemap(q: Question): {
     detectedChMatch &&
     currentChMatch[1] !== detectedChMatch[1] &&
     detected.source === 'citation' &&
-    detected.confidence === 'high'
+    detected.confidence === 'high' &&
+    detected.fullChapterName !== currentTag &&
+    isValidClassicalTag(detected.fullChapterName)
   ) {
     return {
       needsRemap: true,
