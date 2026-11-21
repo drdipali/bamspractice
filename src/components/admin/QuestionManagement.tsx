@@ -49,6 +49,8 @@ import {
   fetchGoogleSheetCsv,
   extractGoogleSheetCsvCandidates,
   SpreadsheetParseResult,
+  extractStatementsFromStem,
+  extractARFromStem,
 } from '../../utils/spreadsheetHelper';
 import { GoogleDriveService } from '../../services/googleDriveService';
 import {
@@ -323,10 +325,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     let aText = q.assertionText || '';
     let rText = q.reasonText || '';
     if ((!aText || !rText) && q.stem) {
-      const ma = (q.stem || '').match(/(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?)\s*[:\/\-]([\s\S]*?)(?=(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)|$)/i);
-      const mr = (q.stem || '').match(/(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]([\s\S]*?)$/i);
-      if (ma && !aText) aText = `Assertion (A): ${ma[1].trim()}`;
-      if (mr && !rText) rText = `Reason (R): ${mr[1].trim()}`;
+      const extracted = extractARFromStem(q.stem);
+      if (!aText && extracted.assertion) aText = extracted.assertion;
+      if (!rText && extracted.reason) rText = extracted.reason;
     }
     setAssertionText(aText);
     setReasonText(rText);
@@ -334,10 +335,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     let s1 = q.statement1 || '';
     let s2 = q.statement2 || '';
     if ((!s1 || !s2) && q.stem) {
-      const m1 = (q.stem || '').match(/(?:Statement\s*(?:I|1)|कथन\s*(?:I|1))\s*[:\/\-]([\s\S]*?)(?=(?:Statement\s*(?:II|2)|कथन\s*(?:II|2))|$)/i);
-      const m2 = (q.stem || '').match(/(?:Statement\s*(?:II|2)|कथन\s*(?:II|2))\s*[:\/\-]([\s\S]*?)$/i);
-      if (m1 && !s1) s1 = `Statement I: ${m1[1].trim()}`;
-      if (m2 && !s2) s2 = `Statement II: ${m2[1].trim()}`;
+      const extracted = extractStatementsFromStem(q.stem);
+      if (!s1 && extracted.statement1) s1 = extracted.statement1;
+      if (!s2 && extracted.statement2) s2 = extracted.statement2;
     }
     setStatement1(s1);
     setStatement2(s2);
@@ -445,16 +445,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       if (result.explanation !== undefined) {
         setExplanation(result.explanation);
       }
-      if (result.assertionText !== undefined) {
+      if (result.assertionText !== undefined && result.assertionText.trim()) {
         setAssertionText(result.assertionText);
+      } else if (result.questionType === 'assertion_reason') {
+        const ext = extractARFromStem(result.questionText);
+        if (ext.assertion) setAssertionText(ext.assertion);
+        if (ext.reason) setReasonText(ext.reason);
       }
-      if (result.reasonText !== undefined) {
+      if (result.reasonText !== undefined && result.reasonText.trim()) {
         setReasonText(result.reasonText);
       }
-      if (result.statement1 !== undefined) {
+      if (result.statement1 !== undefined && result.statement1.trim()) {
         setStatement1(result.statement1);
+      } else if (result.questionType === 'statement_type') {
+        const ext = extractStatementsFromStem(result.questionText);
+        if (ext.statement1) setStatement1(ext.statement1);
+        if (ext.statement2) setStatement2(ext.statement2);
       }
-      if (result.statement2 !== undefined) {
+      if (result.statement2 !== undefined && result.statement2.trim()) {
         setStatement2(result.statement2);
       }
       if (result.suggestedChapterTag && result.suggestedChapterTag.trim()) {
@@ -495,6 +503,153 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
   };
 
+  const handleSelectQuestionType = (type: QuestionType) => {
+    setQType(type);
+    if (type === 'statement_type') {
+      let curS1 = statement1.trim();
+      let curS2 = statement2.trim();
+      if (!curS1 || !curS2) {
+        const ext = extractStatementsFromStem(stem);
+        if (!curS1 && ext.statement1) {
+          curS1 = ext.statement1;
+          setStatement1(curS1);
+        }
+        if (!curS2 && ext.statement2) {
+          curS2 = ext.statement2;
+          setStatement2(curS2);
+        }
+      }
+      const isOptionsEmpty = options.every((o) => !o.trim());
+      const isOptionsStandardMCQ = options.every(
+        (o) => !o.includes('Statement') && !o.includes('कथन')
+      );
+      if (isOptionsEmpty || isOptionsStandardMCQ) {
+        setOptions([...STANDARD_STATEMENT_OPTIONS]);
+      }
+    } else if (type === 'assertion_reason') {
+      let curA = assertionText.trim();
+      let curR = reasonText.trim();
+      if (!curA || !curR) {
+        const ext = extractARFromStem(stem);
+        if (!curA && ext.assertion) {
+          curA = ext.assertion;
+          setAssertionText(curA);
+        }
+        if (!curR && ext.reason) {
+          curR = ext.reason;
+          setReasonText(curR);
+        }
+      }
+      const isOptionsEmpty = options.every((o) => !o.trim());
+      const isOptionsStandardMCQ = options.every(
+        (o) => !o.includes('(A)') && !o.includes('(R)')
+      );
+      if (isOptionsEmpty || isOptionsStandardMCQ) {
+        setOptions([...STANDARD_AR_OPTIONS]);
+      }
+    }
+  };
+
+  const handleQuickConversion = async (chip: (typeof AI_QUICK_CHIPS)[0]) => {
+    if (chip.label === 'Convert to Statement I & II') {
+      setQType('statement_type');
+      let extractedS1 = statement1.trim();
+      let extractedS2 = statement2.trim();
+      if (!extractedS1 || !extractedS2) {
+        const extracted = extractStatementsFromStem(stem);
+        extractedS1 = extractedS1 || extracted.statement1;
+        extractedS2 = extractedS2 || extracted.statement2;
+      }
+      if (extractedS1) setStatement1(extractedS1);
+      if (extractedS2) setStatement2(extractedS2);
+
+      // Set standard statement options
+      setOptions([...STANDARD_STATEMENT_OPTIONS]);
+
+      // If stem doesn't have the clean prompt, construct it
+      if (extractedS1 || extractedS2) {
+        const intro =
+          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+        const s1Formatted = extractedS1.startsWith('Statement I')
+          ? extractedS1
+          : `Statement I: ${extractedS1}`;
+        const s2Formatted = extractedS2.startsWith('Statement II')
+          ? extractedS2
+          : `Statement II: ${extractedS2}`;
+        setStem(`${intro}\n\n${s1Formatted}\n\n${s2Formatted}`);
+      }
+
+      showToast('Converted to Statement I & II format! Review fields below.');
+
+      // Check if AI key is available to also run AI refinement in background
+      try {
+        const key = await GeminiService.getApiKey();
+        if (key) {
+          handleRunAI(chip.instruction, chip.actionName);
+        }
+      } catch (e) {
+        // AI refinement optional
+      }
+      return;
+    }
+
+    if (chip.label === 'Convert to Assertion–Reason') {
+      setQType('assertion_reason');
+      let extractedA = assertionText.trim();
+      let extractedR = reasonText.trim();
+      if (!extractedA || !extractedR) {
+        const extracted = extractARFromStem(stem);
+        extractedA = extractedA || extracted.assertion;
+        extractedR = extractedR || extracted.reason;
+      }
+      if (extractedA) setAssertionText(extractedA);
+      if (extractedR) setReasonText(extractedR);
+
+      setOptions([...STANDARD_AR_OPTIONS]);
+
+      if (extractedA || extractedR) {
+        const intro =
+          'Given below are two statements: One is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को कारण (R) कहा गया है।';
+        const aFormatted = extractedA.startsWith('Assertion')
+          ? extractedA
+          : `Assertion (A): ${extractedA}`;
+        const rFormatted = extractedR.startsWith('Reason')
+          ? extractedR
+          : `Reason (R): ${extractedR}`;
+        setStem(`${intro}\n\n${aFormatted}\n\n${rFormatted}`);
+      }
+
+      showToast('Converted to Assertion–Reason format! Review fields below.');
+
+      try {
+        const key = await GeminiService.getApiKey();
+        if (key) {
+          handleRunAI(chip.instruction, chip.actionName);
+        }
+      } catch (e) {
+        // AI refinement optional
+      }
+      return;
+    }
+
+    if (chip.label === 'Convert to Direct MCQ') {
+      setQType('standard');
+      showToast('Converted to Standard MCQ format!');
+      try {
+        const key = await GeminiService.getApiKey();
+        if (key) {
+          handleRunAI(chip.instruction, chip.actionName);
+        }
+      } catch (e) {
+        // AI refinement optional
+      }
+      return;
+    }
+
+    // Default (e.g. Fix Bilingual Hindi): call AI
+    handleRunAI(chip.instruction, chip.actionName);
+  };
+
   // Save (Create or Update) Question
   const handleSaveQuestion = async () => {
     if (!stem.trim()) {
@@ -506,15 +661,41 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       return;
     }
 
+    let finalA = assertionText.trim();
+    let finalR = reasonText.trim();
     if (qType === 'assertion_reason') {
-      if (!assertionText.trim() && !stem.includes('A:')) {
+      if ((!finalA || !finalR) && stem.trim()) {
+        const ext = extractARFromStem(stem);
+        if (!finalA && ext.assertion) {
+          finalA = ext.assertion;
+          setAssertionText(finalA);
+        }
+        if (!finalR && ext.reason) {
+          finalR = ext.reason;
+          setReasonText(finalR);
+        }
+      }
+      if (!finalA && !stem.includes('A:')) {
         alert('Please enter the Assertion (A) text.');
         return;
       }
     }
 
+    let finalS1 = statement1.trim();
+    let finalS2 = statement2.trim();
     if (qType === 'statement_type') {
-      if (!statement1.trim() && !statement2.trim() && !stem.includes('Statement I')) {
+      if ((!finalS1 || !finalS2) && stem.trim()) {
+        const ext = extractStatementsFromStem(stem);
+        if (!finalS1 && ext.statement1) {
+          finalS1 = ext.statement1;
+          setStatement1(finalS1);
+        }
+        if (!finalS2 && ext.statement2) {
+          finalS2 = ext.statement2;
+          setStatement2(finalS2);
+        }
+      }
+      if (!finalS1 && !finalS2 && !stem.includes('Statement I')) {
         alert('Please enter Statement I and Statement II.');
         return;
       }
@@ -538,10 +719,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         o: cleanOptions,
         r: refSource.trim() || undefined,
         explanation: explanation.trim() || undefined,
-        assertionText: qType === 'assertion_reason' ? assertionText.trim() : undefined,
-        reasonText: qType === 'assertion_reason' ? reasonText.trim() : undefined,
-        statement1: qType === 'statement_type' ? statement1.trim() : undefined,
-        statement2: qType === 'statement_type' ? statement2.trim() : undefined,
+        assertionText: qType === 'assertion_reason' ? (finalA || undefined) : undefined,
+        reasonText: qType === 'assertion_reason' ? (finalR || undefined) : undefined,
+        statement1: qType === 'statement_type' ? (finalS1 || undefined) : undefined,
+        statement2: qType === 'statement_type' ? (finalS2 || undefined) : undefined,
         matchPairs: qType === 'match_the_pair' ? matchPairs : undefined,
         is_chapter_verified: isChapterVerifiedField,
         isChapterVerified: isChapterVerifiedField,
@@ -1486,7 +1667,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <FileSpreadsheet size={22} color={THEME.colors.brand} />
                 <View>
-                  <Text style={styles.modalTitle}>Bulk Upload Questions (Excel / CSV)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={styles.modalTitle}>Bulk Upload Questions (Excel / CSV)</Text>
+                    <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>v1.2.3 Online</Text>
+                    </View>
+                  </View>
                   <Text style={styles.modalSubtitle}>
                     Supports .xlsx, .xls, and .csv with strict UTF-8 Hindi &amp; Sanskrit Devanagari preservation.
                   </Text>
@@ -1958,7 +2144,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     <TouchableOpacity
                       key={type}
                       style={[styles.typePill, qType === type && styles.typePillActive]}
-                      onPress={() => setQType(type)}
+                      onPress={() => handleSelectQuestionType(type)}
                     >
                       <Text style={[styles.typePillText, qType === type && styles.typePillTextActive]}>
                         {QUESTION_TYPE_LABELS[type]}
@@ -2186,7 +2372,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                         styles.aiQuickChip,
                         isAiRephrasing && { opacity: 0.5 },
                       ]}
-                      onPress={() => handleRunAI(chip.instruction, chip.actionName)}
+                      onPress={() => handleQuickConversion(chip)}
                       disabled={isAiRephrasing}
                       activeOpacity={0.7}
                     >
@@ -3219,7 +3405,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           style={styles.badgeVerified}
                           onPress={() => handleQuickToggleVerify(q)}
                           activeOpacity={0.8}
-                          title="Click to toggle verification status"
+                          accessibilityLabel="Click to toggle verification status"
                         >
                           <Check size={10} color="#047857" strokeWidth={2.5} />
                           <Text style={styles.badgeVerifiedText}>✓ Chapter-Verified</Text>
@@ -3229,7 +3415,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           style={styles.badgeUnverifiedBtn}
                           onPress={() => handleQuickToggleVerify(q)}
                           activeOpacity={0.8}
-                          title="Click to mark as Chapter-Verified"
+                          accessibilityLabel="Click to mark as Chapter-Verified"
                         >
                           <Text style={styles.badgeUnverifiedBtnText}>+ Verify</Text>
                         </TouchableOpacity>
@@ -3516,7 +3702,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   <RefreshCw size={20} color="#4338CA" />
                   <View>
                     <Text style={styles.modalTitle}>Smart Citation Auto-Mapper</Text>
-                    <Text style={styles.modalSub}>
+                    <Text style={styles.modalSubtitle}>
                       Automatically detect Subject, Sthana &amp; Chapter from citations and shloka references
                     </Text>
                   </View>
@@ -5749,6 +5935,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#475569',
     marginBottom: 4,
+  },
+  checkboxBoxSmall: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   uploadVerifyToggleRow: {
     flexDirection: 'row',

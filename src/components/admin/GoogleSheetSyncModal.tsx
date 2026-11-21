@@ -212,7 +212,7 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={styles.modalTitle}>Import from Google Sheet</Text>
                   <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>v1.2 Online</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>v1.2.3 Online</Text>
                   </View>
                 </View>
                 <Text style={styles.modalSubtitle}>

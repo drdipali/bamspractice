@@ -281,19 +281,107 @@ export function calculateGoogleSheetPreview(
   };
 }
 
-const STANDARD_AR_OPTIONS = [
+export const STANDARD_AR_OPTIONS = [
   'Both (A) and (R) are true and (R) is the correct explanation of (A) / (A) और (R) दोनों सही हैं और (R), (A) की सही व्याख्या है',
   'Both (A) and (R) are true but (R) is NOT the correct explanation of (A) / (A) और (R) दोनों सही हैं परंतु (R), (A) की सही व्याख्या नहीं है',
   '(A) is true but (R) is false / (A) सही है परंतु (R) सही नहीं है',
   '(A) is false but (R) is true / (A) सही नहीं है परंतु (R) सही है',
 ];
 
-const STANDARD_STATEMENT_OPTIONS = [
+export const STANDARD_STATEMENT_OPTIONS = [
   'Both Statement I and Statement II are correct / दोनों कथन I और II सही हैं',
   'Both Statement I and Statement II are incorrect / दोनों कथन I और II गलत हैं',
   'Statement I is correct but Statement II is incorrect / कथन I सही है परंतु कथन II गलत है',
   'Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है',
 ];
+
+/**
+ * Extracts Statement I and Statement II from a question stem with support for
+ * English ("Statement I / 1"), Devanagari Hindi ("कथन I / 1 / एक"), and bilingual combinations.
+ * Avoids matching "Statement I" inside intro prompts or inside "Statement II" by using
+ * strict negative lookahead `(?:I(?!I)|1\b)` and stripping standard AIAPGET intros.
+ */
+export function extractStatementsFromStem(stem: string): {
+  statement1: string;
+  statement2: string;
+} {
+  let statement1 = '';
+  let statement2 = '';
+  if (!stem) return { statement1, statement2 };
+
+  let s = stem.trim();
+  // Strip standard intro prompt lines if present
+  s = s.replace(/Given below are two statements:[^\n]*(\n|$)/gi, '');
+  s = s.replace(/नीचे दो कथन दिए गए हैं:[^\n]*(\n|$)/gi, '');
+  s = s.trim();
+
+  // Primary: Match Statement I (not II) up to Statement II
+  const p1 = /(?:^|\n|\.\s+|;\s+)(?:Statement\s*(?:I(?!I)|1\b)|कथन\s*(?:I(?!I)|1\b|एक\b))\s*[:\/\-]\s*([\s\S]*?)(?=(?:\n|\.\s+|;\s+)(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*|$)/i;
+  const p2 = /(?:\n|\.\s+|;\s+|^)(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*([\s\S]*?)$/i;
+
+  const m1 = s.match(p1);
+  const m2 = s.match(p2);
+
+  if (m1 && m1[1].trim()) statement1 = m1[1].trim();
+  if (m2 && m2[1].trim()) statement2 = m2[1].trim();
+
+  // Fallback: If not matched with line starts
+  if (!statement1 || !statement2) {
+    const f1 = /(?:Statement\s*(?:I(?!I)|1\b)|कथन\s*(?:I(?!I)|1\b|एक\b))\s*[:\/\-]\s*([\s\S]*?)(?=(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*|$)/i;
+    const f2 = /(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*([\s\S]*?)$/i;
+    const mf1 = s.match(f1);
+    const mf2 = s.match(f2);
+    if (!statement1 && mf1 && mf1[1].trim()) statement1 = mf1[1].trim();
+    if (!statement2 && mf2 && mf2[1].trim()) statement2 = mf2[1].trim();
+  }
+
+  // Clean any trailing Statement II or कथन II left at end of statement1
+  statement1 = statement1.replace(/(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))[\s:\/\-]*$/i, '').trim();
+  statement2 = statement2.trim();
+
+  return { statement1, statement2 };
+}
+
+/**
+ * Extracts Assertion (A) and Reason (R) from a question stem with support for
+ * English ("Assertion (A)", "A:"), Hindi ("अभिकथन (A)"), and bilingual formats.
+ */
+export function extractARFromStem(stem: string): {
+  assertion: string;
+  reason: string;
+} {
+  let assertion = '';
+  let reason = '';
+  if (!stem) return { assertion, reason };
+
+  let s = stem.trim();
+  s = s.replace(/Given below are two statements:[^\n]*(\n|$)/gi, '');
+  s = s.replace(/नीचे दो कथन दिए गए हैं:[^\n]*(\n|$)/gi, '');
+  s = s.trim();
+
+  const pa = /(?:^|\n|\.\s+|;\s+)(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?|A)\s*[:\/\-]\s*([\s\S]*?)(?=(?:\n|\.\s+|;\s+)(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?|R)\s*[:\/\-]\s*|$)/i;
+  const pr = /(?:\n|\.\s+|;\s+|^)(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?|R)\s*[:\/\-]\s*([\s\S]*?)$/i;
+
+  const ma = s.match(pa);
+  const mr = s.match(pr);
+
+  if (ma && ma[1].trim()) assertion = ma[1].trim();
+  if (mr && mr[1].trim()) reason = mr[1].trim();
+
+  if (!assertion || !reason) {
+    const fa = /(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?)\s*[:\/\-]\s*([\s\S]*?)(?=(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]\s*|$)/i;
+    const fr = /(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]\s*([\s\S]*?)$/i;
+    const mfa = s.match(fa);
+    const mfr = s.match(fr);
+    if (!assertion && mfa && mfa[1].trim()) assertion = mfa[1].trim();
+    if (!reason && mfr && mfr[1].trim()) reason = mfr[1].trim();
+  }
+
+  assertion = assertion.replace(/(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]*$/i, '').trim();
+  reason = reason.trim();
+
+  return { assertion, reason };
+}
 
 export interface WorkbookTabResult {
   sheetName: string;
@@ -308,8 +396,9 @@ export interface WorkbookTabResult {
  */
 export function parseSpreadsheetBuffer(
   buffer: ArrayBuffer | Uint8Array | string,
-  contextHint?: ContextHints
+  contextHint: ContextHints = {}
 ): SpreadsheetParseResult {
+  const safeHints: ContextHints = contextHint || {};
   let workbook: XLSX.WorkBook;
 
   try {
@@ -340,7 +429,7 @@ export function parseSpreadsheetBuffer(
     blankrows: false,
   });
 
-  return parseSpreadsheetRows(rawRows, contextHint);
+  return parseSpreadsheetRows(rawRows, safeHints);
 }
 
 /**
@@ -348,8 +437,9 @@ export function parseSpreadsheetBuffer(
  */
 export function parseWorkbookAllTabs(
   buffer: ArrayBuffer | Uint8Array | string,
-  contextHint?: ContextHints
+  contextHint: ContextHints = {}
 ): WorkbookTabResult[] {
+  const safeHints: ContextHints = contextHint || {};
   let workbook: XLSX.WorkBook;
 
   try {
@@ -386,9 +476,9 @@ export function parseWorkbookAllTabs(
     });
 
     const parsed = parseSpreadsheetRows(rawRows, {
-      fileName: contextHint?.fileName,
+      fileName: safeHints.fileName,
       tabName: sheetName,
-      defaultSubject: contextHint?.defaultSubject,
+      defaultSubject: safeHints.defaultSubject,
     });
     results.push({
       sheetName,
@@ -408,8 +498,9 @@ export function parseWorkbookAllTabs(
  */
 export function parseSpreadsheetRows(
   rawRows: any[][],
-  contextHint?: ContextHints
+  contextHint: ContextHints = {}
 ): SpreadsheetParseResult {
+  const safeHints: ContextHints = contextHint || {};
   if (!rawRows || rawRows.length < 1) {
     return {
       validQuestions: [],
@@ -644,10 +735,10 @@ export function parseSpreadsheetRows(
       fullChapterName = chapter;
     } else {
       const detected = detectChapterInfo(effectiveRef, explanation, {
-        fileName: contextHint?.fileName,
-        tabName: contextHint?.tabName,
+        fileName: safeHints.fileName,
+        tabName: safeHints.tabName,
         existingChapter: chapter || sthana,
-        defaultSubject: subject || contextHint?.defaultSubject,
+        defaultSubject: subject || safeHints.defaultSubject,
       });
       fullChapterName = detected.fullChapterName;
     }
@@ -702,11 +793,31 @@ export function parseSpreadsheetRows(
     if (rawDiff.includes('easy') || rawDiff === '0') difficulty = 0;
     else if (rawDiff.includes('hard') || rawDiff === '2' || questionType === 'assertion_reason') difficulty = 2;
 
+    // 8. Auto-extract Statements and Assertion/Reason fields
+    let statement1: string | undefined = undefined;
+    let statement2: string | undefined = undefined;
+    let assertionText: string | undefined = undefined;
+    let reasonText: string | undefined = undefined;
+
+    if (questionType === 'statement_type') {
+      const extracted = extractStatementsFromStem(effectiveStem);
+      statement1 = extracted.statement1 || undefined;
+      statement2 = extracted.statement2 || undefined;
+    } else if (questionType === 'assertion_reason') {
+      const extracted = extractARFromStem(effectiveStem);
+      assertionText = extracted.assertion || undefined;
+      reasonText = extracted.reason || undefined;
+    }
+
     validQuestions.push({
       ch: fullChapterName,
       chapterName: fullChapterName,
       questionType,
       stem: effectiveStem,
+      statement1,
+      statement2,
+      assertionText,
+      reasonText,
       o: options.slice(0, 4),
       c: correctAnswer,
       d: difficulty,

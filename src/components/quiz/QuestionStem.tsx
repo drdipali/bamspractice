@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { ArrowRight, Layers, HelpCircle, Columns } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Language, Question } from '../../types';
+import { extractStatementsFromStem, extractARFromStem } from '../../utils/spreadsheetHelper';
 
 interface QuestionStemProps {
   question: Question;
@@ -23,6 +24,14 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
 
   // Assertion / Reason Rendering
   if (qType === 'assertion_reason') {
+    let aText = question.assertionText;
+    let rText = question.reasonText;
+    if ((!aText || !rText) && question.stem) {
+      const extracted = extractARFromStem(question.stem);
+      aText = aText || extracted.assertion;
+      rText = rText || extracted.reason;
+    }
+
     return (
       <View style={styles.container}>
         {renderBadge('Assertion & Reason', '#FEF9C3', '#854D0E')}
@@ -38,7 +47,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
             <Text style={styles.statementBadgeTextA}>Assertion (A)</Text>
           </View>
           <Text style={styles.statementContent}>
-            {question.assertionText || 'Assertion statement not specified.'}
+            {aText || 'Assertion statement not specified.'}
           </Text>
         </View>
 
@@ -48,7 +57,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
             <Text style={styles.statementBadgeTextR}>Reason (R)</Text>
           </View>
           <Text style={styles.statementContent}>
-            {question.reasonText || 'Reason statement not specified.'}
+            {rText || 'Reason statement not specified.'}
           </Text>
         </View>
 
@@ -104,6 +113,14 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
 
   // Statement Type Rendering
   if (qType === 'statement_type') {
+    let s1 = question.statement1;
+    let s2 = question.statement2;
+    if ((!s1 || !s2) && question.stem) {
+      const extracted = extractStatementsFromStem(question.stem);
+      s1 = s1 || extracted.statement1;
+      s2 = s2 || extracted.statement2;
+    }
+
     return (
       <View style={styles.container}>
         {renderBadge('Statement Type', '#E0E7FF', '#4338CA')}
@@ -117,7 +134,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
             <Text style={[styles.statementBadgeTextA, { color: '#3730A3' }]}>Statement I</Text>
           </View>
           <Text style={styles.statementContent}>
-            {question.statement1 || 'Statement I not specified.'}
+            {s1 || 'Statement I not specified.'}
           </Text>
         </View>
 
@@ -126,7 +143,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
             <Text style={[styles.statementBadgeTextR, { color: '#4338CA' }]}>Statement II</Text>
           </View>
           <Text style={styles.statementContent}>
-            {question.statement2 || 'Statement II not specified.'}
+            {s2 || 'Statement II not specified.'}
           </Text>
         </View>
 

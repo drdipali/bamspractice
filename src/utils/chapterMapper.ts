@@ -90,14 +90,15 @@ export interface ContextHints {
 export function detectChapterInfo(
   citation?: string,
   explanation?: string,
-  context?: ContextHints,
+  context: ContextHints = {},
   stem?: string
 ): DetectedChapterInfo {
+  const safeContext: ContextHints = context || {};
   // 1. Extract only the citation prefix (~60 chars) - NEVER search the full Sanskrit shloka body for Sthana keywords!
   const prefixRaw = extractCitationPrefix(citation, explanation, stem);
   const normalizedPrefix = normalizeCitationText(prefixRaw);
-  const normalizedFileName = normalizeCitationText(context?.fileName || '');
-  const normalizedTabName = normalizeCitationText(context?.tabName || '');
+  const normalizedFileName = normalizeCitationText(safeContext.fileName || '');
+  const normalizedTabName = normalizeCitationText(safeContext.tabName || '');
   const combinedContext = `${normalizedFileName} ${normalizedTabName}`.trim();
   const searchPrefix = `${normalizedPrefix} ${combinedContext}`.trim();
 
@@ -119,7 +120,7 @@ export function detectChapterInfo(
     subjectSource = 'citation';
   } else if (/sushrut|susruta|suśruta|सुश्रुत/i.test(combinedContext)) {
     subject = 'Sushruta Samhita';
-    subjectSource = context?.fileName ? 'filename' : 'tabname';
+    subjectSource = safeContext.fileName ? 'filename' : 'tabname';
   }
   // Charaka Samhita check
   else if (
@@ -132,7 +133,7 @@ export function detectChapterInfo(
     subjectSource = 'citation';
   } else if (/charak|caraka|चरक/i.test(combinedContext)) {
     subject = 'Charaka Samhita';
-    subjectSource = context?.fileName ? 'filename' : 'tabname';
+    subjectSource = safeContext.fileName ? 'filename' : 'tabname';
   }
   // Ashtanga Hridaya check
   else if (
@@ -173,12 +174,12 @@ export function detectChapterInfo(
     subjectSource = 'citation';
   }
   // Existing breadcrumb check
-  else if (context?.existingChapter && context.existingChapter.includes('>')) {
-    const parts = context.existingChapter.split('>').map((p) => p.trim());
+  else if (safeContext.existingChapter && safeContext.existingChapter.includes('>')) {
+    const parts = safeContext.existingChapter.split('>').map((p) => p.trim());
     subject = parts[0] || 'Uncategorized / Needs Review';
     subjectSource = 'existing';
-  } else if (context?.defaultSubject) {
-    subject = context.defaultSubject;
+  } else if (safeContext.defaultSubject) {
+    subject = safeContext.defaultSubject;
     subjectSource = 'default';
   } else {
     subject = 'Uncategorized / Needs Review';
@@ -270,8 +271,8 @@ export function detectChapterInfo(
     sthana = 'Sutrasthana';
   } else {
     // If context has existing sthana
-    if (context?.existingChapter && context.existingChapter.includes('>')) {
-      const parts = context.existingChapter.split('>').map((p) => p.trim());
+    if (safeContext.existingChapter && safeContext.existingChapter.includes('>')) {
+      const parts = safeContext.existingChapter.split('>').map((p) => p.trim());
       sthana = parts[1] || (subject === 'Uncategorized / Needs Review' ? 'General' : 'Sutrasthana');
     } else {
       sthana = subject.includes('Nidana')
@@ -320,8 +321,8 @@ export function detectChapterInfo(
   }
 
   // Pattern E: Tab Name or File Name is just a number
-  if (!chNum && context?.tabName) {
-    const tabClean = normalizeCitationText(context.tabName);
+  if (!chNum && safeContext.tabName) {
+    const tabClean = normalizeCitationText(safeContext.tabName);
     const mTab = tabClean.match(/^(?:chapter|ch\.?|adhyaya)?\s*(\d{1,3})$/i) || tabClean.match(/\b(\d{1,3})\b/);
     if (mTab && mTab[1]) {
       chNum = mTab[1];
@@ -339,8 +340,8 @@ export function detectChapterInfo(
   }
 
   // Pattern G: Existing chapter number if already present in question
-  if (!chNum && context?.existingChapter) {
-    const mExist = context.existingChapter.match(/chapter\s*(\d{1,3})/i) || context.existingChapter.match(/\b(\d{1,3})\b/);
+  if (!chNum && safeContext.existingChapter) {
+    const mExist = safeContext.existingChapter.match(/chapter\s*(\d{1,3})/i) || safeContext.existingChapter.match(/\b(\d{1,3})\b/);
     if (mExist && mExist[1]) {
       chNum = mExist[1];
     }

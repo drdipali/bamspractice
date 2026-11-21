@@ -141,7 +141,12 @@ export const AdminDashboard: React.FC = () => {
             <Shield size={20} color={THEME.colors.brandInk} />
           </View>
           <View>
-            <Text style={styles.headerTitle}>BAMS Cloud Admin Console</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.headerTitle}>BAMS Cloud Admin Console</Text>
+              <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>v1.2.3 Online</Text>
+              </View>
+            </View>
             <Text style={styles.headerSubtitle}>
               Logged in as <Text style={{ fontWeight: '700' }}>{currentUser?.email}</Text>
             </Text>

@@ -397,12 +397,6 @@ export const ChapterTree: React.FC = () => {
                                           numberOfLines={1}
                                         >
                                           Chapter {chapter.n}
-                                          {chapter.id === 0 && (
-                                            <Text style={styles.realTag}>
-                                              {' '}
-                                              · 90 real MCQs
-                                            </Text>
-                                          )}
                                         </Text>
 
                                         <View style={styles.chapterRightRow}>
