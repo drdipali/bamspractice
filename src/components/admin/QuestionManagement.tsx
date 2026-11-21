@@ -2851,7 +2851,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 ) : (
                   <>
                     <Check size={12} color="#FFF" strokeWidth={2.5} />
-                    <Text style={styles.btnMultiSelectActionText}>Mark Selected Verified</Text>
+                    <Text style={styles.btnMultiSelectActionText}>Mark Selected as Chapter-Verified</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -3022,7 +3022,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                           title="Click to toggle verification status"
                         >
                           <Check size={10} color="#047857" strokeWidth={2.5} />
-                          <Text style={styles.badgeVerifiedText}>✓ Verified</Text>
+                          <Text style={styles.badgeVerifiedText}>✓ Chapter-Verified</Text>
                         </TouchableOpacity>
                       ) : (
                         <TouchableOpacity

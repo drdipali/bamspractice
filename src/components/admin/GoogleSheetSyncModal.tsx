@@ -33,6 +33,7 @@ import {
   GoogleSheetPreviewStats,
 } from '../../utils/spreadsheetHelper';
 import { backend } from '../../services/backend';
+import { CLASSICAL_SAMHITA_SCHEMA } from '../../utils/chapterMapper';
 
 const DEFAULT_SHEET_URL_KEY = 'bams_default_google_sheet_url_v1';
 const FALLBACK_DEFAULT_URL =
@@ -64,6 +65,10 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
   const [previewStats, setPreviewStats] = useState<GoogleSheetPreviewStats | null>(null);
   const [duplicateMode, setDuplicateMode] = useState<'skip' | 'overwrite'>('skip');
   const [showErrorDetails, setShowErrorDetails] = useState<boolean>(false);
+  const [sheetTargetSamhita, setSheetTargetSamhita] = useState<string>('Charaka Samhita');
+  const [sheetTargetSthana, setSheetTargetSthana] = useState<string>('Sutrasthana');
+  const [sheetTargetChapter, setSheetTargetChapter] = useState<string>('Chapter 1');
+  const [sheetMarkVerified, setSheetMarkVerified] = useState<boolean>(true);
 
   // Load saved default Google Sheet URL on open
   useEffect(() => {
@@ -165,8 +170,17 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
 
     setIsImporting(true);
     try {
+      const targetTag = `${sheetTargetSamhita} > ${sheetTargetSthana} > ${sheetTargetChapter}`;
+      const questionsToImport = previewStats.validQuestions.map((q) => ({
+        ...q,
+        ch: targetTag,
+        chapterName: targetTag,
+        is_chapter_verified: sheetMarkVerified,
+        isChapterVerified: sheetMarkVerified,
+      }));
+
       const result = await backend.syncGoogleSheetQuestions(
-        previewStats.validQuestions,
+        questionsToImport,
         duplicateMode
       );
 
@@ -213,9 +227,147 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
 
           {/* Modal Scrollable Body */}
           <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={true}>
-            {/* Step 1: URL Input Card */}
+            {/* Step 1: Classical Chapter Mapping & Verification Selector */}
+            <View style={styles.targetCard}>
+              <Text style={styles.targetCardTitle}>1. Target Chapter Mapping &amp; Verification</Text>
+              <Text style={styles.targetCardSub}>
+                Assign all imported questions to a specific classical chapter and mark as Chapter-Verified for student practice:
+              </Text>
+
+              <View style={styles.selectorsRow}>
+                {/* Samhita Selector */}
+                <View style={styles.selectCol}>
+                  <Text style={styles.selectLabel}>Samhita / Subject</Text>
+                  <select
+                    value={sheetTargetSamhita}
+                    onChange={(e) => {
+                      const sName = e.target.value;
+                      setSheetTargetSamhita(sName);
+                      const sthList = CLASSICAL_SAMHITA_SCHEMA[sName]?.sthanas || [];
+                      if (sthList.length > 0) {
+                        setSheetTargetSthana(sthList[0].name);
+                        setSheetTargetChapter('Chapter 1');
+                      }
+                    }}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #CBD5E1',
+                      backgroundColor: '#FFFFFF',
+                      fontSize: 13,
+                      fontWeight: '600',
+                      color: '#0F172A',
+                      width: '100%',
+                    }}
+                  >
+                    {Object.keys(CLASSICAL_SAMHITA_SCHEMA).map((sName) => (
+                      <option key={sName} value={sName}>
+                        {sName}
+                      </option>
+                    ))}
+                  </select>
+                </View>
+
+                {/* Sthana Selector */}
+                <View style={styles.selectCol}>
+                  <Text style={styles.selectLabel}>Sthana / Section</Text>
+                  <select
+                    value={sheetTargetSthana}
+                    onChange={(e) => {
+                      setSheetTargetSthana(e.target.value);
+                      setSheetTargetChapter('Chapter 1');
+                    }}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #CBD5E1',
+                      backgroundColor: '#FFFFFF',
+                      fontSize: 13,
+                      fontWeight: '600',
+                      color: '#0F172A',
+                      width: '100%',
+                    }}
+                  >
+                    {(CLASSICAL_SAMHITA_SCHEMA[sheetTargetSamhita]?.sthanas || []).map((sth) => (
+                      <option key={sth.name} value={sth.name}>
+                        {sth.name} ({sth.maxChapters} Chs)
+                      </option>
+                    ))}
+                  </select>
+                </View>
+
+                {/* Chapter Selector */}
+                <View style={styles.selectCol}>
+                  <Text style={styles.selectLabel}>Chapter</Text>
+                  <select
+                    value={sheetTargetChapter}
+                    onChange={(e) => setSheetTargetChapter(e.target.value)}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #CBD5E1',
+                      backgroundColor: '#FFFFFF',
+                      fontSize: 13,
+                      fontWeight: '600',
+                      color: '#0F172A',
+                      width: '100%',
+                    }}
+                  >
+                    {Array.from(
+                      {
+                        length:
+                          CLASSICAL_SAMHITA_SCHEMA[sheetTargetSamhita]?.sthanas.find(
+                            (s) => s.name === sheetTargetSthana
+                          )?.maxChapters || 30,
+                      },
+                      (_, i) => `Chapter ${i + 1}`
+                    ).map((ch) => (
+                      <option key={ch} value={ch}>
+                        {ch}
+                      </option>
+                    ))}
+                  </select>
+                </View>
+              </View>
+
+              {/* Checked-by-default Toggle: Mark as Chapter-Verified */}
+              <TouchableOpacity
+                style={styles.verifyToggleRow}
+                onPress={() => setSheetMarkVerified(!sheetMarkVerified)}
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[
+                    styles.checkboxBox,
+                    sheetMarkVerified && styles.checkboxBoxActive,
+                  ]}
+                >
+                  {sheetMarkVerified && <Check size={12} color="#FFF" strokeWidth={3} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.verifyToggleText}>
+                    ✅ Mark uploaded questions as Chapter-Verified
+                  </Text>
+                  <Text style={styles.verifyToggleSub}>
+                    Enables these questions immediately in Student Chapter-Wise Practice Mode.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.targetPreviewBadge}>
+                <Text style={styles.targetPreviewBadgeLabel}>Target Mapping:</Text>
+                <Text style={styles.targetPreviewBadgeTag}>
+                  {sheetTargetSamhita} › {sheetTargetSthana} › {sheetTargetChapter}
+                </Text>
+                {sheetMarkVerified && (
+                  <Text style={styles.targetPreviewBadgeVerified}>✓ Chapter-Verified</Text>
+                )}
+              </View>
+            </View>
+
+            {/* Step 2: URL Input Card */}
             <View style={styles.inputCard}>
-              <Text style={styles.inputLabel}>Google Sheet URL</Text>
+              <Text style={styles.inputLabel}>2. Google Sheet URL</Text>
               <View style={styles.urlInputRow}>
                 <View style={styles.urlIconWrap}>
                   <Link2 size={16} color={THEME.colors.muted} />
@@ -1003,5 +1155,90 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  targetCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  targetCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  targetCardSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 14,
+  },
+  selectorsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  selectCol: {
+    flex: 1,
+    minWidth: 140,
+  },
+  selectLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  verifyToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  verifyToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  verifyToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  targetPreviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  targetPreviewBadgeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  targetPreviewBadgeTag: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  targetPreviewBadgeVerified: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
   },
 });

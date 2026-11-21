@@ -39,6 +39,7 @@ import {
 } from '../../services/googleDriveService';
 import { normalizeQuestionStem } from '../../utils/spreadsheetHelper';
 import { backend } from '../../services/backend';
+import { CLASSICAL_SAMHITA_SCHEMA } from '../../utils/chapterMapper';
 
 interface GoogleDriveSyncModalProps {
   isOpen: boolean;
@@ -73,6 +74,10 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   const [scanResult, setScanResult] = useState<DriveFolderScanSummary | null>(null);
   const [duplicateMode, setDuplicateMode] = useState<'skip' | 'overwrite'>('skip');
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
+  const [driveTargetSamhita, setDriveTargetSamhita] = useState<string>('Charaka Samhita');
+  const [driveTargetSthana, setDriveTargetSthana] = useState<string>('Sutrasthana');
+  const [driveTargetChapter, setDriveTargetChapter] = useState<string>('Chapter 1');
+  const [driveMarkVerified, setDriveMarkVerified] = useState<boolean>(true);
 
   // Import State
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -212,7 +217,16 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
     setErrorMessage(null);
 
     try {
-      const syncResult = await backend.syncGoogleSheetQuestions(allValidQuestions, duplicateMode);
+      const targetTag = `${driveTargetSamhita} > ${driveTargetSthana} > ${driveTargetChapter}`;
+      const questionsToImport = allValidQuestions.map((q) => ({
+        ...q,
+        ch: targetTag,
+        chapterName: targetTag,
+        is_chapter_verified: driveMarkVerified,
+        isChapterVerified: driveMarkVerified,
+      }));
+
+      const syncResult = await backend.syncGoogleSheetQuestions(questionsToImport, duplicateMode);
       onImportSuccess({
         addedCount: syncResult.addedCount,
         updatedCount: syncResult.updatedCount,
@@ -416,10 +430,150 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
               </View>
             )}
 
+            {/* Step 1: Classical Chapter Mapping & Verification Selector */}
+            {isConnected && (
+              <View style={styles.targetCard}>
+                <Text style={styles.targetCardTitle}>1. Target Chapter Mapping &amp; Verification</Text>
+                <Text style={styles.targetCardSub}>
+                  Assign all imported questions to a specific classical chapter and mark as Chapter-Verified for student practice:
+                </Text>
+
+                <View style={styles.selectorsRow}>
+                  {/* Samhita Selector */}
+                  <View style={styles.selectCol}>
+                    <Text style={styles.selectLabel}>Samhita / Subject</Text>
+                    <select
+                      value={driveTargetSamhita}
+                      onChange={(e) => {
+                        const sName = e.target.value;
+                        setDriveTargetSamhita(sName);
+                        const sthList = CLASSICAL_SAMHITA_SCHEMA[sName]?.sthanas || [];
+                        if (sthList.length > 0) {
+                          setDriveTargetSthana(sthList[0].name);
+                          setDriveTargetChapter('Chapter 1');
+                        }
+                      }}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {Object.keys(CLASSICAL_SAMHITA_SCHEMA).map((sName) => (
+                        <option key={sName} value={sName}>
+                          {sName}
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+
+                  {/* Sthana Selector */}
+                  <View style={styles.selectCol}>
+                    <Text style={styles.selectLabel}>Sthana / Section</Text>
+                    <select
+                      value={driveTargetSthana}
+                      onChange={(e) => {
+                        setDriveTargetSthana(e.target.value);
+                        setDriveTargetChapter('Chapter 1');
+                      }}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {(CLASSICAL_SAMHITA_SCHEMA[driveTargetSamhita]?.sthanas || []).map((sth) => (
+                        <option key={sth.name} value={sth.name}>
+                          {sth.name} ({sth.maxChapters} Chs)
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+
+                  {/* Chapter Selector */}
+                  <View style={styles.selectCol}>
+                    <Text style={styles.selectLabel}>Chapter</Text>
+                    <select
+                      value={driveTargetChapter}
+                      onChange={(e) => setDriveTargetChapter(e.target.value)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        color: '#0F172A',
+                        width: '100%',
+                      }}
+                    >
+                      {Array.from(
+                        {
+                          length:
+                            CLASSICAL_SAMHITA_SCHEMA[driveTargetSamhita]?.sthanas.find(
+                              (s) => s.name === driveTargetSthana
+                            )?.maxChapters || 30,
+                        },
+                        (_, i) => `Chapter ${i + 1}`
+                      ).map((ch) => (
+                        <option key={ch} value={ch}>
+                          {ch}
+                        </option>
+                      ))}
+                    </select>
+                  </View>
+                </View>
+
+                {/* Checked-by-default Toggle: Mark as Chapter-Verified */}
+                <TouchableOpacity
+                  style={styles.verifyToggleRow}
+                  onPress={() => setDriveMarkVerified(!driveMarkVerified)}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.checkboxBox,
+                      driveMarkVerified && styles.checkboxBoxActive,
+                    ]}
+                  >
+                    {driveMarkVerified && <Check size={12} color="#FFF" strokeWidth={3} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.verifyToggleText}>
+                      ✅ Mark uploaded questions as Chapter-Verified
+                    </Text>
+                    <Text style={styles.verifyToggleSub}>
+                      Enables these questions immediately in Student Chapter-Wise Practice Mode.
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.targetPreviewBadge}>
+                  <Text style={styles.targetPreviewBadgeLabel}>Target Mapping:</Text>
+                  <Text style={styles.targetPreviewBadgeTag}>
+                    {driveTargetSamhita} › {driveTargetSthana} › {driveTargetChapter}
+                  </Text>
+                  {driveMarkVerified && (
+                    <Text style={styles.targetPreviewBadgeVerified}>✓ Chapter-Verified</Text>
+                  )}
+                </View>
+              </View>
+            )}
+
             {/* Folder Selection & Scan Section */}
             {isConnected && (
               <View style={styles.folderSectionCard}>
-                <Text style={styles.sectionHeading}>1. Select Google Drive Folder</Text>
+                <Text style={styles.sectionHeading}>2. Select Google Drive Folder</Text>
                 <Text style={styles.sectionSub}>
                   Paste the link or ID of any Google Drive folder containing your question spreadsheets:
                 </Text>
@@ -1361,5 +1515,90 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  targetCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  targetCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  targetCardSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 14,
+  },
+  selectorsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  selectCol: {
+    flex: 1,
+    minWidth: 140,
+  },
+  selectLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  verifyToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  verifyToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  verifyToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  targetPreviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  targetPreviewBadgeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  targetPreviewBadgeTag: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  targetPreviewBadgeVerified: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
   },
 });
