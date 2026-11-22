@@ -7,7 +7,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Play, ShoppingBag, ListTree, BookOpen, Layers, CheckCircle2 } from 'lucide-react-native';
+import { Play, ShoppingBag, ListTree, BookOpen, Layers, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Header } from '../common/Header';
 import { ChapterTree } from './ChapterTree';
@@ -28,6 +28,8 @@ export const BuilderScreen: React.FC = () => {
     practiceMode,
     setPracticeMode,
     refreshQuestions,
+    cloudSyncError,
+    isSyncing,
   } = useApp();
   const { width } = useWindowDimensions();
   const isTablet = width >= 820;
@@ -182,6 +184,30 @@ export const BuilderScreen: React.FC = () => {
           !isTablet && styles.scrollContentMobile,
         ]}
       >
+        {/* Visible Cloud DB Error Banner with Retry button */}
+        {cloudSyncError && (
+          <View style={styles.errorBanner}>
+            <View style={styles.errorBannerLeft}>
+              <AlertCircle size={18} color="#DC2626" style={{ marginTop: 2 }} />
+              <View style={styles.errorBannerTextCol}>
+                <Text style={styles.errorBannerTitle}>Cloud Question Sync Notice</Text>
+                <Text style={styles.errorBannerMsg}>{cloudSyncError}</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.retryBannerBtn}
+              onPress={() => refreshQuestions && refreshQuestions(true)}
+              disabled={isSyncing}
+              activeOpacity={0.7}
+            >
+              <RefreshCw size={13} color="#FFFFFF" />
+              <Text style={styles.retryBannerBtnText}>
+                {isSyncing ? 'Retrying...' : 'Retry'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {practiceMode === 'mixed_mock' ? (
           // Full-Syllabus AIAPGET Mock Test View
           <FullMockTestPanel />
@@ -407,5 +433,51 @@ const styles = StyleSheet.create({
     color: THEME.colors.brandInk,
     fontWeight: '700',
     fontSize: 13,
+  },
+  errorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: THEME.radius.md,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  errorBannerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  errorBannerTextCol: {
+    flex: 1,
+  },
+  errorBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  errorBannerMsg: {
+    fontSize: 12,
+    color: '#B91C1C',
+    lineHeight: 16,
+  },
+  retryBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+  },
+  retryBannerBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

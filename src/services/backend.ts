@@ -3,8 +3,17 @@ import { UserRecord, QuizAttemptRecord } from '../types/auth';
 import { Chapter, Question, MockBlueprintItem, SamhitaDef } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
 import { ALL_CHAPTERS, RAW_TREE } from '../constants/syllabusData';
-import { normalizeQuestionStem } from '../utils/spreadsheetHelper';
+import {
+  normalizeQuestionStem,
+  fetchGoogleSheetCsv,
+  parseSpreadsheetBuffer,
+} from '../utils/spreadsheetHelper';
 import { isQuestionChapterVerified, isValidQuestion } from '../utils/chapterMapper';
+import {
+  getStoredQuestions,
+  setStoredQuestions,
+  clearStoredQuestions,
+} from './indexedDbStorage';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -16,8 +25,11 @@ const USERS_STORAGE_KEY = 'bams_cloud_users_v1';
 const SESSION_STORAGE_KEY = 'bams_cloud_session_v1';
 const QUESTIONS_STORAGE_KEY = 'bams_cloud_questions_v1';
 const CUSTOM_QUESTIONS_STORAGE_KEY = 'bams_custom_questions_v3';
+const CUSTOM_QUESTIONS_METADATA_KEY = 'bams_custom_questions_meta_v1';
 const CACHE_VERSION_KEY = 'bams_cache_v3';
 const MOCK_BLUEPRINT_STORAGE_KEY = 'bams_mock_blueprint_v1';
+const FALLBACK_DEFAULT_SHEET_URL =
+  'https://docs.google.com/spreadsheets/d/1-3E3lVtbN-rAQ69FRb8xric5KsV48TPVbctyxahSu5s/edit?usp=sharing';
 
 export const DEFAULT_MOCK_BLUEPRINT: MockBlueprintItem[] = [
   {
@@ -434,27 +446,77 @@ class BackendService {
   private deletedQuestionIds: Set<string> = new Set();
   private mockBlueprint: MockBlueprintItem[] = [];
   private isInitialized = false;
+  private lastCloudSyncError: string | null = null;
+  private isSyncingFromCloud: boolean = false;
+
+  getLastCloudSyncError(): string | null {
+    return this.lastCloudSyncError;
+  }
+
+  async syncFromCloud(force = false): Promise<{ count: number; error?: string }> {
+    if (this.isSyncingFromCloud) {
+      return { count: this.questions.length };
+    }
+    if (!force && this.questions.length > 0) {
+      return { count: this.questions.length };
+    }
+
+    this.isSyncingFromCloud = true;
+    this.lastCloudSyncError = null;
+
+    try {
+      console.log('[CloudSync] Syncing questions from Cloud Google Sheet...');
+      const csvText = await fetchGoogleSheetCsv(FALLBACK_DEFAULT_SHEET_URL);
+      if (!csvText || csvText.length < 100) {
+        throw new Error('Received empty or invalid data from Cloud DB.');
+      }
+
+      const parsed = parseSpreadsheetBuffer(csvText, { fileName: 'BAMS Cloud Bank' });
+      if (parsed.validQuestions.length === 0) {
+        throw new Error('No valid questions parsed from Cloud DB.');
+      }
+
+      // Mark all imported questions as chapter verified
+      const incoming: Omit<Question, 'id'>[] = parsed.validQuestions.map((q) => ({
+        ...q,
+        is_chapter_verified: true,
+        isChapterVerified: true,
+      }));
+
+      await this.syncGoogleSheetQuestions(incoming, 'overwrite');
+      this.lastCloudSyncError = null;
+      console.log(`[CloudSync] Successfully loaded ${this.questions.length} questions from Cloud DB!`);
+      return { count: this.questions.length };
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to sync questions from Cloud DB. Please check your internet connection.';
+      console.warn('[CloudSync Error]:', msg);
+      this.lastCloudSyncError = msg;
+      return { count: this.questions.length, error: msg };
+    } finally {
+      this.isSyncingFromCloud = false;
+    }
+  }
 
   private async initialize() {
     if (this.isInitialized) return;
 
     try {
       // 1. Users
-      const storedUsers = await AsyncStorage.getItem(USERS_STORAGE_KEY);
+      const storedUsers = await AsyncStorage.getItem(USERS_STORAGE_KEY).catch(() => null);
       if (storedUsers) {
         this.users = JSON.parse(storedUsers);
       } else {
         this.users = [...SEED_USERS];
-        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
+        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users)).catch(() => {});
       }
 
       // 2. Passwords
-      const storedPasswords = await AsyncStorage.getItem(PASSWORDS_KEY);
+      const storedPasswords = await AsyncStorage.getItem(PASSWORDS_KEY).catch(() => null);
       if (storedPasswords) {
         this.passwords = JSON.parse(storedPasswords);
       } else {
         this.passwords = { ...DEFAULT_PASSWORDS };
-        await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords));
+        await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords)).catch(() => {});
       }
 
       // Ensure Admin user and password are consistently kept up-to-date
@@ -482,11 +544,11 @@ class BackendService {
       }
       this.passwords['admin@bams.com'] = 'iamthebest@999';
       this.passwords['7798660051'] = 'iamthebest@999';
-      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users));
-      await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords));
+      await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users)).catch(() => {});
+      await AsyncStorage.setItem(PASSWORDS_KEY, JSON.stringify(this.passwords)).catch(() => {});
 
       // 3. Current Session
-      const storedSession = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
+      const storedSession = await AsyncStorage.getItem(SESSION_STORAGE_KEY).catch(() => null);
       if (storedSession) {
         const parsed = JSON.parse(storedSession);
         const user = this.users.find((u) => u.id === parsed.id || u.email === parsed.email);
@@ -495,26 +557,38 @@ class BackendService {
         }
       }
 
-      // 4. Cloud Questions Collection (with v3 cache key & legacy migration)
-      let customStored = await AsyncStorage.getItem(CUSTOM_QUESTIONS_STORAGE_KEY);
-      if (!customStored) {
-        customStored =
-          (await AsyncStorage.getItem('bams_custom_questions_v1')) ||
-          (await AsyncStorage.getItem('bams_cloud_questions_v1'));
-        if (customStored) {
-          await AsyncStorage.setItem(CUSTOM_QUESTIONS_STORAGE_KEY, customStored).catch(() => {});
+      // 4. Cloud Questions Collection
+      // First, read from high-capacity IndexedDB (bypasses restrictive 5 MB localStorage limit)
+      const storedFromIdb = await getStoredQuestions();
+      let customQuestions: Question[] = [];
+
+      if (storedFromIdb && storedFromIdb.length > 0) {
+        customQuestions = storedFromIdb;
+      } else {
+        // Fallback: check legacy AsyncStorage keys once to migrate existing desktop questions
+        try {
+          const legacyStored =
+            (await AsyncStorage.getItem(CUSTOM_QUESTIONS_STORAGE_KEY)) ||
+            (await AsyncStorage.getItem('bams_custom_questions_v1')) ||
+            (await AsyncStorage.getItem('bams_cloud_questions_v1'));
+          if (legacyStored) {
+            const parsed = JSON.parse(legacyStored);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              customQuestions = parsed;
+              await setStoredQuestions(parsed);
+              // Clean up bulky legacy keys from localStorage to prevent QuotaExceededError
+              await AsyncStorage.removeItem(CUSTOM_QUESTIONS_STORAGE_KEY).catch(() => {});
+              await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
+              await AsyncStorage.removeItem('bams_cloud_questions_v1').catch(() => {});
+            }
+          }
+        } catch (legacyErr) {
+          console.warn('[Backend] Legacy AsyncStorage read error:', legacyErr);
         }
       }
 
-      const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1');
-      const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1');
-
-      let customQuestions: Question[] = [];
-      if (customStored) {
-        try {
-          customQuestions = JSON.parse(customStored);
-        } catch {}
-      }
+      const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1').catch(() => null);
+      const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1').catch(() => null);
 
       if (editedStored) {
         try {
@@ -558,8 +632,17 @@ class BackendService {
 
       this.questions = [...activeCustom, ...baseQuestions];
 
+      // If question bank is empty (e.g. on fresh mobile browser), auto-sync from Cloud DB!
+      if (this.questions.length === 0) {
+        try {
+          await this.syncFromCloud(false);
+        } catch (syncErr: any) {
+          console.warn('[Backend] Initial auto cloud-sync notice:', syncErr);
+        }
+      }
+
       // 5. Mock Blueprint
-      const storedBlueprint = await AsyncStorage.getItem(MOCK_BLUEPRINT_STORAGE_KEY);
+      const storedBlueprint = await AsyncStorage.getItem(MOCK_BLUEPRINT_STORAGE_KEY).catch(() => null);
       if (storedBlueprint) {
         try {
           this.mockBlueprint = JSON.parse(storedBlueprint);
@@ -568,7 +651,7 @@ class BackendService {
         }
       } else {
         this.mockBlueprint = [...DEFAULT_MOCK_BLUEPRINT];
-        await AsyncStorage.setItem(MOCK_BLUEPRINT_STORAGE_KEY, JSON.stringify(this.mockBlueprint));
+        await AsyncStorage.setItem(MOCK_BLUEPRINT_STORAGE_KEY, JSON.stringify(this.mockBlueprint)).catch(() => {});
       }
     } catch (e) {
       console.warn('Backend initialization error:', e);
@@ -850,12 +933,26 @@ class BackendService {
 
   private async persistCustomQuestions(): Promise<void> {
     const custom = this.questions.filter((q) => !q.id.toString().startsWith('q_ca_'));
-    // Never cache an empty (0 questions) response if questions already existed
+    // 1. Persist full question bank in IndexedDB (no 5 MB quota limitation)
     if (custom.length > 0) {
-      const serialized = JSON.stringify(custom);
-      await AsyncStorage.setItem(CUSTOM_QUESTIONS_STORAGE_KEY, serialized);
-      await AsyncStorage.setItem('bams_custom_questions_v1', serialized);
-      await AsyncStorage.setItem(CACHE_VERSION_KEY, 'ready');
+      await setStoredQuestions(this.questions);
+    }
+
+    // 2. Persist ONLY lightweight metadata in AsyncStorage / localStorage
+    try {
+      const meta = {
+        count: this.questions.length,
+        verifiedCount: this.questions.filter(isQuestionChapterVerified).length,
+        updatedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(CUSTOM_QUESTIONS_METADATA_KEY, JSON.stringify(meta)).catch(() => {});
+      // Remove any legacy 9 MB keys from localStorage to free up browser storage quota
+      await AsyncStorage.removeItem(CUSTOM_QUESTIONS_STORAGE_KEY).catch(() => {});
+      await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
+      await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
+      await AsyncStorage.setItem(CACHE_VERSION_KEY, 'ready').catch(() => {});
+    } catch (e) {
+      console.warn('[SafeStorage] Metadata localStorage write ignored:', e);
     }
   }
 
@@ -1068,6 +1165,8 @@ class BackendService {
     this.questions = [];
     this.editedQuestions = {};
     this.deletedQuestionIds = new Set();
+    await clearStoredQuestions();
+    await AsyncStorage.removeItem(CUSTOM_QUESTIONS_METADATA_KEY).catch(() => {});
     await AsyncStorage.removeItem(CUSTOM_QUESTIONS_STORAGE_KEY).catch(() => {});
     await AsyncStorage.removeItem(CACHE_VERSION_KEY).catch(() => {});
     await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});

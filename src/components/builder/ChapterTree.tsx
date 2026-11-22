@@ -24,6 +24,8 @@ export const ChapterTree: React.FC = () => {
     bookmarkedIds,
     practiceMode,
     refreshQuestions,
+    isSyncing,
+    cloudSyncError,
   } = useApp();
 
   const [query, setQuery] = useState('');
@@ -34,11 +36,11 @@ export const ChapterTree: React.FC = () => {
   });
 
   const handleManualRefresh = async () => {
-    if (isRefreshing) return;
+    if (isSyncing || isRefreshing) return;
     setIsRefreshing(true);
     try {
       if (refreshQuestions) {
-        await refreshQuestions();
+        await refreshQuestions(true);
       }
     } catch (e) {
       console.warn('Manual refresh failed:', e);
@@ -101,16 +103,16 @@ export const ChapterTree: React.FC = () => {
         <TouchableOpacity
           style={styles.refreshBtn}
           onPress={handleManualRefresh}
-          disabled={isRefreshing}
+          disabled={isRefreshing || isSyncing}
           activeOpacity={0.7}
         >
-          {isRefreshing ? (
+          {isRefreshing || isSyncing ? (
             <ActivityIndicator size="small" color={THEME.colors.brand} />
           ) : (
             <RefreshCw size={13} color={THEME.colors.brand} />
           )}
           <Text style={styles.refreshBtnText}>
-            {isRefreshing ? 'Syncing...' : 'Sync Questions'}
+            {isRefreshing || isSyncing ? 'Syncing...' : 'Sync Questions'}
           </Text>
         </TouchableOpacity>
       </View>

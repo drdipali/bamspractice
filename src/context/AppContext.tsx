@@ -49,7 +49,9 @@ export interface AppContextType {
   // Dynamic chapters & questions from cloud database
   chapters: Chapter[];
   allQuestions: Record<string | number, Question>;
-  refreshQuestions: () => Promise<void>;
+  refreshQuestions: (forceCloudSync?: boolean) => Promise<void>;
+  cloudSyncError: string | null;
+  isSyncing: boolean;
   selectedChapters: (string | number)[];
   toggleChapter: (id: string | number) => void;
   toggleGroup: (ids: (string | number)[], selectAll?: boolean) => void;
@@ -113,10 +115,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [bookmarkedIds, setBookmarkedIds] = useState<(string | number)[]>([]);
   const [mockBlueprint, setMockBlueprint] = useState<MockBlueprintItem[]>(DEFAULT_MOCK_BLUEPRINT);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Function to refresh questions and dynamic chapter syllabus from backend
-  const refreshQuestions = async () => {
+  const refreshQuestions = async (forceCloudSync = false) => {
+    setIsSyncing(true);
     try {
+      if (forceCloudSync) {
+        const syncRes = await backend.syncFromCloud(true);
+        if (syncRes.error) {
+          setCloudSyncError(syncRes.error);
+        } else {
+          setCloudSyncError(null);
+        }
+      } else {
+        const err = backend.getLastCloudSyncError();
+        setCloudSyncError(err);
+      }
+
       const qList = await backend.getQuestions();
       const qMap: Record<string | number, Question> = {};
       qList.forEach((q) => {
@@ -126,8 +143,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const chList = await backend.getChapters();
       setChapters(chList);
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Error refreshing cloud questions:', e);
+      setCloudSyncError(e?.message || 'Failed to sync cloud questions.');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -704,6 +724,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         chapters,
         allQuestions,
         refreshQuestions,
+        cloudSyncError,
+        isSyncing,
         selectedChapters,
         toggleChapter,
         toggleGroup,
