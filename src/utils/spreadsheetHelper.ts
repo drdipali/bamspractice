@@ -295,93 +295,348 @@ export const STANDARD_STATEMENT_OPTIONS = [
   'Statement I is incorrect but Statement II is correct / कथन I गलत है परंतु कथन II सही है',
 ];
 
-/**
- * Extracts Statement I and Statement II from a question stem with support for
- * English ("Statement I / 1"), Devanagari Hindi ("कथन I / 1 / एक"), and bilingual combinations.
- * Avoids matching "Statement I" inside intro prompts or inside "Statement II" by using
- * strict negative lookahead `(?:I(?!I)|1\b)` and stripping standard AIAPGET intros.
- */
-export function extractStatementsFromStem(stem: string): {
+function cleanSentence(str: string): string {
+  return str
+    .replace(/^[:\/\-\s]+/, '')
+    .replace(/[:\/\-\s]+$/, '')
+    .trim();
+}
+
+function combineBilingualSentence(en: string, hi: string): string {
+  let cleanEn = cleanSentence(en);
+  const cleanHi = cleanSentence(hi);
+  if (!cleanEn && !cleanHi) return '';
+  if (!cleanHi) return cleanEn;
+  if (!cleanEn) return cleanHi;
+  if (cleanEn === cleanHi) return cleanEn;
+  if (cleanEn.includes(cleanHi)) return cleanEn;
+  if (/[ऀ-ॿ]/.test(cleanEn) && cleanEn.includes('/')) return cleanEn;
+  cleanEn = cleanEn.replace(/[.,;]+$/, '').trim();
+  return `${cleanEn} / ${cleanHi}`;
+}
+
+export interface ExtractedStatements {
   statement1: string;
   statement2: string;
-} {
-  let statement1 = '';
-  let statement2 = '';
-  if (!stem) return { statement1, statement2 };
-
-  let s = stem.trim();
-  // Strip standard intro prompt lines if present
-  s = s.replace(/Given below are two statements:[^\n]*(\n|$)/gi, '');
-  s = s.replace(/नीचे दो कथन दिए गए हैं:[^\n]*(\n|$)/gi, '');
-  s = s.trim();
-
-  // Primary: Match Statement I (not II) up to Statement II
-  const p1 = /(?:^|\n|\.\s+|;\s+)(?:Statement\s*(?:I(?!I)|1\b)|कथन\s*(?:I(?!I)|1\b|एक\b))\s*[:\/\-]\s*([\s\S]*?)(?=(?:\n|\.\s+|;\s+)(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*|$)/i;
-  const p2 = /(?:\n|\.\s+|;\s+|^)(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*([\s\S]*?)$/i;
-
-  const m1 = s.match(p1);
-  const m2 = s.match(p2);
-
-  if (m1 && m1[1].trim()) statement1 = m1[1].trim();
-  if (m2 && m2[1].trim()) statement2 = m2[1].trim();
-
-  // Fallback: If not matched with line starts
-  if (!statement1 || !statement2) {
-    const f1 = /(?:Statement\s*(?:I(?!I)|1\b)|कथन\s*(?:I(?!I)|1\b|एक\b))\s*[:\/\-]\s*([\s\S]*?)(?=(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*|$)/i;
-    const f2 = /(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))\s*[:\/\-]\s*([\s\S]*?)$/i;
-    const mf1 = s.match(f1);
-    const mf2 = s.match(f2);
-    if (!statement1 && mf1 && mf1[1].trim()) statement1 = mf1[1].trim();
-    if (!statement2 && mf2 && mf2[1].trim()) statement2 = mf2[1].trim();
-  }
-
-  // Clean any trailing Statement II or कथन II left at end of statement1
-  statement1 = statement1.replace(/(?:Statement\s*(?:II|2\b)|कथन\s*(?:II|2\b|दो\b))[\s:\/\-]*$/i, '').trim();
-  statement2 = statement2.trim();
-
-  return { statement1, statement2 };
+  cleanedStem: string;
 }
 
 /**
- * Extracts Assertion (A) and Reason (R) from a question stem with support for
- * English ("Assertion (A)", "A:"), Hindi ("अभिकथन (A)"), and bilingual formats.
+ * Smart Bilingual Statement Extractor:
+ * Automatically detects and extracts Statement I and Statement II from any raw question text,
+ * supporting English (Statement I / 1 / (I)) and Hindi (कथन I / 1 / (I) / एक) labels.
+ * Combines bilingual versions cleanly (English / Hindi) and strips them from the Question Stem,
+ * leaving only the clean lead-in prompt.
  */
-export function extractARFromStem(stem: string): {
-  assertion: string;
-  reason: string;
-} {
-  let assertion = '';
-  let reason = '';
-  if (!stem) return { assertion, reason };
-
-  let s = stem.trim();
-  s = s.replace(/Given below are two statements:[^\n]*(\n|$)/gi, '');
-  s = s.replace(/नीचे दो कथन दिए गए हैं:[^\n]*(\n|$)/gi, '');
-  s = s.trim();
-
-  const pa = /(?:^|\n|\.\s+|;\s+)(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?|A)\s*[:\/\-]\s*([\s\S]*?)(?=(?:\n|\.\s+|;\s+)(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?|R)\s*[:\/\-]\s*|$)/i;
-  const pr = /(?:\n|\.\s+|;\s+|^)(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?|R)\s*[:\/\-]\s*([\s\S]*?)$/i;
-
-  const ma = s.match(pa);
-  const mr = s.match(pr);
-
-  if (ma && ma[1].trim()) assertion = ma[1].trim();
-  if (mr && mr[1].trim()) reason = mr[1].trim();
-
-  if (!assertion || !reason) {
-    const fa = /(?:Assertion\s*\(?A\)?|अभिकथन\s*\(?A\)?)\s*[:\/\-]\s*([\s\S]*?)(?=(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]\s*|$)/i;
-    const fr = /(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]\s*([\s\S]*?)$/i;
-    const mfa = s.match(fa);
-    const mfr = s.match(fr);
-    if (!assertion && mfa && mfa[1].trim()) assertion = mfa[1].trim();
-    if (!reason && mfr && mfr[1].trim()) reason = mfr[1].trim();
+export function parseStatementType(rawText: string): ExtractedStatements {
+  if (!rawText || !rawText.trim()) {
+    return { statement1: '', statement2: '', cleanedStem: '' };
   }
 
-  assertion = assertion.replace(/(?:Reason\s*\(?R\)?|कारण\s*\(?R\)?)\s*[:\/\-]*$/i, '').trim();
-  reason = reason.trim();
+  let text = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
 
-  return { assertion, reason };
+  // Normalize delimiters before labels to guarantee each statement starts on a new line
+  text = text
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(Statement\s*(?:I(?!I)|1\b|\(I\))\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(Statement\s*(?:II|2\b|\(II\))\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(कथन\s*(?:I(?!I)|1\b|\(I\)|एक\b)\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(कथन\s*(?:II|2\b|\(II\)|दो\b)\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(निम्नलिखित दो कथन|नीचे दो कथन|नीचे दिए गए दो कथन)/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    );
+
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const EN_STMT1_REGEX = /^(?:Statement\s*(?:I(?!I)|1\b|\(I\))|Statement\s*I\b)\s*[:\/\-]\s*(.+)$/i;
+  const HI_STMT1_REGEX = /^(?:कथन\s*(?:I(?!I)|1\b|\(I\)|एक\b)|कथन\s*I\b)\s*[:\/\-]\s*(.+)$/i;
+  const EN_STMT2_REGEX = /^(?:Statement\s*(?:II|2\b|\(II\))|Statement\s*II\b)\s*[:\/\-]\s*(.+)$/i;
+  const HI_STMT2_REGEX = /^(?:कथन\s*(?:II|2\b|\(II\)|दो\b)|कथन\s*II\b)\s*[:\/\-]\s*(.+)$/i;
+
+  const isLeadIn = (line: string): boolean => {
+    return /^(?:Given below|In the question|Two statements|Read the following|Consider the following|Directions|Note|निम्नलिखित दो कथन|नीचे दो कथन|नीचे दिए गए दो कथन)/i.test(
+      line
+    );
+  };
+
+  let enS1 = '';
+  let hiS1 = '';
+  let enS2 = '';
+  let hiS2 = '';
+  const leadInLines: string[] = [];
+  let activeTarget: 'enS1' | 'hiS1' | 'enS2' | 'hiS2' | null = null;
+
+  for (const line of lines) {
+    if (isLeadIn(line)) {
+      leadInLines.push(line);
+      activeTarget = null;
+      continue;
+    }
+
+    // Check English Statement I
+    const mEn1 = line.match(EN_STMT1_REGEX);
+    if (mEn1) {
+      const content = mEn1[1].trim();
+      const inlineHi = content.match(
+        /^(.*?)(?:\s*\/\s*|\s+)(?:कथन\s*(?:I(?!I)|1\b|\(I\)|एक\b)|कथन\s*I\b)\s*[:\/\-]\s*(.+)$/i
+      );
+      if (inlineHi) {
+        enS1 = inlineHi[1].trim();
+        hiS1 = inlineHi[2].trim();
+      } else if (/[ऀ-ॿ]/.test(content) && !/[a-zA-Z]/.test(content)) {
+        hiS1 = content;
+        activeTarget = 'hiS1';
+      } else {
+        enS1 = content;
+        activeTarget = 'enS1';
+      }
+      continue;
+    }
+
+    // Check Hindi Statement I
+    const mHi1 = line.match(HI_STMT1_REGEX);
+    if (mHi1) {
+      hiS1 = mHi1[1].trim();
+      activeTarget = 'hiS1';
+      continue;
+    }
+
+    // Check English Statement II
+    const mEn2 = line.match(EN_STMT2_REGEX);
+    if (mEn2) {
+      const content = mEn2[1].trim();
+      const inlineHi = content.match(
+        /^(.*?)(?:\s*\/\s*|\s+)(?:कथन\s*(?:II|2\b|\(II\)|दो\b)|कथन\s*II\b)\s*[:\/\-]\s*(.+)$/i
+      );
+      if (inlineHi) {
+        enS2 = inlineHi[1].trim();
+        hiS2 = inlineHi[2].trim();
+      } else if (/[ऀ-ॿ]/.test(content) && !/[a-zA-Z]/.test(content)) {
+        hiS2 = content;
+        activeTarget = 'hiS2';
+      } else {
+        enS2 = content;
+        activeTarget = 'enS2';
+      }
+      continue;
+    }
+
+    // Check Hindi Statement II
+    const mHi2 = line.match(HI_STMT2_REGEX);
+    if (mHi2) {
+      hiS2 = mHi2[1].trim();
+      activeTarget = 'hiS2';
+      continue;
+    }
+
+    // Fallback line continuations
+    if (!enS1 && !hiS1 && !enS2 && !hiS2) {
+      leadInLines.push(line);
+    } else if (activeTarget === 'enS1') {
+      enS1 = `${enS1} ${line}`.trim();
+    } else if (activeTarget === 'hiS1') {
+      hiS1 = `${hiS1} ${line}`.trim();
+    } else if (activeTarget === 'enS2') {
+      enS2 = `${enS2} ${line}`.trim();
+    } else if (activeTarget === 'hiS2') {
+      hiS2 = `${hiS2} ${line}`.trim();
+    } else {
+      leadInLines.push(line);
+    }
+  }
+
+  const statement1 = combineBilingualSentence(enS1, hiS1);
+  const statement2 = combineBilingualSentence(enS2, hiS2);
+
+  let cleanedStem = leadInLines.join(' / ').trim();
+  if (!cleanedStem) {
+    cleanedStem =
+      'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+  }
+
+  return { statement1, statement2, cleanedStem };
 }
+
+export const extractStatementsFromStem = parseStatementType;
+
+export interface ExtractedAssertionReason {
+  assertion: string;
+  reason: string;
+  cleanedStem: string;
+}
+
+/**
+ * Smart Bilingual Assertion & Reason Extractor:
+ * Automatically detects and extracts Assertion (A) and Reason (R) from any raw question text,
+ * supporting both English and Hindi/Devanagari labels:
+ * Assertion: Assertion (A):, Assertion A:, Assertion:, A:, अभिकथन (A):, कथन (A):, अभिकथन:
+ * Reason: Reason (R):, Reason R:, Reason:, R:, तर्क (R):, कारण (R):, तर्क:, कारण:
+ * Combines bilingual versions cleanly (English / Hindi) into the respective fields and strips
+ * them from the Question Stem, avoiding duplicate text.
+ */
+export function parseAssertionReason(rawText: string): ExtractedAssertionReason {
+  if (!rawText || !rawText.trim()) {
+    return { assertion: '', reason: '', cleanedStem: '' };
+  }
+
+  let text = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+
+  // Normalize delimiters before labels to guarantee each statement starts on a new line
+  text = text
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(Assertion\s*(?:\([Aaक]\)|[Aaक]\b)?\s*[:\/\-]|अभिकथन\s*(?:\([Aaक]\)|[Aaक]\b)?\s*[:\/\-]|कथन\s*(?:\([Aaक]\)|[Aaक]\b)\s*[:\/\-]|(?<![a-zA-Z0-9])[Aa]\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(Reason\s*(?:\([Rrख]\)|[Rrख]\b)?\s*[:\/\-]|तर्क\s*(?:\([Rrख]\)|[Rrख]\b)?\s*[:\/\-]|कारण\s*(?:\([Rrख]\)|[Rrख]\b)?\s*[:\/\-]|(?<![a-zA-Z0-9])[Rr]\s*[:\/\-])/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    )
+    .replace(
+      /([.?!।।;])?\s*(?:\n|\s\/\s|\s{2,}|\s*)\s*(निम्नलिखित दो कथन|नीचे दो कथन|नीचे दिए गए दो कथन)/gi,
+      (match, punc, label) => `${punc && /[.?!।।;]/.test(punc) ? punc : ''}\n${label}`
+    );
+
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const EN_ASSERTION_REGEX =
+    /^(?:Assertion\s*(?:\([Aa]\)|[Aa]\b)?|(?<![a-zA-Z0-9])[Aa]\b)\s*[:\/\-]\s*(.+)$/i;
+  const HI_ASSERTION_REGEX =
+    /^(?:अभिकथन\s*(?:\([Aaक]\)|[Aaक]\b)?|कथन\s*(?:\([Aaक]\)|[Aaक]\b)|अभिकथन)\s*[:\/\-]\s*(.+)$/i;
+
+  const EN_REASON_REGEX =
+    /^(?:Reason\s*(?:\([Rr]\)|[Rr]\b)?|(?<![a-zA-Z0-9])[Rr]\b)\s*[:\/\-]\s*(.+)$/i;
+  const HI_REASON_REGEX =
+    /^(?:तर्क\s*(?:\([Rrख]\)|[Rrख]\b)?|कारण\s*(?:\([Rrख]\)|[Rrख]\b)?|तर्क|कारण)\s*[:\/\-]\s*(.+)$/i;
+
+  const isLeadIn = (line: string): boolean => {
+    return /^(?:Given below|In the question|Two statements|Read the following|Consider the following|Directions|Note|निम्नलिखित दो कथन|नीचे दो कथन|नीचे दिए गए दो कथन)/i.test(
+      line
+    );
+  };
+
+  let enA = '';
+  let hiA = '';
+  let enR = '';
+  let hiR = '';
+  const leadInLines: string[] = [];
+  let activeTarget: 'enA' | 'hiA' | 'enR' | 'hiR' | null = null;
+
+  for (const line of lines) {
+    if (isLeadIn(line)) {
+      leadInLines.push(line);
+      activeTarget = null;
+      continue;
+    }
+
+    // Check English Assertion
+    const mEnA = line.match(EN_ASSERTION_REGEX);
+    if (mEnA) {
+      const content = mEnA[1].trim();
+      const inlineHi = content.match(
+        /^(.*?)(?:\s*\/\s*|\s+)(?:अभिकथन\s*(?:\([Aaक]\)|[Aaक]\b)?|कथन\s*(?:\([Aaक]\)|[Aaक]\b)|अभिकथन)\s*[:\/\-]\s*(.+)$/i
+      );
+      if (inlineHi) {
+        enA = inlineHi[1].trim();
+        hiA = inlineHi[2].trim();
+      } else if (/[ऀ-ॿ]/.test(content) && !/[a-zA-Z]/.test(content)) {
+        hiA = content;
+        activeTarget = 'hiA';
+      } else {
+        enA = content;
+        activeTarget = 'enA';
+      }
+      continue;
+    }
+
+    // Check Hindi Assertion
+    const mHiA = line.match(HI_ASSERTION_REGEX);
+    if (mHiA) {
+      hiA = mHiA[1].trim();
+      activeTarget = 'hiA';
+      continue;
+    }
+
+    // Check English Reason
+    const mEnR = line.match(EN_REASON_REGEX);
+    if (mEnR) {
+      const content = mEnR[1].trim();
+      const inlineHi = content.match(
+        /^(.*?)(?:\s*\/\s*|\s+)(?:तर्क\s*(?:\([Rrख]\)|[Rrख]\b)?|कारण\s*(?:\([Rrख]\)|[Rrख]\b)?|तर्क|कारण)\s*[:\/\-]\s*(.+)$/i
+      );
+      if (inlineHi) {
+        enR = inlineHi[1].trim();
+        hiR = inlineHi[2].trim();
+      } else if (/[ऀ-ॿ]/.test(content) && !/[a-zA-Z]/.test(content)) {
+        hiR = content;
+        activeTarget = 'hiR';
+      } else {
+        enR = content;
+        activeTarget = 'enR';
+      }
+      continue;
+    }
+
+    // Check Hindi Reason
+    const mHiR = line.match(HI_REASON_REGEX);
+    if (mHiR) {
+      hiR = mHiR[1].trim();
+      activeTarget = 'hiR';
+      continue;
+    }
+
+    // Line continuations
+    if (!enA && !hiA && !enR && !hiR) {
+      leadInLines.push(line);
+    } else if (activeTarget === 'enA') {
+      enA = `${enA} ${line}`.trim();
+    } else if (activeTarget === 'hiA') {
+      hiA = `${hiA} ${line}`.trim();
+    } else if (activeTarget === 'enR') {
+      enR = `${enR} ${line}`.trim();
+    } else if (activeTarget === 'hiR') {
+      hiR = `${hiR} ${line}`.trim();
+    } else {
+      leadInLines.push(line);
+    }
+  }
+
+  const assertion = combineBilingualSentence(enA, hiA);
+  const reason = combineBilingualSentence(enR, hiR);
+
+  let cleanedStem = leadInLines.join(' / ').trim();
+  if (!cleanedStem) {
+    cleanedStem =
+      'Given below are two statements: One is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को तर्क (R) कहा गया है।';
+  }
+
+  return { assertion, reason, cleanedStem };
+}
+
+export const extractARFromStem = parseAssertionReason;
 
 export interface WorkbookTabResult {
   sheetName: string;
@@ -708,7 +963,7 @@ export function parseSpreadsheetRows(
       if (realExp) explanation = realExp;
     }
 
-    const effectiveStem = stem;
+    let effectiveStem = stem;
     const effectiveOptA = optA;
     const effectiveOptB = optB;
     const effectiveOptC = optC;
@@ -746,11 +1001,23 @@ export function parseSpreadsheetRows(
     // 4. Determine Question Type
     let questionType: QuestionType = 'standard';
     const lowerStem = effectiveStem.toLowerCase();
-    if (rawType.includes('assert') || rawType === 'ar' || (lowerStem.includes('a:') && lowerStem.includes('r:')) || (lowerStem.includes('assertion') && lowerStem.includes('reason'))) {
+    if (
+      rawType.includes('assert') ||
+      rawType === 'ar' ||
+      (lowerStem.includes('a:') && lowerStem.includes('r:')) ||
+      (lowerStem.includes('assertion') && lowerStem.includes('reason')) ||
+      (lowerStem.includes('अभिकथन') && (lowerStem.includes('तर्क') || lowerStem.includes('कारण')))
+    ) {
       questionType = 'assertion_reason';
-    } else if (rawType.includes('match') || lowerStem.includes('match') && (lowerStem.includes('column') || lowerStem.includes('list i'))) {
+    } else if (rawType.includes('match') || (lowerStem.includes('match') && (lowerStem.includes('column') || lowerStem.includes('list i')))) {
       questionType = 'match_the_pair';
-    } else if (rawType.includes('statement') || (lowerStem.includes('statement i') && lowerStem.includes('statement ii'))) {
+    } else if (
+      rawType.includes('statement') ||
+      (lowerStem.includes('statement i') && lowerStem.includes('statement ii')) ||
+      (lowerStem.includes('कथन i') && lowerStem.includes('कथन ii')) ||
+      (lowerStem.includes('कथन 1') && lowerStem.includes('कथन 2')) ||
+      (lowerStem.includes('कथन (i)') && lowerStem.includes('कथन (ii)'))
+    ) {
       questionType = 'statement_type';
     }
 
@@ -800,13 +1067,19 @@ export function parseSpreadsheetRows(
     let reasonText: string | undefined = undefined;
 
     if (questionType === 'statement_type') {
-      const extracted = extractStatementsFromStem(effectiveStem);
+      const extracted = parseStatementType(effectiveStem);
       statement1 = extracted.statement1 || undefined;
       statement2 = extracted.statement2 || undefined;
+      if (extracted.cleanedStem && (statement1 || statement2)) {
+        effectiveStem = extracted.cleanedStem;
+      }
     } else if (questionType === 'assertion_reason') {
-      const extracted = extractARFromStem(effectiveStem);
+      const extracted = parseAssertionReason(effectiveStem);
       assertionText = extracted.assertion || undefined;
       reasonText = extracted.reason || undefined;
+      if (extracted.cleanedStem && (assertionText || reasonText)) {
+        effectiveStem = extracted.cleanedStem;
+      }
     }
 
     validQuestions.push({

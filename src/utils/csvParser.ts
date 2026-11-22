@@ -1,4 +1,5 @@
 import { Difficulty, MatchPair, Question, QuestionType } from '../types';
+import { parseAssertionReason, parseStatementType } from './spreadsheetHelper';
 
 export interface CsvParseResult {
   validQuestions: Omit<Question, 'id'>[];
@@ -120,10 +121,10 @@ export function parseQuestionsCsv(csvContent: string): CsvParseResult {
     const rawDiff = getCol(row, 'difficulty', 'diff', 'level').toLowerCase();
 
     // Conditional fields
-    const assertionText = getCol(row, 'assertion', 'assertiontext', 'a_text');
-    const reasonText = getCol(row, 'reason', 'reasontext', 'r_text');
-    const statement1 = getCol(row, 'statement1', 'stmt1', 's1');
-    const statement2 = getCol(row, 'statement2', 'stmt2', 's2');
+    let assertionText = getCol(row, 'assertion', 'assertiontext', 'a_text');
+    let reasonText = getCol(row, 'reason', 'reasontext', 'r_text');
+    let statement1 = getCol(row, 'statement1', 'stmt1', 's1');
+    let statement2 = getCol(row, 'statement2', 'stmt2', 's2');
     const rawMatchPairs = getCol(row, 'matchpairs', 'pairs', 'match');
 
     // Validation 1: Chapter
@@ -134,16 +135,37 @@ export function parseQuestionsCsv(csvContent: string): CsvParseResult {
 
     // Determine Question Type
     let questionType: QuestionType = 'standard';
-    if (rawType.includes('assert') || rawType === 'ar' || (assertionText && reasonText)) {
+    const lowerStem = (stem || '').toLowerCase();
+    if (
+      rawType.includes('assert') ||
+      rawType === 'ar' ||
+      (assertionText && reasonText) ||
+      (lowerStem.includes('a:') && lowerStem.includes('r:')) ||
+      (lowerStem.includes('assertion') && lowerStem.includes('reason')) ||
+      (lowerStem.includes('अभिकथन') && (lowerStem.includes('तर्क') || lowerStem.includes('कारण')))
+    ) {
       questionType = 'assertion_reason';
     } else if (rawType.includes('match') || rawMatchPairs) {
       questionType = 'match_the_pair';
-    } else if (rawType.includes('statement') || (statement1 && statement2)) {
+    } else if (
+      rawType.includes('statement') ||
+      (statement1 && statement2) ||
+      (lowerStem.includes('statement i') && lowerStem.includes('statement ii')) ||
+      (lowerStem.includes('कथन i') && lowerStem.includes('कथन ii'))
+    ) {
       questionType = 'statement_type';
     }
 
     // Validation 2: Stem & Content
     if (questionType === 'assertion_reason') {
+      if ((!assertionText || !reasonText) && stem) {
+        const ext = parseAssertionReason(stem);
+        if (!assertionText && ext.assertion) assertionText = ext.assertion;
+        if (!reasonText && ext.reason) reasonText = ext.reason;
+        if (ext.cleanedStem && (assertionText || reasonText)) {
+          stem = ext.cleanedStem;
+        }
+      }
       if (!assertionText || !reasonText) {
         errors.push({
           row: rowNum,
@@ -155,6 +177,14 @@ export function parseQuestionsCsv(csvContent: string): CsvParseResult {
         stem = 'Given below are two statements, one is labelled as Assertion (A) and the other as Reason (R):';
       }
     } else if (questionType === 'statement_type') {
+      if ((!statement1 || !statement2) && stem) {
+        const ext = parseStatementType(stem);
+        if (!statement1 && ext.statement1) statement1 = ext.statement1;
+        if (!statement2 && ext.statement2) statement2 = ext.statement2;
+        if (ext.cleanedStem && (statement1 || statement2)) {
+          stem = ext.cleanedStem;
+        }
+      }
       if (!statement1 || !statement2) {
         errors.push({
           row: rowNum,

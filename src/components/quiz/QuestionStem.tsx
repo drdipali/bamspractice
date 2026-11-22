@@ -26,10 +26,14 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
   if (qType === 'assertion_reason') {
     let aText = question.assertionText;
     let rText = question.reasonText;
-    if ((!aText || !rText) && question.stem) {
+    let effectiveStem = enStem;
+    if (question.stem) {
       const extracted = extractARFromStem(question.stem);
       aText = aText || extracted.assertion;
       rText = rText || extracted.reason;
+      if (extracted.cleanedStem && (extracted.assertion || extracted.reason)) {
+        effectiveStem = extracted.cleanedStem;
+      }
     }
 
     return (
@@ -38,7 +42,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
 
         {/* Stem Prompt */}
         <Text style={styles.promptText}>
-          {language === 'hi' && hiStem ? hiStem : enStem}
+          {language === 'hi' && hiStem ? hiStem : effectiveStem}
         </Text>
 
         {/* Assertion Box */}
@@ -115,10 +119,14 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
   if (qType === 'statement_type') {
     let s1 = question.statement1;
     let s2 = question.statement2;
-    if ((!s1 || !s2) && question.stem) {
+    let effectiveStem = enStem;
+    if (question.stem) {
       const extracted = extractStatementsFromStem(question.stem);
       s1 = s1 || extracted.statement1;
       s2 = s2 || extracted.statement2;
+      if (extracted.cleanedStem && (extracted.statement1 || extracted.statement2)) {
+        effectiveStem = extracted.cleanedStem;
+      }
     }
 
     return (
@@ -126,7 +134,7 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
         {renderBadge('Statement Type', '#E0E7FF', '#4338CA')}
 
         <Text style={styles.promptText}>
-          {language === 'hi' && hiStem ? hiStem : enStem}
+          {language === 'hi' && hiStem ? hiStem : effectiveStem}
         </Text>
 
         <View style={styles.assertionCard}>

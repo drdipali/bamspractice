@@ -51,6 +51,8 @@ import {
   SpreadsheetParseResult,
   extractStatementsFromStem,
   extractARFromStem,
+  parseAssertionReason,
+  parseStatementType,
 } from '../../utils/spreadsheetHelper';
 import { GoogleDriveService } from '../../services/googleDriveService';
 import {
@@ -420,23 +422,31 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     let aText = q.assertionText || '';
     let rText = q.reasonText || '';
-    if ((!aText || !rText) && q.stem) {
-      const extracted = extractARFromStem(q.stem);
+    let initialStem = q.stem || '';
+    if (initialStem && (q.questionType === 'assertion_reason' || (!aText || !rText))) {
+      const extracted = parseAssertionReason(initialStem);
       if (!aText && extracted.assertion) aText = extracted.assertion;
       if (!rText && extracted.reason) rText = extracted.reason;
+      if (extracted.cleanedStem && (extracted.assertion || extracted.reason)) {
+        initialStem = extracted.cleanedStem;
+      }
     }
     setAssertionText(aText);
     setReasonText(rText);
 
     let s1 = q.statement1 || '';
     let s2 = q.statement2 || '';
-    if ((!s1 || !s2) && q.stem) {
-      const extracted = extractStatementsFromStem(q.stem);
+    if (initialStem && (q.questionType === 'statement_type' || (!s1 || !s2))) {
+      const extracted = parseStatementType(initialStem);
       if (!s1 && extracted.statement1) s1 = extracted.statement1;
       if (!s2 && extracted.statement2) s2 = extracted.statement2;
+      if (extracted.cleanedStem && (extracted.statement1 || extracted.statement2)) {
+        initialStem = extracted.cleanedStem;
+      }
     }
     setStatement1(s1);
     setStatement2(s2);
+    setStem(initialStem);
     setIsChapterVerifiedField(isQuestionChapterVerified(q));
     if (q.matchPairs && q.matchPairs.length > 0) {
       setMatchPairs(q.matchPairs);
@@ -449,6 +459,40 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setAiError(null);
     setIsEditingChapterMapping(false);
     setIsAddFormOpen(false);
+  };
+
+  // Auto-split Assertion & Reason from stem button handler
+  const handleAutoSplitARFromStem = () => {
+    if (!stem.trim()) {
+      alert('Question stem is empty. Please enter or paste question text first.');
+      return;
+    }
+    const ext = parseAssertionReason(stem);
+    if (ext.assertion || ext.reason) {
+      if (ext.assertion) setAssertionText(ext.assertion);
+      if (ext.reason) setReasonText(ext.reason);
+      if (ext.cleanedStem) setStem(ext.cleanedStem);
+      showToast('⚡ Auto-split Assertion (A) & Reason (R) from stem!');
+    } else {
+      alert('Could not detect Assertion (A) or Reason (R) labels in the Question Stem.');
+    }
+  };
+
+  // Auto-split Statement I & Statement II from stem button handler
+  const handleAutoSplitStatementsFromStem = () => {
+    if (!stem.trim()) {
+      alert('Question stem is empty. Please enter or paste question text first.');
+      return;
+    }
+    const ext = parseStatementType(stem);
+    if (ext.statement1 || ext.statement2) {
+      if (ext.statement1) setStatement1(ext.statement1);
+      if (ext.statement2) setStatement2(ext.statement2);
+      if (ext.cleanedStem) setStem(ext.cleanedStem);
+      showToast('⚡ Auto-split Statement I & Statement II from stem!');
+    } else {
+      alert('Could not detect Statement I or Statement II labels in the Question Stem.');
+    }
   };
 
   // Interactive AI Assistant handler
@@ -528,7 +572,30 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         setQType(result.questionType as QuestionType);
       }
 
-      setStem(result.questionText);
+      let finalStem = result.questionText;
+      let finalA = result.assertionText && result.assertionText.trim() ? result.assertionText.trim() : '';
+      let finalR = result.reasonText && result.reasonText.trim() ? result.reasonText.trim() : '';
+      if (result.questionType === 'assertion_reason' || (!finalA && !finalR && finalStem)) {
+        const ext = parseAssertionReason(finalStem);
+        if (!finalA && ext.assertion) finalA = ext.assertion;
+        if (!finalR && ext.reason) finalR = ext.reason;
+        if (ext.cleanedStem && (finalA || finalR)) finalStem = ext.cleanedStem;
+      }
+      setAssertionText(finalA);
+      setReasonText(finalR);
+
+      let finalS1 = result.statement1 && result.statement1.trim() ? result.statement1.trim() : '';
+      let finalS2 = result.statement2 && result.statement2.trim() ? result.statement2.trim() : '';
+      if (result.questionType === 'statement_type' || (!finalS1 && !finalS2 && finalStem)) {
+        const ext = parseStatementType(finalStem);
+        if (!finalS1 && ext.statement1) finalS1 = ext.statement1;
+        if (!finalS2 && ext.statement2) finalS2 = ext.statement2;
+        if (ext.cleanedStem && (finalS1 || finalS2)) finalStem = ext.cleanedStem;
+      }
+      setStatement1(finalS1);
+      setStatement2(finalS2);
+      setStem(finalStem);
+
       setOptions([result.optionA, result.optionB, result.optionC, result.optionD]);
 
       if (
@@ -541,26 +608,6 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
       if (result.explanation !== undefined) {
         setExplanation(result.explanation);
-      }
-      if (result.assertionText !== undefined && result.assertionText.trim()) {
-        setAssertionText(result.assertionText);
-      } else if (result.questionType === 'assertion_reason') {
-        const ext = extractARFromStem(result.questionText);
-        if (ext.assertion) setAssertionText(ext.assertion);
-        if (ext.reason) setReasonText(ext.reason);
-      }
-      if (result.reasonText !== undefined && result.reasonText.trim()) {
-        setReasonText(result.reasonText);
-      }
-      if (result.statement1 !== undefined && result.statement1.trim()) {
-        setStatement1(result.statement1);
-      } else if (result.questionType === 'statement_type') {
-        const ext = extractStatementsFromStem(result.questionText);
-        if (ext.statement1) setStatement1(ext.statement1);
-        if (ext.statement2) setStatement2(ext.statement2);
-      }
-      if (result.statement2 !== undefined && result.statement2.trim()) {
-        setStatement2(result.statement2);
       }
       if (result.suggestedChapterTag && result.suggestedChapterTag.trim()) {
         setChapterName(result.suggestedChapterTag.trim());
@@ -606,7 +653,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       let curS1 = statement1.trim();
       let curS2 = statement2.trim();
       if (!curS1 || !curS2) {
-        const ext = extractStatementsFromStem(stem);
+        const ext = parseStatementType(stem);
         if (!curS1 && ext.statement1) {
           curS1 = ext.statement1;
           setStatement1(curS1);
@@ -614,6 +661,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         if (!curS2 && ext.statement2) {
           curS2 = ext.statement2;
           setStatement2(curS2);
+        }
+        if (ext.cleanedStem && (ext.statement1 || ext.statement2)) {
+          setStem(ext.cleanedStem);
         }
       }
       const isOptionsEmpty = options.every((o) => !o.trim());
@@ -627,7 +677,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       let curA = assertionText.trim();
       let curR = reasonText.trim();
       if (!curA || !curR) {
-        const ext = extractARFromStem(stem);
+        const ext = parseAssertionReason(stem);
         if (!curA && ext.assertion) {
           curA = ext.assertion;
           setAssertionText(curA);
@@ -635,6 +685,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         if (!curR && ext.reason) {
           curR = ext.reason;
           setReasonText(curR);
+        }
+        if (ext.cleanedStem && (ext.assertion || ext.reason)) {
+          setStem(ext.cleanedStem);
         }
       }
       const isOptionsEmpty = options.every((o) => !o.trim());
@@ -652,10 +705,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       setQType('statement_type');
       let extractedS1 = statement1.trim();
       let extractedS2 = statement2.trim();
+      let cleaned = '';
       if (!extractedS1 || !extractedS2) {
-        const extracted = extractStatementsFromStem(stem);
+        const extracted = parseStatementType(stem);
         extractedS1 = extractedS1 || extracted.statement1;
         extractedS2 = extractedS2 || extracted.statement2;
+        cleaned = extracted.cleanedStem;
       }
       if (extractedS1) setStatement1(extractedS1);
       if (extractedS2) setStatement2(extractedS2);
@@ -663,18 +718,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       // Set standard statement options
       setOptions([...STANDARD_STATEMENT_OPTIONS]);
 
-      // If stem doesn't have the clean prompt, construct it
-      if (extractedS1 || extractedS2) {
-        const intro =
-          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
-        const s1Formatted = extractedS1.startsWith('Statement I')
-          ? extractedS1
-          : `Statement I: ${extractedS1}`;
-        const s2Formatted = extractedS2.startsWith('Statement II')
-          ? extractedS2
-          : `Statement II: ${extractedS2}`;
-        setStem(`${intro}\n\n${s1Formatted}\n\n${s2Formatted}`);
-      }
+      const intro =
+        cleaned ||
+        'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
+      setStem(intro);
 
       showToast('Converted to Statement I & II format! Review fields below.');
 
@@ -694,27 +741,22 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       setQType('assertion_reason');
       let extractedA = assertionText.trim();
       let extractedR = reasonText.trim();
+      let cleaned = '';
       if (!extractedA || !extractedR) {
-        const extracted = extractARFromStem(stem);
+        const extracted = parseAssertionReason(stem);
         extractedA = extractedA || extracted.assertion;
         extractedR = extractedR || extracted.reason;
+        cleaned = extracted.cleanedStem;
       }
       if (extractedA) setAssertionText(extractedA);
       if (extractedR) setReasonText(extractedR);
 
       setOptions([...STANDARD_AR_OPTIONS]);
 
-      if (extractedA || extractedR) {
-        const intro =
-          'Given below are two statements: One is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को कारण (R) कहा गया है।';
-        const aFormatted = extractedA.startsWith('Assertion')
-          ? extractedA
-          : `Assertion (A): ${extractedA}`;
-        const rFormatted = extractedR.startsWith('Reason')
-          ? extractedR
-          : `Reason (R): ${extractedR}`;
-        setStem(`${intro}\n\n${aFormatted}\n\n${rFormatted}`);
-      }
+      const intro =
+        cleaned ||
+        'Given below are two statements: One is labelled as Assertion (A) and the other is labelled as Reason (R). / नीचे दो कथन दिए गए हैं: एक को अभिकथन (A) और दूसरे को कारण (R) कहा गया है।';
+      setStem(intro);
 
       showToast('Converted to Assertion–Reason format! Review fields below.');
 
@@ -760,9 +802,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     let finalA = assertionText.trim();
     let finalR = reasonText.trim();
+    let effectiveStemToSave = stem.trim();
     if (qType === 'assertion_reason') {
-      if ((!finalA || !finalR) && stem.trim()) {
-        const ext = extractARFromStem(stem);
+      if ((!finalA || !finalR) && effectiveStemToSave) {
+        const ext = parseAssertionReason(effectiveStemToSave);
         if (!finalA && ext.assertion) {
           finalA = ext.assertion;
           setAssertionText(finalA);
@@ -771,8 +814,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           finalR = ext.reason;
           setReasonText(finalR);
         }
+        if (ext.cleanedStem && (ext.assertion || ext.reason)) {
+          effectiveStemToSave = ext.cleanedStem;
+          setStem(effectiveStemToSave);
+        }
       }
-      if (!finalA && !stem.includes('A:')) {
+      if (!finalA && !effectiveStemToSave.includes('A:')) {
         alert('Please enter the Assertion (A) text.');
         return;
       }
@@ -781,8 +828,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     let finalS1 = statement1.trim();
     let finalS2 = statement2.trim();
     if (qType === 'statement_type') {
-      if ((!finalS1 || !finalS2) && stem.trim()) {
-        const ext = extractStatementsFromStem(stem);
+      if ((!finalS1 || !finalS2) && effectiveStemToSave) {
+        const ext = parseStatementType(effectiveStemToSave);
         if (!finalS1 && ext.statement1) {
           finalS1 = ext.statement1;
           setStatement1(finalS1);
@@ -791,8 +838,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           finalS2 = ext.statement2;
           setStatement2(finalS2);
         }
+        if (ext.cleanedStem && (ext.statement1 || ext.statement2)) {
+          effectiveStemToSave = ext.cleanedStem;
+          setStem(effectiveStemToSave);
+        }
       }
-      if (!finalS1 && !finalS2 && !stem.includes('Statement I')) {
+      if (!finalS1 && !finalS2 && !effectiveStemToSave.includes('Statement I')) {
         alert('Please enter Statement I and Statement II.');
         return;
       }
@@ -818,7 +869,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         questionType: qType,
         d: difficulty,
         c: correctAnswer,
-        stem: stem.trim(),
+        stem: effectiveStemToSave,
         o: cleanOptions,
         r: refSource.trim() || undefined,
         explanation: explanation.trim() || undefined,
@@ -2701,7 +2752,17 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               {/* Assertion / Reason Fields */}
               {qType === 'assertion_reason' && (
                 <View style={styles.conditionalCard}>
-                  <Text style={styles.conditionalTitle}>Assertion &amp; Reason Text</Text>
+                  <View style={styles.conditionalHeaderRow}>
+                    <Text style={styles.conditionalTitle}>Assertion &amp; Reason Text</Text>
+                    <TouchableOpacity
+                      onPress={handleAutoSplitARFromStem}
+                      style={styles.btnAutoSplit}
+                      activeOpacity={0.7}
+                    >
+                      <Sparkles size={12} color="#854D0E" />
+                      <Text style={styles.btnAutoSplitText}>⚡ Auto-Split from Stem</Text>
+                    </TouchableOpacity>
+                  </View>
                   <Text style={styles.subLabel}>Assertion (A):</Text>
                   <TextInput
                     style={[styles.textInput, styles.textareaSmall]}
@@ -2726,25 +2787,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               {/* Statement I & II Fields */}
               {qType === 'statement_type' && (
                 <View style={[styles.conditionalCard, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
-                  <Text style={[styles.conditionalTitle, { color: '#5B21B6' }]}>
-                    Statement I &amp; Statement II (Bilingual)
-                  </Text>
+                  <View style={styles.conditionalHeaderRow}>
+                    <Text style={[styles.conditionalTitle, { color: '#5B21B6' }]}>
+                      Statement I &amp; Statement II (Bilingual)
+                    </Text>
+                    <TouchableOpacity
+                      onPress={handleAutoSplitStatementsFromStem}
+                      style={[styles.btnAutoSplit, { backgroundColor: '#EDE9FE', borderColor: '#C4B5FD' }]}
+                      activeOpacity={0.7}
+                    >
+                      <Sparkles size={12} color="#6B21A8" />
+                      <Text style={[styles.btnAutoSplitText, { color: '#6B21A8' }]}>⚡ Auto-Split from Stem</Text>
+                    </TouchableOpacity>
+                  </View>
                   <Text style={[styles.subLabel, { color: '#4C1D95' }]}>Statement I / कथन I (English + Devanagari Hindi):</Text>
                   <TextInput
                     style={[styles.textInput, styles.textareaSmall]}
                     value={statement1}
-                    onChangeText={(val) => {
-                      setStatement1(val);
-                      if (val || statement2) {
-                        const intro =
-                          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
-                        const s1Text = val.trim();
-                        const s2Text = statement2.trim();
-                        setStem(
-                          `${intro}\n\n${s1Text ? (s1Text.startsWith('Statement I') ? s1Text : `Statement I: ${s1Text}`) : ''}\n\n${s2Text ? (s2Text.startsWith('Statement II') ? s2Text : `Statement II: ${s2Text}`) : ''}`.trim()
-                        );
-                      }
-                    }}
+                    onChangeText={setStatement1}
                     placeholder="Statement I in English and Devanagari Hindi..."
                     placeholderTextColor={THEME.colors.muted}
                     multiline
@@ -2755,18 +2815,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   <TextInput
                     style={[styles.textInput, styles.textareaSmall]}
                     value={statement2}
-                    onChangeText={(val) => {
-                      setStatement2(val);
-                      if (statement1 || val) {
-                        const intro =
-                          'Given below are two statements: One is labelled as Statement I and the other is labelled as Statement II. / नीचे दो कथन दिए गए हैं: एक को कथन I और दूसरे को कथन II कहा गया है।';
-                        const s1Text = statement1.trim();
-                        const s2Text = val.trim();
-                        setStem(
-                          `${intro}\n\n${s1Text ? (s1Text.startsWith('Statement I') ? s1Text : `Statement I: ${s1Text}`) : ''}\n\n${s2Text ? (s2Text.startsWith('Statement II') ? s2Text : `Statement II: ${s2Text}`) : ''}`.trim()
-                        );
-                      }
-                    }}
+                    onChangeText={setStatement2}
                     placeholder="Statement II in English and Devanagari Hindi..."
                     placeholderTextColor={THEME.colors.muted}
                     multiline
@@ -3864,18 +3913,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                         return (
                           <TouchableOpacity
                             style={styles.btnCardEditManually}
-                            onPress={() => {
-                              setEditingQuestion(q);
-                              setQType(q.questionType || 'standard');
-                              setChapterName(q.chapterName || String(q.ch) || 'Uncategorized / Needs Review > General > Chapter 1');
-                              setRefSource(q.r || '');
-                              setDifficulty(q.d || 1);
-                              setStem(q.stem || '');
-                              setOptions(q.o || ['', '', '', '']);
-                              setCorrectAnswer(typeof q.c === 'number' ? q.c : 0);
-                              setExplanation(q.explanation || '');
-                              setIsAddFormOpen(true);
-                            }}
+                            onPress={() => handleStartEdit(q)}
                             activeOpacity={0.8}
                           >
                             <Edit3 size={11} color="#FFF" />
@@ -3896,44 +3934,76 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     </View>
                   )}
 
-                  {/* Question Stem Text */}
-                  <Text style={styles.stemText}>{q.stem}</Text>
+                  {/* Question Stem Text and Assertion/Statement details */}
+                  {(() => {
+                    let displayStem = q.stem;
+                    let displayA = q.assertionText;
+                    let displayR = q.reasonText;
+                    let displayS1 = q.statement1;
+                    let displayS2 = q.statement2;
 
-                  {/* Assertion / Reason Details */}
-                  {q.questionType === 'assertion_reason' && (q.assertionText || q.reasonText) && (
-                    <View style={styles.arBox}>
-                      {q.assertionText ? (
-                        <Text style={styles.arItem}>
-                          <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Assertion (A): </Text>
-                          {q.assertionText}
-                        </Text>
-                      ) : null}
-                      {q.reasonText ? (
-                        <Text style={[styles.arItem, { marginTop: 4 }]}>
-                          <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Reason (R): </Text>
-                          {q.reasonText}
-                        </Text>
-                      ) : null}
-                    </View>
-                  )}
+                    if (q.questionType === 'assertion_reason') {
+                      if (q.stem) {
+                        const ext = parseAssertionReason(q.stem);
+                        displayA = displayA || ext.assertion;
+                        displayR = displayR || ext.reason;
+                        if (ext.cleanedStem && (displayA || displayR)) {
+                          displayStem = ext.cleanedStem;
+                        }
+                      }
+                    } else if (q.questionType === 'statement_type') {
+                      if (q.stem) {
+                        const ext = parseStatementType(q.stem);
+                        displayS1 = displayS1 || ext.statement1;
+                        displayS2 = displayS2 || ext.statement2;
+                        if (ext.cleanedStem && (displayS1 || displayS2)) {
+                          displayStem = ext.cleanedStem;
+                        }
+                      }
+                    }
 
-                  {/* Statement Type Details */}
-                  {q.questionType === 'statement_type' && (q.statement1 || q.statement2) && (
-                    <View style={[styles.arBox, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
-                      {q.statement1 ? (
-                        <Text style={styles.arItem}>
-                          <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement I: </Text>
-                          {q.statement1.replace(/^Statement I:\s*/i, '')}
-                        </Text>
-                      ) : null}
-                      {q.statement2 ? (
-                        <Text style={[styles.arItem, { marginTop: 4 }]}>
-                          <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement II: </Text>
-                          {q.statement2.replace(/^Statement II:\s*/i, '')}
-                        </Text>
-                      ) : null}
-                    </View>
-                  )}
+                    return (
+                      <>
+                        <Text style={styles.stemText}>{displayStem}</Text>
+
+                        {/* Assertion / Reason Details */}
+                        {q.questionType === 'assertion_reason' && (displayA || displayR) && (
+                          <View style={styles.arBox}>
+                            {displayA ? (
+                              <Text style={styles.arItem}>
+                                <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Assertion (A): </Text>
+                                {displayA}
+                              </Text>
+                            ) : null}
+                            {displayR ? (
+                              <Text style={[styles.arItem, { marginTop: 4 }]}>
+                                <Text style={{ fontWeight: '700', color: THEME.colors.brand }}>Reason (R): </Text>
+                                {displayR}
+                              </Text>
+                            ) : null}
+                          </View>
+                        )}
+
+                        {/* Statement Type Details */}
+                        {q.questionType === 'statement_type' && (displayS1 || displayS2) && (
+                          <View style={[styles.arBox, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                            {displayS1 ? (
+                              <Text style={styles.arItem}>
+                                <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement I: </Text>
+                                {displayS1.replace(/^Statement I:\s*/i, '')}
+                              </Text>
+                            ) : null}
+                            {displayS2 ? (
+                              <Text style={[styles.arItem, { marginTop: 4 }]}>
+                                <Text style={{ fontWeight: '700', color: '#5B21B6' }}>Statement II: </Text>
+                                {displayS2.replace(/^Statement II:\s*/i, '')}
+                              </Text>
+                            ) : null}
+                          </View>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {/* Options List */}
                   <View style={styles.optionsGrid}>
@@ -5030,11 +5100,34 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 10,
   },
+  conditionalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   conditionalTitle: {
     fontSize: 12,
     fontWeight: '700',
     color: THEME.colors.brand,
-    marginBottom: 6,
+  },
+  btnAutoSplit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF9C3',
+    borderWidth: 1,
+    borderColor: '#FDE047',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  btnAutoSplitText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#854D0E',
   },
   optionInputRow: {
     flexDirection: 'row',
