@@ -7,7 +7,7 @@ import {
   View,
   ActivityIndicator,
 } from 'react-native';
-import { ChevronDown, ChevronRight, Search, X, Bookmark, Check } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Search, X, Bookmark, Check, RefreshCw } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Chapter } from '../../types';
 import { GROUPS, RAW_TREE } from '../../constants/syllabusData';
@@ -23,13 +23,29 @@ export const ChapterTree: React.FC = () => {
     toggleGroup,
     bookmarkedIds,
     practiceMode,
+    refreshQuestions,
   } = useApp();
 
   const [query, setQuery] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     s0: true, // Charaka Samhita open by default
     '0-0': true, // Sutrasthana open by default
   });
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      if (refreshQuestions) {
+        await refreshQuestions();
+      }
+    } catch (e) {
+      console.warn('Manual refresh failed:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -80,7 +96,24 @@ export const ChapterTree: React.FC = () => {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Choose chapters</Text>
+      <View style={styles.cardHeaderRow}>
+        <Text style={styles.cardTitle}>Choose chapters</Text>
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={handleManualRefresh}
+          disabled={isRefreshing}
+          activeOpacity={0.7}
+        >
+          {isRefreshing ? (
+            <ActivityIndicator size="small" color={THEME.colors.brand} />
+          ) : (
+            <RefreshCw size={13} color={THEME.colors.brand} />
+          )}
+          <Text style={styles.refreshBtnText}>
+            {isRefreshing ? 'Syncing...' : 'Sync Questions'}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Search Bar */}
       <View style={styles.searchRow}>
@@ -493,12 +526,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.line,
   },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   cardTitle: {
     fontFamily: THEME.fonts.serif,
     fontSize: 20,
     fontWeight: '700',
     color: THEME.colors.ink,
-    marginBottom: 12,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  refreshBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#065F46',
   },
   searchRow: {
     flexDirection: 'row',

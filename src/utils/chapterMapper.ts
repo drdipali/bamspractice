@@ -1089,23 +1089,60 @@ export function isQuestionMalformed(q: Question): boolean {
  * If the question has been explicitly marked as Chapter-Verified by an Admin, the Admin's verification
  * is authoritative over automated heuristic citation-mismatch warnings.
  */
-export function isValidQuestion(q: Question): boolean {
+export function isValidQuestion(q: Question | any): boolean {
+  if (!q) return false;
+  const stem = String(q.stem || q.question || q.question_text || '').trim();
+  if (!stem || /^\d+\.?$/.test(stem) || stem.length < 3) return false;
+
+  const rawOpts = q.o || q.options || [];
+  const validOpts = Array.isArray(rawOpts)
+    ? rawOpts.filter((opt: any) => String(opt || '').trim().length > 0)
+    : [];
+  if (validOpts.length < 2) return false;
+
+  const rawAns = q.c ?? q.correctAnswer ?? q.answer ?? q.key;
+  if (rawAns === undefined || rawAns === null) return false;
+  if (typeof rawAns === 'number') {
+    if (rawAns < 0 || rawAns > 3) return false;
+  } else {
+    const cleanStr = String(rawAns).trim().toUpperCase();
+    if (!['0', '1', '2', '3', 'A', 'B', 'C', 'D'].includes(cleanStr)) {
+      return false;
+    }
+  }
+
+  // If verified by Admin, Admin verification is authoritative over heuristic citation mismatch checks
   if (isQuestionChapterVerified(q)) {
-    const stem = String(q.stem || '').trim();
-    if (!stem || /^\d+\.?$/.test(stem) || stem.length < 5) return false;
-    const validOpts = (q.o || []).filter((opt) => String(opt || '').trim().length > 0);
-    if (validOpts.length < 2) return false;
-    if (typeof q.c !== 'number' || q.c < 0 || q.c > 3) return false;
     return true;
   }
+
+  const optA = String(validOpts[0] || '').trim();
+  if (optA.length > 25 && stem.length < 10) return false;
+
   return getQuestionAuditStatus(q).isValid;
 }
 
 /**
  * Checks whether a question is explicitly marked as Chapter-Verified.
+ * Accepts boolean true, string 'true', number 1, or variants across properties.
  */
-export function isQuestionChapterVerified(q: Question): boolean {
-  return Boolean(q.is_chapter_verified ?? q.isChapterVerified);
+export function isQuestionChapterVerified(q: Question | any): boolean {
+  if (!q) return false;
+  return (
+    q.is_chapter_verified === true ||
+    q.isChapterVerified === true ||
+    q.verified === true ||
+    q.is_verified === true ||
+    q.isVerified === true ||
+    String(q.is_chapter_verified) === 'true' ||
+    String(q.isChapterVerified) === 'true' ||
+    String(q.verified) === 'true' ||
+    String(q.is_verified) === 'true' ||
+    q.is_chapter_verified === 1 ||
+    q.isChapterVerified === 1 ||
+    q.verified === 1 ||
+    q.is_verified === 1
+  );
 }
 
 /**

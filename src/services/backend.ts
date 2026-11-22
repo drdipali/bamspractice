@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserRecord, QuizAttemptRecord } from '../types/auth';
-import { Chapter, Question, MockBlueprintItem } from '../types';
+import { Chapter, Question, MockBlueprintItem, SamhitaDef } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
-import { ALL_CHAPTERS } from '../constants/syllabusData';
+import { ALL_CHAPTERS, RAW_TREE } from '../constants/syllabusData';
 import { normalizeQuestionStem } from '../utils/spreadsheetHelper';
 import { isQuestionChapterVerified, isValidQuestion } from '../utils/chapterMapper';
 import {
@@ -15,6 +15,8 @@ import {
 const USERS_STORAGE_KEY = 'bams_cloud_users_v1';
 const SESSION_STORAGE_KEY = 'bams_cloud_session_v1';
 const QUESTIONS_STORAGE_KEY = 'bams_cloud_questions_v1';
+const CUSTOM_QUESTIONS_STORAGE_KEY = 'bams_custom_questions_v3';
+const CACHE_VERSION_KEY = 'bams_cache_v3';
 const MOCK_BLUEPRINT_STORAGE_KEY = 'bams_mock_blueprint_v1';
 
 export const DEFAULT_MOCK_BLUEPRINT: MockBlueprintItem[] = [
@@ -219,6 +221,40 @@ function normalizeChapterLookupKey(raw: string): string {
     .trim();
 }
 
+function normalizeSubjectAlias(s: string): string {
+  if (!s) return '';
+  const clean = s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (clean.includes('charak')) return 'charaka samhita';
+  if (clean.includes('sushrut')) return 'sushruta samhita';
+  if (clean.includes('hridaya') || clean.includes('hridayam')) return 'ashtanga hridaya';
+  if (clean.includes('sangrah')) return 'ashtanga sangraha';
+  if (clean.includes('kashyap')) return 'kashyapa samhita';
+  if (clean.includes('madhava') || clean.includes('madhav')) return 'madhava nidana';
+  if (clean.includes('sharang') || clean.includes('sarang')) return 'sharngadhara samhita';
+  if (clean.includes('bhavaprak') || clean.includes('bhava')) return 'bhavaprakasha';
+  if (clean.includes('dravyagun')) return 'dravyaguna vigyan';
+  if (clean.includes('rasashastra') || clean.includes('bhaishajya')) return 'rasashastra & bhaishajya kalpana';
+  if (clean.includes('roganidan') || clean.includes('vikriti')) return 'roga nidana & vikriti vigyan';
+  if (clean.includes('agada') || clean.includes('vyavahara')) return 'agadatantra & vyavahara ayurveda';
+  if (clean.includes('swastha') || clean.includes('yoga')) return 'swasthavritta & yoga';
+  if (clean.includes('kaya') || clean.includes('chikitsa')) return 'kayachikitsa';
+  if (clean.includes('panchakarma')) return 'panchakarma';
+  if (clean.includes('shalya')) return 'shalya tantra';
+  if (clean.includes('shalakya')) return 'shalakya tantra';
+  if (clean.includes('prasuti') || clean.includes('stri')) return 'prasuti & stri roga';
+  if (clean.includes('kaumar') || clean.includes('bala')) return 'kaumarbhritya';
+  if (clean.includes('padartha')) return 'padartha vijnana';
+  if (clean.includes('samhita') && clean.includes('siddhant')) return 'samhita & siddhanta';
+  if (clean.includes('rachana')) return 'rachana sharir';
+  if (clean.includes('kriya')) return 'kriya sharir';
+  return s.toLowerCase().trim();
+}
+
+function normalizeSthanaKey(s: string): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 /**
  * Builds Chapter objects containing all classical BAMS syllabus chapters,
  * dynamically merging any questions created or imported into the cloud database.
@@ -267,13 +303,78 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
   const extraChaptersMap: Record<string, Question[]> = {};
 
   cloudQuestions.forEach((q) => {
-    const rawTag = (q.chapterName || String(q.ch || '')).trim();
+    const rawTag = (
+      q.chapterName ||
+      (q as any).chapter_mapping ||
+      ((q as any).subject && (q as any).sthana
+        ? `${(q as any).subject} > ${(q as any).sthana} > ${(q as any).chapter || 'Chapter 1'}`
+        : '') ||
+      String(q.ch || '')
+    ).trim();
     const chId = String(q.ch || '').trim();
     const normKey = normalizeChapterLookupKey(rawTag);
-    const target =
+
+    let target: Chapter | undefined =
       chapterMap[chId] ||
       chapterMap[normKey] ||
       chapterMap[normKey.replace(/>\s*chapter\s*(\d+)/i, '> $1')];
+
+    // Fallback: smart hierarchical resolution from path (handles "Chapter 1 · 90 real MCQs", "Adhyaya 1", etc.)
+    if (!target && rawTag) {
+      const parts = rawTag.split(/[>›→\/]/).map((s: string) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const rawSubj = parts[0];
+        const rawSth = parts[1];
+        const rawCh = parts.slice(2).join(' ') || parts[1];
+        const numMatch = rawCh.match(/(\d+)/);
+        const chNum = numMatch ? parseInt(numMatch[1], 10) : null;
+
+        const normSubj = normalizeSubjectAlias(rawSubj);
+        const normSth = normalizeSthanaKey(rawSth);
+
+        target = baseChapters.find((c) => {
+          if (normalizeSubjectAlias(c.sam) !== normSubj) return false;
+          if (normalizeSthanaKey(c.sth) !== normSth) return false;
+          if (chNum !== null && chNum > 0) {
+            return c.n === chNum;
+          }
+          return c.name.toLowerCase() === rawCh.toLowerCase();
+        });
+
+        // If still not found, check if subject matches a known Samhita from RAW_TREE
+        if (!target) {
+          const matchedSam = RAW_TREE.find((s: SamhitaDef) => normalizeSubjectAlias(s.name) === normSubj);
+          if (matchedSam) {
+            const matchedSth = matchedSam.sthanas.find((st) => normalizeSthanaKey(st[0]) === normSth);
+            const canonicalSth = matchedSth ? matchedSth[0] : rawSth;
+            const chName = chNum !== null && chNum > 0 ? `Chapter ${chNum}` : rawCh;
+
+            target = baseChapters.find(
+              (c) =>
+                c.sam === matchedSam.name &&
+                c.sth === canonicalSth &&
+                (c.n === (chNum || chName) || c.name === chName)
+            );
+
+            if (!target) {
+              const newId = `dyn_${matchedSam.name}_${canonicalSth}_${chNum || chName}`.replace(/\s+/g, '_');
+              target = {
+                id: newId,
+                name: chName,
+                sam: matchedSam.name,
+                sth: canonicalSth,
+                n: chNum || chName,
+                key: `${matchedSam.name}-${canonicalSth}`,
+                qs: [],
+              };
+              baseChapters.push(target);
+              chapterMap[newId] = target;
+              registerKey(`${target.sam} > ${target.sth} > ${target.name}`, target);
+            }
+          }
+        }
+      }
+    }
 
     if (target) {
       // Add or replace question with latest updated question object
@@ -284,7 +385,7 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
         target.qs.unshift(q);
       }
     } else {
-      // Custom chapter added outside the standard chapters
+      // Custom chapter added outside the standard classical Samhitas
       const customKey = q.chapterName || String(q.ch || 'Custom Chapter');
       if (!extraChaptersMap[customKey]) {
         extraChaptersMap[customKey] = [];
@@ -394,27 +495,17 @@ class BackendService {
         }
       }
 
-      // 4. Cloud Questions Collection
-      const QUESTIONS_PURGED_FLAG = 'bams_questions_bank_purged_v2';
-      const isAlreadyPurged = await AsyncStorage.getItem(QUESTIONS_PURGED_FLAG);
-      if (!isAlreadyPurged) {
-        await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
-        await AsyncStorage.removeItem('bams_edited_questions_v1').catch(() => {});
-        await AsyncStorage.removeItem('bams_deleted_questions_v1').catch(() => {});
-        await AsyncStorage.removeItem('bams_cloud_questions_v1').catch(() => {});
-        await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
-        await AsyncStorage.removeItem('bams_bookmarks').catch(() => {});
-        await AsyncStorage.removeItem('bams_sets').catch(() => {});
-        await AsyncStorage.removeItem('bams_draft').catch(() => {});
-        this.users.forEach((u) => {
-          u.quizzes = [];
-          u.quizCount = 0;
-        });
-        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users)).catch(() => {});
-        await AsyncStorage.setItem(QUESTIONS_PURGED_FLAG, 'true').catch(() => {});
+      // 4. Cloud Questions Collection (with v3 cache key & legacy migration)
+      let customStored = await AsyncStorage.getItem(CUSTOM_QUESTIONS_STORAGE_KEY);
+      if (!customStored) {
+        customStored =
+          (await AsyncStorage.getItem('bams_custom_questions_v1')) ||
+          (await AsyncStorage.getItem('bams_cloud_questions_v1'));
+        if (customStored) {
+          await AsyncStorage.setItem(CUSTOM_QUESTIONS_STORAGE_KEY, customStored).catch(() => {});
+        }
       }
 
-      const customStored = await AsyncStorage.getItem('bams_custom_questions_v1');
       const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1');
       const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1');
 
@@ -759,7 +850,13 @@ class BackendService {
 
   private async persistCustomQuestions(): Promise<void> {
     const custom = this.questions.filter((q) => !q.id.toString().startsWith('q_ca_'));
-    await AsyncStorage.setItem('bams_custom_questions_v1', JSON.stringify(custom));
+    // Never cache an empty (0 questions) response if questions already existed
+    if (custom.length > 0) {
+      const serialized = JSON.stringify(custom);
+      await AsyncStorage.setItem(CUSTOM_QUESTIONS_STORAGE_KEY, serialized);
+      await AsyncStorage.setItem('bams_custom_questions_v1', serialized);
+      await AsyncStorage.setItem(CACHE_VERSION_KEY, 'ready');
+    }
   }
 
   async addQuestion(questionData: Omit<Question, 'id'>): Promise<Question> {
@@ -971,6 +1068,8 @@ class BackendService {
     this.questions = [];
     this.editedQuestions = {};
     this.deletedQuestionIds = new Set();
+    await AsyncStorage.removeItem(CUSTOM_QUESTIONS_STORAGE_KEY).catch(() => {});
+    await AsyncStorage.removeItem(CACHE_VERSION_KEY).catch(() => {});
     await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
     await AsyncStorage.removeItem('bams_edited_questions_v1').catch(() => {});
     await AsyncStorage.removeItem('bams_deleted_questions_v1').catch(() => {});
