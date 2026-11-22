@@ -1085,9 +1085,19 @@ export function isQuestionMalformed(q: Question): boolean {
 }
 
 /**
- * Returns true if the question passes all validation checks (correct format, 4 options, valid key, no mismatch)
+ * Returns true if the question passes all validation checks (correct format, options, valid key).
+ * If the question has been explicitly marked as Chapter-Verified by an Admin, the Admin's verification
+ * is authoritative over automated heuristic citation-mismatch warnings.
  */
 export function isValidQuestion(q: Question): boolean {
+  if (isQuestionChapterVerified(q)) {
+    const stem = String(q.stem || '').trim();
+    if (!stem || /^\d+\.?$/.test(stem) || stem.length < 5) return false;
+    const validOpts = (q.o || []).filter((opt) => String(opt || '').trim().length > 0);
+    if (validOpts.length < 2) return false;
+    if (typeof q.c !== 'number' || q.c < 0 || q.c > 3) return false;
+    return true;
+  }
   return getQuestionAuditStatus(q).isValid;
 }
 

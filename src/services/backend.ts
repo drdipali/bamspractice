@@ -209,42 +209,83 @@ export function isUserAdmin(user: UserRecord | null): boolean {
   return false;
 }
 
+function normalizeChapterLookupKey(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .toLowerCase()
+    .replace(/[›→\/\-]/g, '>')
+    .replace(/\s*>\s*/g, ' > ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
- * Builds Chapter objects containing all 1,179 classical BAMS syllabus chapters,
+ * Builds Chapter objects containing all classical BAMS syllabus chapters,
  * dynamically merging any questions created or imported into the cloud database.
  */
 export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[] {
-  // 1. Clone all 1,179 base chapters from the accredited classical syllabus
+  // 1. Clone all base chapters from the accredited classical syllabus
   const baseChapters: Chapter[] = ALL_CHAPTERS.map((ch) => ({
     ...ch,
     qs: [...ch.qs],
   }));
 
   const chapterMap: Record<string, Chapter> = {};
+
+  const registerKey = (key: string, ch: Chapter) => {
+    if (!key) return;
+    const clean = normalizeChapterLookupKey(key);
+    chapterMap[clean] = ch;
+
+    // Also register without "chapter" keyword (e.g. "Charaka Samhita > Sutrasthana > 1")
+    const withoutPrefix = clean.replace(/>\s*chapter\s*(\d+)/i, '> $1');
+    chapterMap[withoutPrefix] = ch;
+
+    // Register subject aliases
+    if (clean.includes('dravyaguna vigyan')) {
+      chapterMap[clean.replace('dravyaguna vigyan', 'dravyaguna')] = ch;
+      chapterMap[withoutPrefix.replace('dravyaguna vigyan', 'dravyaguna')] = ch;
+    }
+    if (clean.includes('roga nidana & vikriti vigyan')) {
+      chapterMap[clean.replace('roga nidana & vikriti vigyan', 'roga nidana')] = ch;
+      chapterMap[withoutPrefix.replace('roga nidana & vikriti vigyan', 'roga nidana')] = ch;
+    }
+    if (clean.includes('rasashastra & bhaishajya kalpana')) {
+      chapterMap[clean.replace('rasashastra & bhaishajya kalpana', 'rasashastra')] = ch;
+      chapterMap[withoutPrefix.replace('rasashastra & bhaishajya kalpana', 'rasashastra')] = ch;
+    }
+  };
+
   baseChapters.forEach((ch) => {
     chapterMap[String(ch.id)] = ch;
-    const path = `${ch.sam} > ${ch.sth} > Chapter ${ch.n}`.toLowerCase();
-    chapterMap[path] = ch;
-    const pathAlt = `${ch.sam} > ${ch.sth} > ${ch.name}`.toLowerCase();
-    chapterMap[pathAlt] = ch;
+    registerKey(`${ch.sam} > ${ch.sth} > Chapter ${ch.n}`, ch);
+    registerKey(`${ch.sam} > ${ch.sth} > ${ch.n}`, ch);
+    registerKey(`${ch.sam} > ${ch.sth} > ${ch.name}`, ch);
   });
 
   // 2. Merge cloud-authored and CSV-imported questions into their target chapters
   const extraChaptersMap: Record<string, Question[]> = {};
 
   cloudQuestions.forEach((q) => {
-    const chBreadcrumb = (q.chapterName || String(q.ch)).trim().toLowerCase();
-    const chId = String(q.ch).trim();
+    const rawTag = (q.chapterName || String(q.ch || '')).trim();
+    const chId = String(q.ch || '').trim();
+    const normKey = normalizeChapterLookupKey(rawTag);
+    const target =
+      chapterMap[chId] ||
+      chapterMap[normKey] ||
+      chapterMap[normKey.replace(/>\s*chapter\s*(\d+)/i, '> $1')];
 
-    const target = chapterMap[chId] || chapterMap[chBreadcrumb];
     if (target) {
-      // Add or replace question without duplicates
-      if (!target.qs.some((existing) => String(existing.id) === String(q.id))) {
+      // Add or replace question with latest updated question object
+      const existingIdx = target.qs.findIndex((existing) => String(existing.id) === String(q.id));
+      if (existingIdx !== -1) {
+        target.qs[existingIdx] = q;
+      } else {
         target.qs.unshift(q);
       }
     } else {
-      // Custom chapter added outside the 1,179 standard chapters
-      const customKey = q.chapterName || String(q.ch);
+      // Custom chapter added outside the standard chapters
+      const customKey = q.chapterName || String(q.ch || 'Custom Chapter');
       if (!extraChaptersMap[customKey]) {
         extraChaptersMap[customKey] = [];
       }

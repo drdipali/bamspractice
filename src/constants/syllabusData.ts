@@ -6,6 +6,7 @@ export const RAW_TREE: SamhitaDef[] = [
   { name: 'Charaka Samhita', sthanas: [['Sutrasthana', 30], ['Nidanasthana', 8], ['Vimanasthana', 8], ['Sharirasthana', 8], ['Indriyasthana', 12], ['Chikitsasthana', 30]], groupIndex: 0 },
   { name: 'Sushruta Samhita', sthanas: [['Sutrasthana', 46], ['Nidanasthana', 16], ['Sharirasthana', 10], ['Chikitsasthana', 40]], groupIndex: 0 },
   { name: 'Ashtanga Hridaya', sthanas: [['Sutrasthana', 30], ['Sharirasthana', 6], ['Nidanasthana', 16], ['Chikitsasthana', 22]], groupIndex: 0 },
+  { name: 'Ashtanga Sangraha', sthanas: [['Sutrasthana', 40], ['Sharirasthana', 12], ['Nidanasthana', 16], ['Chikitsasthana', 24], ['Kalpasthana', 8], ['Uttaratantra', 50]], groupIndex: 0 },
   { name: 'Madhava Nidana', sthanas: [['Nidana chapters', 69]], groupIndex: 1 },
   { name: 'Sharngadhara Samhita', sthanas: [['Purva Khanda', 7], ['Madhyama Khanda', 12], ['Uttara Khanda', 13]], groupIndex: 1 },
   { name: 'Bhavaprakasha', sthanas: [['Purva Khanda', 6], ['Madhyama Khanda', 80], ['Uttara Khanda', 10]], groupIndex: 1 },

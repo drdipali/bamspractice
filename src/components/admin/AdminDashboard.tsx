@@ -36,7 +36,7 @@ import { AISettingsModal } from './AISettingsModal';
 import { GeminiService } from '../../services/gemini';
 
 export const AdminDashboard: React.FC = () => {
-  const { setView, currentUser } = useApp();
+  const { setView, currentUser, refreshQuestions } = useApp();
   const [activeTab, setActiveTab] = useState<'users' | 'cms' | 'blueprint'>('cms');
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,7 +179,12 @@ export const AdminDashboard: React.FC = () => {
 
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={() => setView('build')}
+            onPress={async () => {
+              if (refreshQuestions) {
+                await refreshQuestions();
+              }
+              setView('build');
+            }}
             activeOpacity={0.7}
           >
             <ArrowLeft size={14} color={THEME.colors.brandInk} />

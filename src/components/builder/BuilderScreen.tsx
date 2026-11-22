@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -20,9 +20,21 @@ import { allocateQuestions } from '../../utils/allocator';
 import { isQuestionChapterVerified, isValidQuestion } from '../../utils/chapterMapper';
 
 export const BuilderScreen: React.FC = () => {
-  const { chapters, selectedChapters, config, startQuiz, practiceMode, setPracticeMode } = useApp();
+  const {
+    chapters,
+    selectedChapters,
+    config,
+    startQuiz,
+    practiceMode,
+    setPracticeMode,
+    refreshQuestions,
+  } = useApp();
   const { width } = useWindowDimensions();
   const isTablet = width >= 820;
+
+  useEffect(() => {
+    if (refreshQuestions) refreshQuestions();
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'tree' | 'basket'>('tree');
 
