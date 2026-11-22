@@ -785,6 +785,41 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     }
   };
 
+  // Purge All Question Data (Reset Question Bank to 0)
+  const [isPurging, setIsPurging] = useState(false);
+  const handlePurgeAllQuestions = async () => {
+    const confirmed =
+      Platform.OS === 'web'
+        ? window.confirm(
+            '⚠️ DANGER: Are you sure you want to delete ALL questions from the database?\n\n' +
+            'This will truncate all questions and reset all test attempts to 0. This cannot be undone.'
+          )
+        : true;
+    if (!confirmed) return;
+
+    const doubleConfirmed =
+      Platform.OS === 'web'
+        ? window.confirm(
+            'Final Confirmation: Click OK to permanently erase all questions and start with an empty bank (0 questions).'
+          )
+        : true;
+    if (!doubleConfirmed) return;
+
+    setIsPurging(true);
+    try {
+      await backend.clearAllQuestions();
+      setQuestions([]);
+      setEditedIds(new Set());
+      setSelectedQuestionIds(new Set());
+      if (refreshQuestions) await refreshQuestions();
+      showToast('🗑️ All questions purged successfully. Question bank is now empty (0 questions).');
+    } catch (e: any) {
+      alert('Failed to purge questions: ' + (e.message || 'Unknown error'));
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
   // Handle File Selection for Excel (.xlsx, .xls) and CSV (.csv)
   const handleFilePicked = (event: any) => {
     const file = event.target?.files?.[0];
@@ -1653,6 +1688,26 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
             <Sparkles size={14} color="#D97706" />
             <Text style={styles.btnGhostText}>AI Settings</Text>
           </TouchableOpacity>
+
+          {/* Purge All Questions (Danger) */}
+          {questions.length > 0 && (
+            <TouchableOpacity
+              style={styles.btnPurgeAll}
+              onPress={handlePurgeAllQuestions}
+              disabled={isPurging}
+              activeOpacity={0.8}
+              accessibilityLabel="Purge All Questions"
+            >
+              {isPurging ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Trash2 size={14} color="#FFF" />
+                  <Text style={styles.btnPurgeAllText}>Purge All Questions</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -2984,7 +3039,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search 5,952 questions by stem, chapter, or reference..."
+              placeholder={
+                questions.length > 0
+                  ? `Search ${questions.length.toLocaleString()} questions by stem, chapter, or reference...`
+                  : 'Search questions by stem, chapter, or reference...'
+              }
               placeholderTextColor={THEME.colors.muted}
             />
             {searchQuery ? (
@@ -3323,6 +3382,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           <View style={styles.emptyState}>
             <ActivityIndicator size="large" color={THEME.colors.brand} />
             <Text style={styles.emptyText}>Loading Cloud Questions...</Text>
+          </View>
+        ) : questions.length === 0 ? (
+          <View style={styles.emptyState}>
+            <HelpCircle size={44} color={THEME.colors.brand} />
+            <Text style={[styles.emptyText, { fontWeight: '700', fontSize: 16, marginTop: 10, color: THEME.colors.ink }]}>
+              Question Bank is Empty (0 Questions)
+            </Text>
+            <Text style={[styles.emptyText, { marginTop: 4, maxWidth: 460, textAlign: 'center', lineHeight: 20 }]}>
+              All previous question data has been cleanly removed. Start by uploading questions using the &quot;Upload Excel / CSV&quot; or &quot;Import from Google Sheet&quot; buttons above.
+            </Text>
+            <TouchableOpacity
+              style={[styles.btnUpload, { marginTop: 16 }]}
+              onPress={() => setIsUploadModalOpen(true)}
+              activeOpacity={0.8}
+            >
+              <Upload size={16} color={THEME.colors.brandDark} />
+              <Text style={styles.btnUploadText}>Bulk Upload Questions</Text>
+            </TouchableOpacity>
           </View>
         ) : filteredQuestions.length === 0 ? (
           <View style={styles.emptyState}>
@@ -4098,6 +4175,22 @@ const styles = StyleSheet.create({
   btnGhostText: {
     color: THEME.colors.muted,
     fontSize: 12,
+  },
+  btnPurgeAll: {
+    backgroundColor: '#DC2626',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#B91C1C',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  btnPurgeAllText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
   modalBackdrop: {
     position: 'fixed' as any,

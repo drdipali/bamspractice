@@ -21,8 +21,9 @@ import { THEME } from '../../constants/theme';
 import { useApp } from '../../context/AppContext';
 
 export const FullMockTestPanel: React.FC = () => {
-  const { mockBlueprint, startMockTest, statusMessage } = useApp();
+  const { mockBlueprint, startMockTest, statusMessage, allQuestions } = useApp();
   const [isStarting, setIsStarting] = useState(false);
+  const totalAvailableQuestions = Object.keys(allQuestions || {}).length;
 
   const totalQuestions = mockBlueprint.reduce(
     (sum, item) => sum + (item.weightage_questions || 0),
@@ -87,22 +88,31 @@ export const FullMockTestPanel: React.FC = () => {
         </View>
 
         {/* Big Start Exam CTA Button */}
-        <TouchableOpacity
-          style={[styles.startBtn, isStarting && styles.startBtnDisabled]}
-          onPress={handleStart}
-          disabled={isStarting}
-          activeOpacity={0.85}
-        >
-          {isStarting ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
-              <Text style={styles.startBtnText}>Start Full Mock Test</Text>
-              <ArrowRight size={18} color="#FFFFFF" />
-            </>
-          )}
-        </TouchableOpacity>
+        {totalAvailableQuestions === 0 ? (
+          <View style={styles.emptyBankBanner}>
+            <AlertTriangle size={18} color="#D97706" />
+            <Text style={styles.emptyBankBannerText}>
+              Question bank is currently empty (0 questions). Upload questions via Admin Console to generate and start mock tests.
+            </Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.startBtn, isStarting && styles.startBtnDisabled]}
+            onPress={handleStart}
+            disabled={isStarting}
+            activeOpacity={0.85}
+          >
+            {isStarting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
+                <Text style={styles.startBtnText}>Start Full Mock Test</Text>
+                <ArrowRight size={18} color="#FFFFFF" />
+              </>
+            )}
+          </TouchableOpacity>
+        )}
 
         {statusMessage ? (
           <Text style={styles.statusMsgText}>{statusMessage}</Text>
@@ -321,6 +331,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+  emptyBankBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  emptyBankBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
+    lineHeight: 18,
   },
   statusMsgText: {
     marginTop: 10,

@@ -51,7 +51,7 @@ export const BuilderScreen: React.FC = () => {
         subtitle={
           practiceMode === 'chapter_verified'
             ? 'Practicing strictly verified, chapter-accurate questions.'
-            : 'Access the full 15,000+ question bank across all subjects.'
+            : 'Access full-syllabus AIAPGET weighted mock tests and practice pools.'
         }
       />
 
@@ -105,7 +105,7 @@ export const BuilderScreen: React.FC = () => {
                 Mixed &amp; Mock Tests
               </Text>
             </View>
-            <Text style={styles.modeSegmentSub}>15,000+ Question Bank</Text>
+            <Text style={styles.modeSegmentSub}>Full-Syllabus Mock Engine</Text>
           </TouchableOpacity>
         </View>
       </View>

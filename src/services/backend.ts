@@ -152,33 +152,8 @@ const SEED_USERS: UserRecord[] = [
     role: 'admin',
     createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date().toISOString(),
-    quizCount: 2,
-    quizzes: [
-      {
-        id: 'quiz_seed_0',
-        timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-        score: 40,
-        maxScore: 40,
-        scorePercent: 100,
-        correct: 10,
-        incorrect: 0,
-        unattempted: 0,
-        mode: 'test',
-        chapterCount: 1,
-      },
-      {
-        id: 'quiz_seed_0b',
-        timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-        score: 35,
-        maxScore: 40,
-        scorePercent: 88,
-        correct: 9,
-        incorrect: 1,
-        unattempted: 0,
-        mode: 'learning',
-        chapterCount: 1,
-      },
-    ],
+    quizCount: 0,
+    quizzes: [],
   },
   {
     id: 'user_student_001',
@@ -186,33 +161,8 @@ const SEED_USERS: UserRecord[] = [
     phone: '9820012345',
     createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-    quizCount: 4,
-    quizzes: [
-      {
-        id: 'quiz_seed_1',
-        timestamp: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
-        score: 32,
-        maxScore: 40,
-        scorePercent: 80,
-        correct: 8,
-        incorrect: 0,
-        unattempted: 2,
-        mode: 'learning',
-        chapterCount: 1,
-      },
-      {
-        id: 'quiz_seed_2',
-        timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        score: 27,
-        maxScore: 40,
-        scorePercent: 68,
-        correct: 7,
-        incorrect: 1,
-        unattempted: 2,
-        mode: 'test',
-        chapterCount: 2,
-      },
-    ],
+    quizCount: 0,
+    quizzes: [],
   },
   {
     id: 'user_student_002',
@@ -220,21 +170,8 @@ const SEED_USERS: UserRecord[] = [
     phone: '9830067890',
     createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    quizCount: 2,
-    quizzes: [
-      {
-        id: 'quiz_seed_3',
-        timestamp: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
-        score: 19,
-        maxScore: 20,
-        scorePercent: 95,
-        correct: 5,
-        incorrect: 1,
-        unattempted: 0,
-        mode: 'learning',
-        chapterCount: 1,
-      },
-    ],
+    quizCount: 0,
+    quizzes: [],
   },
   {
     id: 'user_student_003',
@@ -242,21 +179,8 @@ const SEED_USERS: UserRecord[] = [
     phone: '9840054321',
     createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     lastActive: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-    quizCount: 1,
-    quizzes: [
-      {
-        id: 'quiz_seed_4',
-        timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-        score: 15,
-        maxScore: 20,
-        scorePercent: 75,
-        correct: 4,
-        incorrect: 1,
-        unattempted: 0,
-        mode: 'test',
-        chapterCount: 1,
-      },
-    ],
+    quizCount: 0,
+    quizzes: [],
   },
 ];
 
@@ -430,6 +354,25 @@ class BackendService {
       }
 
       // 4. Cloud Questions Collection
+      const QUESTIONS_PURGED_FLAG = 'bams_questions_bank_purged_v2';
+      const isAlreadyPurged = await AsyncStorage.getItem(QUESTIONS_PURGED_FLAG);
+      if (!isAlreadyPurged) {
+        await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
+        await AsyncStorage.removeItem('bams_edited_questions_v1').catch(() => {});
+        await AsyncStorage.removeItem('bams_deleted_questions_v1').catch(() => {});
+        await AsyncStorage.removeItem('bams_cloud_questions_v1').catch(() => {});
+        await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
+        await AsyncStorage.removeItem('bams_bookmarks').catch(() => {});
+        await AsyncStorage.removeItem('bams_sets').catch(() => {});
+        await AsyncStorage.removeItem('bams_draft').catch(() => {});
+        this.users.forEach((u) => {
+          u.quizzes = [];
+          u.quizCount = 0;
+        });
+        await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users)).catch(() => {});
+        await AsyncStorage.setItem(QUESTIONS_PURGED_FLAG, 'true').catch(() => {});
+      }
+
       const customStored = await AsyncStorage.getItem('bams_custom_questions_v1');
       const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1');
       const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1');
@@ -976,6 +919,30 @@ class BackendService {
     await this.persistCustomQuestions();
 
     return deletedCount;
+  }
+
+  /**
+   * Completely purges all question records from database, resets custom storage,
+   * and clears associated test attempts / quizzes from all users.
+   */
+  async clearAllQuestions(): Promise<void> {
+    await this.initialize();
+    this.questions = [];
+    this.editedQuestions = {};
+    this.deletedQuestionIds = new Set();
+    await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
+    await AsyncStorage.removeItem('bams_edited_questions_v1').catch(() => {});
+    await AsyncStorage.removeItem('bams_deleted_questions_v1').catch(() => {});
+    await AsyncStorage.removeItem('bams_cloud_questions_v1').catch(() => {});
+    await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
+    await AsyncStorage.removeItem('bams_bookmarks').catch(() => {});
+    await AsyncStorage.removeItem('bams_sets').catch(() => {});
+    await AsyncStorage.removeItem('bams_draft').catch(() => {});
+    this.users.forEach((u) => {
+      u.quizzes = [];
+      u.quizCount = 0;
+    });
+    await AsyncStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(this.users)).catch(() => {});
   }
 
   async updateQuestion(id: string | number, patch: Partial<Question>): Promise<Question> {
