@@ -64,6 +64,8 @@ import {
   ChapterSummaryItem,
   SthanaSummaryItem,
   CLASSICAL_SAMHITA_SCHEMA,
+  EDIT_MODAL_SAMHITA_OPTIONS,
+  parseChapterMappingString,
   getCanonicalSthana,
   isValidClassicalTag,
   isQuestionChapterVerified,
@@ -253,6 +255,99 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Edit / Form state for chapter verified toggle
   const [isChapterVerifiedField, setIsChapterVerifiedField] = useState<boolean>(false);
 
+  // Edit Question Modal: Cascading Chapter Mapping State
+  const [isEditingChapterMapping, setIsEditingChapterMapping] = useState<boolean>(false);
+  const [editDropdownSamhita, setEditDropdownSamhita] = useState<string>('Charaka Samhita');
+  const [editDropdownSthana, setEditDropdownSthana] = useState<string>('Sutrasthana');
+  const [editDropdownChapter, setEditDropdownChapter] = useState<string>('Chapter 1');
+
+  // Sthanas and Chapters for Edit Question Modal 3-step dropdowns
+  const editCurrentSthanas = useMemo(() => {
+    const schema = CLASSICAL_SAMHITA_SCHEMA[editDropdownSamhita];
+    if (schema && schema.sthanas.length > 0) {
+      return schema.sthanas;
+    }
+    return [{ name: 'General', maxChapters: 1 }];
+  }, [editDropdownSamhita]);
+
+  const editCurrentSthanaDef = useMemo(() => {
+    return (
+      editCurrentSthanas.find((s) => s.name === editDropdownSthana) ||
+      editCurrentSthanas[0]
+    );
+  }, [editCurrentSthanas, editDropdownSthana]);
+
+  const editChapterOptionsList = useMemo(() => {
+    const maxCh = editCurrentSthanaDef?.maxChapters || 1;
+    const isNonSamhita = [
+      'Dravyaguna',
+      'Rasashastra & Bhaishajya Kalpana',
+      'Roga Nidana',
+      'Modern / Other',
+    ].includes(editDropdownSamhita);
+
+    const list: string[] = [];
+    if (isNonSamhita) {
+      list.push('General / All');
+    }
+    for (let i = 1; i <= maxCh; i++) {
+      list.push(`Chapter ${i}`);
+    }
+    if (list.length === 0) {
+      list.push('Chapter 1');
+    }
+    return list;
+  }, [editCurrentSthanaDef, editDropdownSamhita]);
+
+  // Handlers for Chapter Mapping Editor in Edit Modal
+  const handleStartEditChapterMapping = () => {
+    const parsed = parseChapterMappingString(chapterName);
+    setEditDropdownSamhita(parsed.samhita);
+    setEditDropdownSthana(parsed.sthana);
+    setEditDropdownChapter(parsed.chapter);
+    setIsEditingChapterMapping(true);
+  };
+
+  const handleEditSamhitaChange = (newSamhita: string) => {
+    setEditDropdownSamhita(newSamhita);
+    const schema = CLASSICAL_SAMHITA_SCHEMA[newSamhita];
+    if (schema && schema.sthanas.length > 0) {
+      const firstSthana = schema.sthanas[0].name;
+      setEditDropdownSthana(firstSthana);
+      const maxCh = schema.sthanas[0].maxChapters;
+      const isNonSam = [
+        'Dravyaguna',
+        'Rasashastra & Bhaishajya Kalpana',
+        'Roga Nidana',
+        'Modern / Other',
+      ].includes(newSamhita);
+      setEditDropdownChapter(isNonSam && maxCh <= 1 ? 'General / All' : 'Chapter 1');
+    } else {
+      setEditDropdownSthana('General');
+      setEditDropdownChapter('General / All');
+    }
+  };
+
+  const handleEditSthanaChange = (newSthana: string) => {
+    setEditDropdownSthana(newSthana);
+    const schema = CLASSICAL_SAMHITA_SCHEMA[editDropdownSamhita];
+    const sthanaDef = schema?.sthanas.find((s) => s.name === newSthana);
+    const maxCh = sthanaDef ? sthanaDef.maxChapters : 1;
+    const isNonSam = [
+      'Dravyaguna',
+      'Rasashastra & Bhaishajya Kalpana',
+      'Roga Nidana',
+      'Modern / Other',
+    ].includes(editDropdownSamhita);
+    setEditDropdownChapter(isNonSam && maxCh <= 1 ? 'General / All' : 'Chapter 1');
+  };
+
+  const handleFinishEditChapterMapping = () => {
+    const updated = `${editDropdownSamhita} > ${editDropdownSthana} > ${editDropdownChapter}`;
+    setChapterName(updated);
+    setIsEditingChapterMapping(false);
+  };
+
   const loadCloudQuestions = async () => {
     setLoading(true);
     try {
@@ -297,6 +392,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setStatement1('');
     setStatement2('');
     setIsChapterVerifiedField(false);
+    setIsEditingChapterMapping(false);
     setEditingQuestion(null);
     setOriginalBeforeAI(null);
     setIsAiRephrased(false);
@@ -351,6 +447,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setAiCustomInstruction('');
     setAiActionLabel('AI Rephrased');
     setAiError(null);
+    setIsEditingChapterMapping(false);
     setIsAddFormOpen(false);
   };
 
@@ -709,9 +806,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
     setSubmitting(true);
     try {
+      const effectiveChapterName = (
+        isEditingChapterMapping
+          ? `${editDropdownSamhita} > ${editDropdownSthana} > ${editDropdownChapter}`
+          : chapterName
+      ).trim();
+
       const payload: Omit<Question, 'id'> = {
-        ch: chapterName.trim(),
-        chapterName: chapterName.trim(),
+        ch: effectiveChapterName,
+        chapterName: effectiveChapterName,
         questionType: qType,
         d: difficulty,
         c: correctAnswer,
@@ -2211,18 +2314,30 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
               {/* Chapter & Reference */}
               <View style={styles.row2}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 260 }}>
                   <Text style={styles.label}>Chapter Mapping (Subject &gt; Sthana &gt; Chapter) *</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={chapterName}
-                    onChangeText={setChapterName}
-                    placeholder="e.g. Charaka Samhita > Sutrasthana > Chapter 1"
-                    placeholderTextColor={THEME.colors.muted}
-                  />
+                  
+                  {/* Read-Only Pill with ✏️ Edit Button */}
+                  <View style={styles.mappingPillRow}>
+                    <View style={styles.mappingPill}>
+                      <Compass size={14} color="#047857" style={{ flexShrink: 0 }} />
+                      <Text style={styles.mappingPillText} numberOfLines={1}>
+                        {chapterName || 'Charaka Samhita > Sutrasthana > Chapter 1'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.btnEditMapping}
+                      onPress={handleStartEditChapterMapping}
+                      activeOpacity={0.8}
+                      accessibilityLabel="Edit Chapter Mapping"
+                    >
+                      <Pencil size={13} color="#047857" />
+                      <Text style={styles.btnEditMappingText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 260 }}>
                   <Text style={styles.label}>Reference / Shloka Citation</Text>
                   <TextInput
                     style={styles.textInput}
@@ -2233,6 +2348,126 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   />
                 </View>
               </View>
+
+              {/* Cascading 3-Step Dropdowns (Directly underneath when Edit is clicked) */}
+              {isEditingChapterMapping && (
+                <View style={styles.cascadingEditorCard}>
+                  <View style={styles.cascadingEditorHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Compass size={15} color="#047857" />
+                      <Text style={styles.cascadingEditorTitle}>
+                        Select Classical Samhita, Sthana &amp; Chapter
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.btnDoneMapping}
+                      onPress={handleFinishEditChapterMapping}
+                      activeOpacity={0.8}
+                    >
+                      <Check size={14} color="#FFF" />
+                      <Text style={styles.btnDoneMappingText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* 3 Cascading Dropdown Selectors */}
+                  <View style={styles.cascadingDropdownsRow}>
+                    {/* Dropdown 1: Samhita / Subject */}
+                    <View style={styles.cascadingSelectCol}>
+                      <Text style={styles.cascadingSelectLabel}>1. Samhita / Subject</Text>
+                      <select
+                        aria-label="Samhita or Subject"
+                        value={editDropdownSamhita}
+                        onChange={(e: any) => handleEditSamhitaChange(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          border: '1.5px solid #86EFAC',
+                          backgroundColor: '#FFFFFF',
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: '#0F172A',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          height: 38,
+                        }}
+                      >
+                        {EDIT_MODAL_SAMHITA_OPTIONS.map((sam) => (
+                          <option key={sam} value={sam}>
+                            {sam}
+                          </option>
+                        ))}
+                      </select>
+                    </View>
+
+                    {/* Dropdown 2: Sthana / Section */}
+                    <View style={styles.cascadingSelectCol}>
+                      <Text style={styles.cascadingSelectLabel}>2. Sthana / Section</Text>
+                      <select
+                        aria-label="Sthana or Section"
+                        value={editDropdownSthana}
+                        onChange={(e: any) => handleEditSthanaChange(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          border: '1.5px solid #86EFAC',
+                          backgroundColor: '#FFFFFF',
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: '#0F172A',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          height: 38,
+                        }}
+                      >
+                        {editCurrentSthanas.map((sth) => (
+                          <option key={sth.name} value={sth.name}>
+                            {sth.name} {sth.maxChapters > 1 ? `(${sth.maxChapters} Chs)` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </View>
+
+                    {/* Dropdown 3: Chapter */}
+                    <View style={styles.cascadingSelectCol}>
+                      <Text style={styles.cascadingSelectLabel}>3. Chapter</Text>
+                      <select
+                        aria-label="Chapter"
+                        value={editDropdownChapter}
+                        onChange={(e: any) => setEditDropdownChapter(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          border: '1.5px solid #86EFAC',
+                          backgroundColor: '#FFFFFF',
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: '#0F172A',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          height: 38,
+                        }}
+                      >
+                        {editChapterOptionsList.map((chOption) => (
+                          <option key={chOption} value={chOption}>
+                            {chOption}
+                          </option>
+                        ))}
+                      </select>
+                    </View>
+                  </View>
+
+                  {/* Live Target Preview Pill */}
+                  <View style={styles.cascadingPreviewRow}>
+                    <Text style={styles.cascadingPreviewLabel}>Target Chapter:</Text>
+                    <Text style={styles.cascadingPreviewText}>
+                      {editDropdownSamhita} › {editDropdownSthana} › {editDropdownChapter}
+                    </Text>
+                  </View>
+                </View>
+              )}
 
               {/* Chapter-Verified Toggle in Edit Modal */}
               <TouchableOpacity
@@ -4430,6 +4665,127 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: THEME.colors.muted,
     marginBottom: 4,
+  },
+  mappingPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  mappingPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 42,
+  },
+  mappingPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#065F46',
+    flex: 1,
+  },
+  btnEditMapping: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#059669',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    minHeight: 42,
+  },
+  btnEditMappingText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  cascadingEditorCard: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 10,
+    marginBottom: 8,
+    width: '100%',
+  },
+  cascadingEditorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  cascadingEditorTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  btnDoneMapping: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#059669',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  btnDoneMappingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cascadingDropdownsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  cascadingSelectCol: {
+    flex: 1,
+    minWidth: 140,
+  },
+  cascadingSelectLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  cascadingPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#BBF7D0',
+    flexWrap: 'wrap',
+  },
+  cascadingPreviewLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#15803D',
+  },
+  cascadingPreviewText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
   },
   aiAssistantContainer: {
     marginTop: 14,

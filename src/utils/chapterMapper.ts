@@ -394,6 +394,21 @@ export interface ClassicalSamhitaDefinition {
   sthanas: SthanaDefinition[];
 }
 
+export const EDIT_MODAL_SAMHITA_OPTIONS = [
+  'Charaka Samhita',
+  'Sushruta Samhita',
+  'Ashtanga Hridaya',
+  'Ashtanga Sangraha',
+  'Kashyapa Samhita',
+  'Madhava Nidana',
+  'Sharangadhara Samhita',
+  'Bhavaprakasha',
+  'Dravyaguna',
+  'Rasashastra & Bhaishajya Kalpana',
+  'Roga Nidana',
+  'Modern / Other',
+];
+
 // Strict Classical Samhita-Sthana Schema
 export const CLASSICAL_SAMHITA_SCHEMA: Record<string, ClassicalSamhitaDefinition> = {
   'Charaka Samhita': {
@@ -434,6 +449,94 @@ export const CLASSICAL_SAMHITA_SCHEMA: Record<string, ClassicalSamhitaDefinition
       { name: 'Uttarasthana', maxChapters: 40, aliases: ['uttarasthana', 'uttara', 'uttar', 'उत्तरस्थान', 'उत्तरतन्त्र', 'उत्तर', 'उ'] },
     ],
   },
+  'Ashtanga Sangraha': {
+    name: 'Ashtanga Sangraha',
+    totalChapters: 150,
+    sthanas: [
+      { name: 'Sutrasthana', maxChapters: 40, aliases: ['sutra', 'sūtra', 'सूत्रस्थान', 'सूत्र', 'सू'] },
+      { name: 'Sharirasthana', maxChapters: 12, aliases: ['sharira', 'śārīra', 'शारीरस्थान', 'शारीर', 'शा'] },
+      { name: 'Nidanasthana', maxChapters: 16, aliases: ['nidana', 'nidāna', 'निदानस्थान', 'निदान', 'नि'] },
+      { name: 'Chikitsasthana', maxChapters: 24, aliases: ['chikitsa', 'cikitsā', 'चिकित्सास्थान', 'चिकित्सा', 'चि'] },
+      { name: 'Kalpasthana', maxChapters: 8, aliases: ['kalpa', 'कल्पस्थान', 'कल्प', 'क'] },
+      { name: 'Uttaratantra', maxChapters: 50, aliases: ['uttaratantra', 'uttaratantra', 'uttara', 'uttar', 'उत्तरतन्त्र', 'उत्तरस्थान', 'उत्तर', 'उ'] },
+    ],
+  },
+  'Kashyapa Samhita': {
+    name: 'Kashyapa Samhita',
+    totalChapters: 120,
+    sthanas: [
+      { name: 'Sutrasthana', maxChapters: 30, aliases: ['sutra', 'sūtra', 'सूत्रस्थान', 'सूत्र', 'सू'] },
+      { name: 'Nidanasthana', maxChapters: 8, aliases: ['nidana', 'nidāna', 'निदानस्थान', 'निदान', 'नि'] },
+      { name: 'Vimanasthana', maxChapters: 8, aliases: ['vimana', 'vimāna', 'विमानस्थान', 'विमान', 'वि'] },
+      { name: 'Sharirasthana', maxChapters: 8, aliases: ['sharira', 'śārīra', 'शारीरस्थान', 'शारीर', 'शा'] },
+      { name: 'Indriyasthana', maxChapters: 12, aliases: ['indriya', 'इन्द्रियस्थान', 'इन्द्रिय', 'इन्'] },
+      { name: 'Chikitsasthana', maxChapters: 30, aliases: ['chikitsa', 'cikitsā', 'चिकित्सास्थान', 'चिकित्सा', 'चि'] },
+      { name: 'Siddhisthana', maxChapters: 12, aliases: ['siddhi', 'सिद्धिस्थान', 'सिद्धि', 'सि'] },
+      { name: 'Kalpasthana', maxChapters: 12, aliases: ['kalpa', 'कल्पस्थान', 'कल्प', 'क'] },
+      { name: 'Khilasthana', maxChapters: 80, aliases: ['khila', 'खिलस्थान', 'खिल', 'खि'] },
+    ],
+  },
+  'Madhava Nidana': {
+    name: 'Madhava Nidana',
+    totalChapters: 69,
+    sthanas: [
+      { name: 'Nidana chapters', maxChapters: 69, aliases: ['nidana', 'rogavinishchaya', 'निदान'] },
+    ],
+  },
+  'Sharangadhara Samhita': {
+    name: 'Sharangadhara Samhita',
+    totalChapters: 32,
+    sthanas: [
+      { name: 'Purva Khanda', maxChapters: 7, aliases: ['purva', 'पूर्वखण्ड', 'पूर्व'] },
+      { name: 'Madhyama Khanda', maxChapters: 12, aliases: ['madhyama', 'मध्यमखण्ड', 'मध्यम'] },
+      { name: 'Uttara Khanda', maxChapters: 13, aliases: ['uttara', 'उत्तरखण्ड', 'उत्तर'] },
+    ],
+  },
+  'Bhavaprakasha': {
+    name: 'Bhavaprakasha',
+    totalChapters: 96,
+    sthanas: [
+      { name: 'Purva Khanda', maxChapters: 6, aliases: ['purva', 'पूर्वखण्ड', 'पूर्व'] },
+      { name: 'Madhyama Khanda', maxChapters: 80, aliases: ['madhyama', 'मध्यमखण्ड', 'मध्यम'] },
+      { name: 'Uttara Khanda', maxChapters: 10, aliases: ['uttara', 'उत्तरखण्ड', 'उत्तर'] },
+    ],
+  },
+  'Dravyaguna': {
+    name: 'Dravyaguna',
+    totalChapters: 30,
+    sthanas: [
+      { name: 'Samanya Siddhanta', maxChapters: 10, aliases: ['samanya', 'सामान्य सिद्धान्त'] },
+      { name: 'Aushadhi Dravya', maxChapters: 20, aliases: ['aushadhi', 'औषधि द्रव्य'] },
+      { name: 'General', maxChapters: 1, aliases: ['general', 'सामान्य'] },
+    ],
+  },
+  'Rasashastra & Bhaishajya Kalpana': {
+    name: 'Rasashastra & Bhaishajya Kalpana',
+    totalChapters: 24,
+    sthanas: [
+      { name: 'Rasashastra', maxChapters: 14, aliases: ['rasashastra', 'रसशास्त्र'] },
+      { name: 'Bhaishajya Kalpana', maxChapters: 10, aliases: ['bhaishajya', 'भैषज्य कल्पना'] },
+      { name: 'General', maxChapters: 1, aliases: ['general', 'सामान्य'] },
+    ],
+  },
+  'Roga Nidana': {
+    name: 'Roga Nidana',
+    totalChapters: 22,
+    sthanas: [
+      { name: 'Roga Nidana', maxChapters: 14, aliases: ['roga', 'रोग निदान'] },
+      { name: 'Vikriti Vigyan', maxChapters: 8, aliases: ['vikriti', 'विकृति विज्ञान'] },
+      { name: 'General', maxChapters: 1, aliases: ['general', 'सामान्य'] },
+    ],
+  },
+  'Modern / Other': {
+    name: 'Modern / Other',
+    totalChapters: 3,
+    sthanas: [
+      { name: 'General / Other', maxChapters: 1, aliases: ['general', 'सामान्य', 'other'] },
+      { name: 'Modern Medicine', maxChapters: 1, aliases: ['modern', 'allopathy'] },
+      { name: 'Research Methodology', maxChapters: 1, aliases: ['research', 'अनुसंधान'] },
+    ],
+  },
 };
 
 // Classical maximum chapter limits per Samhita & Sthana (backwards compatible map)
@@ -465,7 +568,127 @@ export const SAMHITA_MAX_CHAPTERS: Record<string, Record<string, number>> = {
     Kalpasthana: 6,
     Uttarasthana: 40,
   },
+  'Ashtanga Sangraha': {
+    Sutrasthana: 40,
+    Sharirasthana: 12,
+    Nidanasthana: 16,
+    Chikitsasthana: 24,
+    Kalpasthana: 8,
+    Uttaratantra: 50,
+  },
+  'Kashyapa Samhita': {
+    Sutrasthana: 30,
+    Nidanasthana: 8,
+    Vimanasthana: 8,
+    Sharirasthana: 8,
+    Indriyasthana: 12,
+    Chikitsasthana: 30,
+    Siddhisthana: 12,
+    Kalpasthana: 12,
+    Khilasthana: 80,
+  },
+  'Madhava Nidana': {
+    'Nidana chapters': 69,
+    Nidana: 69,
+  },
+  'Sharangadhara Samhita': {
+    'Purva Khanda': 7,
+    'Madhyama Khanda': 12,
+    'Uttara Khanda': 13,
+  },
+  'Bhavaprakasha': {
+    'Purva Khanda': 6,
+    'Madhyama Khanda': 80,
+    'Uttara Khanda': 10,
+  },
+  'Dravyaguna': {
+    'Samanya Siddhanta': 10,
+    'Aushadhi Dravya': 20,
+    General: 1,
+  },
+  'Rasashastra & Bhaishajya Kalpana': {
+    Rasashastra: 14,
+    'Bhaishajya Kalpana': 10,
+    General: 1,
+  },
+  'Roga Nidana': {
+    'Roga Nidana': 14,
+    'Vikriti Vigyan': 8,
+    General: 1,
+  },
+  'Modern / Other': {
+    'General / Other': 1,
+    'Modern Medicine': 1,
+    'Research Methodology': 1,
+  },
 };
+
+/**
+ * Parses a chapter mapping string (e.g. "Charaka Samhita > Sutrasthana > Chapter 1")
+ * into normalized { samhita, sthana, chapter } matching the canonical options.
+ */
+export function parseChapterMappingString(mappingStr: string): {
+  samhita: string;
+  sthana: string;
+  chapter: string;
+} {
+  const raw = String(mappingStr || '').trim();
+  const parts = raw.split('>').map((p) => p.trim());
+  let samhita = 'Charaka Samhita';
+  let sthana = 'Sutrasthana';
+  let chapter = 'Chapter 1';
+
+  if (parts.length >= 3) {
+    samhita = parts[0];
+    sthana = parts[1];
+    chapter = parts[2];
+  } else if (parts.length === 2) {
+    samhita = parts[0];
+    sthana = parts[1];
+    chapter = 'Chapter 1';
+  } else if (parts.length === 1 && parts[0]) {
+    const matched = EDIT_MODAL_SAMHITA_OPTIONS.find((s) =>
+      parts[0].toLowerCase().includes(s.toLowerCase())
+    );
+    if (matched) samhita = matched;
+  }
+
+  // Canonical match for Samhita
+  const canonicalSamhita = EDIT_MODAL_SAMHITA_OPTIONS.find(
+    (s) => s.toLowerCase() === samhita.toLowerCase() || samhita.toLowerCase().includes(s.toLowerCase())
+  );
+  if (canonicalSamhita) {
+    samhita = canonicalSamhita;
+  }
+
+  // Canonical match for Sthana
+  const schema = CLASSICAL_SAMHITA_SCHEMA[samhita];
+  if (schema && schema.sthanas.length > 0) {
+    const matchedSth = schema.sthanas.find(
+      (s) =>
+        s.name.toLowerCase() === sthana.toLowerCase() ||
+        sthana.toLowerCase().includes(s.name.toLowerCase()) ||
+        s.aliases?.some((a) => sthana.toLowerCase().includes(a.toLowerCase()))
+    );
+    if (matchedSth) {
+      sthana = matchedSth.name;
+    } else {
+      sthana = schema.sthanas[0].name;
+    }
+  }
+
+  // Ensure chapter is formatted as "Chapter N" or "General / All"
+  if (/^\d+$/.test(chapter)) {
+    chapter = `Chapter ${chapter}`;
+  } else if (!chapter.toLowerCase().startsWith('chapter') && !chapter.toLowerCase().includes('general')) {
+    const num = chapter.match(/\d+/)?.[0];
+    if (num) {
+      chapter = `Chapter ${num}`;
+    }
+  }
+
+  return { samhita, sthana, chapter };
+}
 
 /**
  * Returns the canonical Sthana definition if it validly belongs to the given Samhita,
