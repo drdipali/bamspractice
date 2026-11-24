@@ -40,6 +40,7 @@ import {
   CheckSquare,
   Link2,
 } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { THEME } from '../../constants/theme';
 import { Question, QuestionType, MatchPair, Difficulty } from '../../types';
 import { backend } from '../../services/backend';
@@ -253,6 +254,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   // Multi-Select Bar State
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
   const [isBatchUpdatingVerification, setIsBatchUpdatingVerification] = useState<boolean>(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
 
   // Edit / Form state for chapter verified toggle
   const [isChapterVerifiedField, setIsChapterVerifiedField] = useState<boolean>(false);
@@ -1140,12 +1144,85 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     });
   };
 
-  const handleSelectAllFiltered = () => {
-    setSelectedQuestionIds(new Set(displayedQuestions.map((q) => String(q.id))));
+  // Toggle selection for visible questions
+  const handleSelectVisibleToggle = () => {
+    if (displayedQuestions.length === 0) return;
+    const allVisibleSelected = displayedQuestions.every((q) =>
+      selectedQuestionIds.has(String(q.id))
+    );
+
+    setSelectedQuestionIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        displayedQuestions.forEach((q) => next.delete(String(q.id)));
+      } else {
+        displayedQuestions.forEach((q) => next.add(String(q.id)));
+      }
+      return next;
+    });
   };
+
+  // Select all matching questions in the current filtered view
+  const handleSelectAllMatching = () => {
+    setSelectedQuestionIds(new Set(filteredQuestions.map((q) => String(q.id))));
+  };
+
+  const handleSelectAllFiltered = handleSelectVisibleToggle;
 
   const handleDeselectAll = () => {
     setSelectedQuestionIds(new Set());
+  };
+
+  // Safe Batch Cloud DB Deletion
+  const handleConfirmBulkDelete = async () => {
+    if (selectedQuestionIds.size === 0) return;
+    const ids = Array.from(selectedQuestionIds);
+    const total = ids.length;
+
+    setIsBulkDeleting(true);
+    setBulkDeleteProgress({ current: 0, total });
+
+    try {
+      const CHUNK_SIZE = 100;
+      let deletedCount = 0;
+
+      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
+        await backend.deleteQuestions(chunk);
+        deletedCount += chunk.length;
+        setBulkDeleteProgress({ current: Math.min(deletedCount, total), total });
+      }
+
+      // Bump cache version and timestamp so student app cache is invalidated immediately
+      const now = Date.now().toString();
+      await AsyncStorage.setItem('bams_cache_timestamp', now).catch(() => {});
+      await AsyncStorage.setItem('bams_cache_v3', now).catch(() => {});
+
+      // Immediately remove deleted questions from local UI state
+      const idSet = new Set(ids.map((id) => String(id)));
+      setQuestions((prev) => prev.filter((q) => !idSet.has(String(q.id))));
+      setEditedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(String(id)));
+        return next;
+      });
+
+      // Clear selection
+      setSelectedQuestionIds(new Set());
+
+      // Refresh student app data and chapter hierarchy
+      if (refreshQuestions) {
+        await refreshQuestions();
+      }
+
+      setIsBulkDeleteModalOpen(false);
+      showToast(`✓ Permanently deleted ${total} question(s) from Cloud DB.`);
+    } catch (err: any) {
+      alert(`Failed to delete questions: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsBulkDeleting(false);
+      setBulkDeleteProgress(null);
+    }
   };
 
   const handleBatchSetVerified = async (verified: boolean) => {
@@ -3558,17 +3635,41 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           </View>
         )}
 
-        {/* Multi-Select Floating / Sticky Action Bar */}
+        {/* Sticky Multi-Select Action Bar */}
         {selectedQuestionIds.size > 0 && (
           <View style={styles.multiSelectBar}>
             <View style={styles.multiSelectInfo}>
-              <CheckCircle2 size={16} color="#047857" />
-              <Text style={styles.multiSelectText}>
-                {selectedQuestionIds.size} Question{selectedQuestionIds.size > 1 ? 's' : ''} Selected
-              </Text>
+              <View style={styles.multiSelectCountBadge}>
+                <CheckCircle2 size={16} color="#047857" />
+                <Text style={styles.multiSelectText}>
+                  {selectedQuestionIds.size} Selected
+                </Text>
+              </View>
+
+              {/* Select All Matching (Y) Button */}
+              {filteredQuestions.length > selectedQuestionIds.size ? (
+                <TouchableOpacity
+                  style={styles.btnSelectAllMatching}
+                  onPress={handleSelectAllMatching}
+                  activeOpacity={0.8}
+                >
+                  <Layers size={13} color="#047857" />
+                  <Text style={styles.btnSelectAllMatchingText}>
+                    Select All Matching ({filteredQuestions.length})
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.allMatchingSelectedBadge}>
+                  <Check size={12} color="#047857" strokeWidth={2.5} />
+                  <Text style={styles.allMatchingSelectedText}>
+                    All {filteredQuestions.length} Matching Selected
+                  </Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.multiSelectActions}>
+              {/* Mark Verified */}
               <TouchableOpacity
                 style={[styles.btnMultiSelectAction, isBatchUpdatingVerification && { opacity: 0.7 }]}
                 onPress={() => handleBatchSetVerified(true)}
@@ -3580,11 +3681,12 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 ) : (
                   <>
                     <Check size={12} color="#FFF" strokeWidth={2.5} />
-                    <Text style={styles.btnMultiSelectActionText}>Mark Selected as Chapter-Verified</Text>
+                    <Text style={styles.btnMultiSelectActionText}>Mark Verified</Text>
                   </>
                 )}
               </TouchableOpacity>
 
+              {/* Unmark Verified */}
               <TouchableOpacity
                 style={[styles.btnMultiSelectUnverify, isBatchUpdatingVerification && { opacity: 0.7 }]}
                 onPress={() => handleBatchSetVerified(false)}
@@ -3595,12 +3697,25 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                 <Text style={styles.btnMultiSelectUnverifyText}>Unmark Verified</Text>
               </TouchableOpacity>
 
+              {/* 🗑️ Delete Selected (X) Red Button */}
+              <TouchableOpacity
+                style={styles.btnMultiSelectDelete}
+                onPress={() => setIsBulkDeleteModalOpen(true)}
+                activeOpacity={0.8}
+              >
+                <Trash2 size={13} color="#FFF" />
+                <Text style={styles.btnMultiSelectDeleteText}>
+                  Delete Selected ({selectedQuestionIds.size})
+                </Text>
+              </TouchableOpacity>
+
+              {/* Clear Selection Button */}
               <TouchableOpacity
                 style={styles.btnMultiSelectClear}
                 onPress={handleDeselectAll}
                 activeOpacity={0.8}
               >
-                <Text style={styles.btnMultiSelectClearText}>Deselect All</Text>
+                <Text style={styles.btnMultiSelectClearText}>Clear Selection</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -3616,12 +3731,13 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               {filteredQuestions.length > 0 && (
                 <TouchableOpacity
                   style={styles.btnSelectAllVisible}
-                  onPress={handleSelectAllFiltered}
+                  onPress={handleSelectVisibleToggle}
                   activeOpacity={0.8}
                 >
                   <CheckSquare size={13} color="#047857" />
                   <Text style={styles.btnSelectAllVisibleText}>
-                    {selectedQuestionIds.size > 0 && selectedQuestionIds.size >= displayedQuestions.length
+                    {displayedQuestions.length > 0 &&
+                    displayedQuestions.every((q) => selectedQuestionIds.has(String(q.id)))
                       ? 'Deselect Visible'
                       : `Select Visible (${Math.min(visibleCount, filteredQuestions.length)})`}
                   </Text>
@@ -4295,6 +4411,119 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     </Text>
                   </TouchableOpacity>
                 )}
+              </View>
+            </View>
+          </View>
+        </Portal>
+      )}
+
+      {/* Safe Confirmation Modal for Bulk Delete */}
+      {isBulkDeleteModalOpen && (
+        <Portal>
+          <View style={styles.modalBackdrop}>
+            <View style={[styles.modalDialog, { maxWidth: 520 }]}>
+              {/* Modal Header */}
+              <View style={styles.modalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={styles.deleteModalIconBox}>
+                    <Trash2 size={22} color="#DC2626" />
+                  </View>
+                  <View>
+                    <Text style={styles.modalTitle}>Permanently Delete Questions?</Text>
+                    <Text style={styles.modalSubtitle}>This action cannot be undone</Text>
+                  </View>
+                </View>
+                {!isBulkDeleting && (
+                  <TouchableOpacity
+                    onPress={() => setIsBulkDeleteModalOpen(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <X size={20} color={THEME.colors.muted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Modal Body */}
+              <View style={styles.deleteModalBody}>
+                <View style={styles.deleteWarningBox}>
+                  <AlertTriangle size={20} color="#DC2626" style={{ marginTop: 2 }} />
+                  <Text style={styles.deleteWarningText}>
+                    Permanently delete <Text style={{ fontWeight: '800' }}>{selectedQuestionIds.size}</Text> selected questions from Cloud DB? This cannot be undone.
+                  </Text>
+                </View>
+
+                <View style={styles.deleteDetailsBox}>
+                  <View style={styles.deleteDetailRow}>
+                    <Text style={styles.deleteDetailLabel}>Selected for deletion:</Text>
+                    <Text style={styles.deleteDetailValue}>{selectedQuestionIds.size} questions</Text>
+                  </View>
+                  <View style={styles.deleteDetailRow}>
+                    <Text style={styles.deleteDetailLabel}>Database impact:</Text>
+                    <Text style={[styles.deleteDetailValue, { color: '#DC2626' }]}>
+                      Permanent removal from Cloud DB &amp; Student App
+                    </Text>
+                  </View>
+                  <View style={styles.deleteDetailRow}>
+                    <Text style={styles.deleteDetailLabel}>Batch safety:</Text>
+                    <Text style={styles.deleteDetailValue}>Processed in safe chunks of 100</Text>
+                  </View>
+                </View>
+
+                {/* Progress Indicator during deletion */}
+                {isBulkDeleting && (
+                  <View style={styles.deleteProgressContainer}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={styles.deleteProgressText}>
+                        Deleting {bulkDeleteProgress?.current || 0} / {bulkDeleteProgress?.total || selectedQuestionIds.size}...
+                      </Text>
+                      <ActivityIndicator size="small" color="#DC2626" />
+                    </View>
+                    <View style={styles.progressBarTrack}>
+                      <View
+                        style={[
+                          styles.progressBarFill,
+                          {
+                            width: `${
+                              bulkDeleteProgress?.total
+                                ? Math.round((bulkDeleteProgress.current / bulkDeleteProgress.total) * 100)
+                                : 0
+                            }%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {/* Modal Footer */}
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={[styles.btnCancel, isBulkDeleting && { opacity: 0.5 }]}
+                  onPress={() => setIsBulkDeleteModalOpen(false)}
+                  disabled={isBulkDeleting}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.btnCancelText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btnConfirmDelete, isBulkDeleting && { opacity: 0.6 }]}
+                  onPress={handleConfirmBulkDelete}
+                  disabled={isBulkDeleting}
+                  activeOpacity={0.8}
+                >
+                  {isBulkDeleting ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <>
+                      <Trash2 size={15} color="#FFF" />
+                      <Text style={styles.btnConfirmDeleteText}>
+                        Delete {selectedQuestionIds.size} Questions
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -6315,28 +6544,78 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
   multiSelectBar: {
+    position: (Platform.OS === 'web' ? 'sticky' : 'relative') as any,
+    top: 8,
+    zIndex: 100,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#86EFAC',
-    borderRadius: 10,
+    borderColor: '#059669',
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    marginBottom: 12,
-    gap: 12,
+    marginBottom: 14,
+    gap: 10,
     flexWrap: 'wrap',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 8,
   },
   multiSelectInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  multiSelectCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   multiSelectText: {
     fontSize: 13,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  btnSelectAllMatching: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#059669',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  btnSelectAllMatchingText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#166534',
+    color: '#059669',
+  },
+  allMatchingSelectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  allMatchingSelectedText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#047857',
   },
   multiSelectActions: {
     flexDirection: 'row',
@@ -6374,6 +6653,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#475569',
   },
+  btnMultiSelectDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  btnMultiSelectDeleteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
   btnMultiSelectClear: {
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -6382,6 +6680,95 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
+  },
+  deleteModalIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteModalBody: {
+    padding: 16,
+    gap: 14,
+  },
+  deleteWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 8,
+    padding: 12,
+  },
+  deleteWarningText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#991B1B',
+    flex: 1,
+  },
+  deleteDetailsBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    gap: 8,
+  },
+  deleteDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  deleteDetailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  deleteDetailValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  deleteProgressContainer: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    padding: 12,
+    gap: 6,
+  },
+  deleteProgressText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  progressBarTrack: {
+    height: 8,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#DC2626',
+    borderRadius: 4,
+  },
+  btnConfirmDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  btnConfirmDeleteText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFF',
   },
   btnSelectAllVisible: {
     flexDirection: 'row',

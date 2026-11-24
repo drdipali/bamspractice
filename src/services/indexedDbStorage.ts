@@ -108,8 +108,13 @@ export async function getStoredQuestions(): Promise<Question[] | null> {
 export async function setStoredQuestions(questions: Question[]): Promise<boolean> {
   _inMemoryQuestions = questions;
 
-  if (!isIndexedDBAvailable() || !Array.isArray(questions) || questions.length === 0) {
+  if (!isIndexedDBAvailable() || !Array.isArray(questions)) {
     return false;
+  }
+
+  if (questions.length === 0) {
+    await clearStoredQuestions();
+    return true;
   }
 
   try {

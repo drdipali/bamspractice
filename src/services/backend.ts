@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient } from '@supabase/supabase-js';
 import { UserRecord, QuizAttemptRecord } from '../types/auth';
 import { Chapter, Question, MockBlueprintItem, SamhitaDef } from '../types';
 import { INITIAL_SEED_QUESTIONS } from './seedQuestions';
@@ -1132,10 +1133,29 @@ class BackendService {
     await this.persistCustomQuestions();
   }
 
-  async deleteQuestions(ids: (string | number)[]): Promise<number> {
+  async deleteQuestions(
+    ids: (string | number)[],
+    onProgress?: (deleted: number, total: number) => void
+  ): Promise<number> {
     await this.initialize();
     const idSet = new Set(ids.map((id) => String(id)));
     if (idSet.size === 0) return 0;
+
+    const total = ids.length;
+    const CHUNK_SIZE = 100;
+
+    // Optional Remote Supabase chunked delete if configured
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+          const chunk = ids.slice(i, i + CHUNK_SIZE);
+          await supabase.from('questions').delete().in('id', chunk);
+        }
+      } catch (supaErr) {
+        console.warn('[Backend] Remote Supabase chunk delete error:', supaErr);
+      }
+    }
 
     let deletedCount = 0;
     this.questions = this.questions.filter((q) => {
@@ -1151,7 +1171,17 @@ class BackendService {
 
     await AsyncStorage.setItem('bams_deleted_questions_v1', JSON.stringify(Array.from(this.deletedQuestionIds)));
     await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
+
+    // Bump student cache timestamp & cache version on bulk delete
+    const cacheVersion = Date.now().toString();
+    await AsyncStorage.setItem(CACHE_VERSION_KEY, cacheVersion).catch(() => {});
+    await AsyncStorage.setItem('bams_cache_timestamp', cacheVersion).catch(() => {});
+
     await this.persistCustomQuestions();
+
+    if (onProgress) {
+      onProgress(deletedCount, total);
+    }
 
     return deletedCount;
   }
