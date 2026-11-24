@@ -28,6 +28,7 @@ const QUESTIONS_STORAGE_KEY = 'bams_cloud_questions_v1';
 const CUSTOM_QUESTIONS_STORAGE_KEY = 'bams_custom_questions_v3';
 const CUSTOM_QUESTIONS_METADATA_KEY = 'bams_custom_questions_meta_v1';
 const CACHE_VERSION_KEY = 'bams_cache_v3';
+const MANUALLY_VERIFIED_KEY = 'bams_manually_verified_v1';
 const MOCK_BLUEPRINT_STORAGE_KEY = 'bams_mock_blueprint_v1';
 const FALLBACK_DEFAULT_SHEET_URL =
   'https://docs.google.com/spreadsheets/d/1-3E3lVtbN-rAQ69FRb8xric5KsV48TPVbctyxahSu5s/edit?usp=sharing';
@@ -445,6 +446,7 @@ class BackendService {
   private questions: Question[] = [];
   private editedQuestions: Record<string, Question> = {};
   private deletedQuestionIds: Set<string> = new Set();
+  private manuallyVerifiedIds: Set<string> = new Set();
   private mockBlueprint: MockBlueprintItem[] = [];
   private isInitialized = false;
   private lastCloudSyncError: string | null = null;
@@ -590,6 +592,7 @@ class BackendService {
 
       const editedStored = await AsyncStorage.getItem('bams_edited_questions_v1').catch(() => null);
       const deletedStored = await AsyncStorage.getItem('bams_deleted_questions_v1').catch(() => null);
+      const manualStored = await AsyncStorage.getItem(MANUALLY_VERIFIED_KEY).catch(() => null);
 
       if (editedStored) {
         try {
@@ -603,31 +606,59 @@ class BackendService {
         } catch {}
       }
 
+      if (manualStored) {
+        try {
+          this.manuallyVerifiedIds = new Set(JSON.parse(manualStored));
+        } catch {}
+      }
+      // Any question that was manually edited is authoritative and marked manually verified
+      Object.keys(this.editedQuestions).forEach((id) => this.manuallyVerifiedIds.add(id));
+
       // Remove legacy bulky key if present
       await AsyncStorage.removeItem(QUESTIONS_STORAGE_KEY).catch(() => {});
+
+      const isManualCheck = (id: string, qObj: Question): boolean => {
+        return Boolean(
+          this.manuallyVerifiedIds.has(id) ||
+          qObj.is_manually_verified ||
+          qObj.isManuallyVerified ||
+          qObj.manually_edited ||
+          this.editedQuestions[id] !== undefined
+        );
+      };
 
       // Apply overrides and deletions
       const baseQuestions = INITIAL_SEED_QUESTIONS
         .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
         .map((q) => {
-          const edited = this.editedQuestions[String(q.id)];
+          const sId = String(q.id);
+          const edited = this.editedQuestions[sId];
           const target = edited ? edited : q;
+          const isManual = isManualCheck(sId, target);
           return {
             ...target,
             is_chapter_verified: target.is_chapter_verified ?? target.isChapterVerified ?? true,
             isChapterVerified: target.is_chapter_verified ?? target.isChapterVerified ?? true,
+            is_manually_verified: isManual,
+            isManuallyVerified: isManual,
+            manually_edited: isManual,
           };
         });
 
       const activeCustom = customQuestions
         .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
         .map((q) => {
-          const edited = this.editedQuestions[String(q.id)];
+          const sId = String(q.id);
+          const edited = this.editedQuestions[sId];
           const target = edited ? edited : q;
+          const isManual = isManualCheck(sId, target);
           return {
             ...target,
             is_chapter_verified: Boolean(target.is_chapter_verified ?? target.isChapterVerified),
             isChapterVerified: Boolean(target.is_chapter_verified ?? target.isChapterVerified),
+            is_manually_verified: isManual,
+            isManuallyVerified: isManual,
+            manually_edited: isManual,
           };
         });
 
@@ -1057,6 +1088,15 @@ class BackendService {
         } else {
           // Overwrite existing question with updated sheet data
           const strId = String(existing.id);
+          const isManual = Boolean(
+            existing.is_manually_verified ||
+            existing.isManuallyVerified ||
+            existing.manually_edited ||
+            this.manuallyVerifiedIds.has(strId) ||
+            qData.is_manually_verified ||
+            qData.isManuallyVerified ||
+            qData.manually_edited
+          );
           const isVerified =
             qData.is_chapter_verified !== undefined
               ? qData.is_chapter_verified
@@ -1067,10 +1107,13 @@ class BackendService {
             ...existing,
             ...qData,
             id: existing.id,
-            ch: qData.chapterName || existing.chapterName || existing.ch,
-            chapterName: qData.chapterName || existing.chapterName,
+            ch: isManual ? (existing.chapterName || qData.chapterName || existing.ch) : (qData.chapterName || existing.chapterName || existing.ch),
+            chapterName: isManual ? (existing.chapterName || qData.chapterName) : (qData.chapterName || existing.chapterName),
             is_chapter_verified: isVerified,
             isChapterVerified: isVerified,
+            is_manually_verified: isManual,
+            isManuallyVerified: isManual,
+            manually_edited: isManual,
           };
 
           const qIdx = this.questions.findIndex((q) => String(q.id) === strId);
@@ -1230,6 +1273,20 @@ class BackendService {
         ? patch.isChapterVerified
         : existing.is_chapter_verified;
 
+    const isManual =
+      patch.is_manually_verified !== undefined
+        ? patch.is_manually_verified
+        : patch.isManuallyVerified !== undefined
+        ? patch.isManuallyVerified
+        : patch.manually_edited !== undefined
+        ? patch.manually_edited
+        : true;
+
+    if (isManual) {
+      this.manuallyVerifiedIds.add(strId);
+      await AsyncStorage.setItem(MANUALLY_VERIFIED_KEY, JSON.stringify(Array.from(this.manuallyVerifiedIds))).catch(() => {});
+    }
+
     const updated: Question = {
       ...existing,
       ...patch,
@@ -1237,6 +1294,9 @@ class BackendService {
       chapterName: patch.chapterName || existing.chapterName,
       is_chapter_verified: isVerified,
       isChapterVerified: isVerified,
+      is_manually_verified: isManual,
+      isManuallyVerified: isManual,
+      manually_edited: isManual,
     };
 
     this.questions[index] = updated;
@@ -1244,6 +1304,24 @@ class BackendService {
 
     await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
     await this.persistCustomQuestions();
+
+    // Optional Remote Supabase update
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        await supabase
+          .from('questions')
+          .update({
+            ...patch,
+            is_manually_verified: isManual,
+            is_chapter_verified: isVerified,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', strId);
+      } catch (supaErr) {
+        console.warn('[Backend] Supabase remote update warning:', supaErr);
+      }
+    }
 
     return updated;
   }
@@ -1266,6 +1344,19 @@ class BackendService {
             ? item.patch.isChapterVerified
             : existing.is_chapter_verified;
 
+        const isManual =
+          item.patch.is_manually_verified !== undefined
+            ? item.patch.is_manually_verified
+            : item.patch.isManuallyVerified !== undefined
+            ? item.patch.isManuallyVerified
+            : item.patch.manually_edited !== undefined
+            ? item.patch.manually_edited
+            : existing.is_manually_verified;
+
+        if (isManual) {
+          this.manuallyVerifiedIds.add(strId);
+        }
+
         const updated: Question = {
           ...existing,
           ...item.patch,
@@ -1273,6 +1364,9 @@ class BackendService {
           chapterName: item.patch.chapterName || existing.chapterName,
           is_chapter_verified: isVerified,
           isChapterVerified: isVerified,
+          is_manually_verified: isManual,
+          isManuallyVerified: isManual,
+          manually_edited: isManual,
         };
         this.questions[index] = updated;
         this.editedQuestions[strId] = updated;
@@ -1282,6 +1376,7 @@ class BackendService {
 
     if (updatedCount > 0) {
       await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
+      await AsyncStorage.setItem(MANUALLY_VERIFIED_KEY, JSON.stringify(Array.from(this.manuallyVerifiedIds))).catch(() => {});
       await this.persistCustomQuestions();
     }
 

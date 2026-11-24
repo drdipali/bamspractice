@@ -37,6 +37,9 @@ export interface Question {
   createdAt?: string;
   is_chapter_verified?: boolean; // Verified for strict chapter-wise practice
   isChapterVerified?: boolean;   // CamelCase alias
+  is_manually_verified?: boolean; // Manually edited/verified by Admin; permanently excluded from issue detectors
+  isManuallyVerified?: boolean;   // CamelCase alias
+  manually_edited?: boolean;      // Admin edit flag
   hi?: {
     stem: string;
     o: string[];

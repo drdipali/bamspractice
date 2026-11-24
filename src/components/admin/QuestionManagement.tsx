@@ -72,6 +72,7 @@ import {
   getCanonicalSthana,
   isValidClassicalTag,
   isQuestionChapterVerified,
+  isQuestionManuallyVerified,
   isValidQuestion,
 } from '../../utils/chapterMapper';
 import { useApp } from '../../context/AppContext';
@@ -134,6 +135,7 @@ const STANDARD_STATEMENT_OPTIONS = [
  * while option_a is longer than 25 characters containing the actual stem).
  */
 export const isBrokenShiftedQuestion = (q: Question): boolean => {
+  if (isQuestionManuallyVerified(q)) return false;
   const stem = String(q.stem || '').trim();
   const optA = String((q.o && q.o[0]) || (q as any).options?.[0] || '').trim();
   return (/^\d+\.?$/.test(stem) || stem.length < 10) && optA.length > 20;
@@ -884,6 +886,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         matchPairs: qType === 'match_the_pair' ? matchPairs : undefined,
         is_chapter_verified: isChapterVerifiedField,
         isChapterVerified: isChapterVerifiedField,
+        is_manually_verified: true,
+        isManuallyVerified: true,
+        manually_edited: true,
       };
 
       if (editingQuestion) {
@@ -892,7 +897,17 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         const strId = String(editingQuestion.id);
 
         setQuestions((prev) =>
-          prev.map((item) => (String(item.id) === strId ? updated : item))
+          prev.map((item) =>
+            String(item.id) === strId
+              ? {
+                  ...item,
+                  ...updated,
+                  is_manually_verified: true,
+                  isManuallyVerified: true,
+                  manually_edited: true,
+                }
+              : item
+          )
         );
         setEditedIds((prev) => new Set([...prev, strId]));
 
@@ -903,7 +918,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         const created = await backend.addQuestion(payload);
         const strId = String(created.id);
 
-        setQuestions((prev) => [created, ...prev]);
+        setQuestions((prev) => [
+          {
+            ...created,
+            is_manually_verified: true,
+            isManuallyVerified: true,
+            manually_edited: true,
+          },
+          ...prev,
+        ]);
         setEditedIds((prev) => new Set([...prev, strId]));
 
         showToast('New question created and saved to Cloud DB!');
@@ -1120,6 +1143,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       await backend.updateQuestion(q.id, {
         is_chapter_verified: nextState,
         isChapterVerified: nextState,
+        is_manually_verified: nextState,
+        isManuallyVerified: nextState,
+        manually_edited: nextState,
       });
       await loadCloudQuestions();
       if (refreshQuestions) refreshQuestions();
@@ -1359,13 +1385,19 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   // Detect Shifted / Broken rows (numeric serial stems with question in Option A)
   const brokenQuestions = useMemo(() => {
-    return questions.filter(isBrokenShiftedQuestion);
-  }, [questions]);
+    return questions.filter((q) => {
+      if (editedIds.has(String(q.id)) || isQuestionManuallyVerified(q)) return false;
+      return isBrokenShiftedQuestion(q);
+    });
+  }, [questions, editedIds]);
 
   // Detect Samhita / Citation Mismatches (e.g. su.su citation with Charaka tag, or impossible chapters)
   const mismatchQuestions = useMemo(() => {
-    return questions.filter((q) => detectSamhitaMismatch(q).hasMismatch);
-  }, [questions]);
+    return questions.filter((q) => {
+      if (editedIds.has(String(q.id)) || isQuestionManuallyVerified(q)) return false;
+      return detectSamhitaMismatch(q).hasMismatch;
+    });
+  }, [questions, editedIds]);
 
   // Delete all flagged shifted/broken rows in one click
   const handleDeleteAllBrokenRows = async () => {
@@ -1452,9 +1484,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
       if (selectedTypeFilter === 'broken_shifted') {
-        if (!isBrokenShiftedQuestion(q)) return false;
+        if (editedIds.has(String(q.id)) || isQuestionManuallyVerified(q) || !isBrokenShiftedQuestion(q)) return false;
       } else if (selectedTypeFilter === 'citation_mismatch') {
-        if (!detectSamhitaMismatch(q).hasMismatch) return false;
+        if (editedIds.has(String(q.id)) || isQuestionManuallyVerified(q) || !detectSamhitaMismatch(q).hasMismatch) return false;
       } else if (selectedTypeFilter === 'chapter_verified') {
         if (!isQuestionChapterVerified(q)) return false;
       } else if (selectedTypeFilter !== 'all' && q.questionType !== selectedTypeFilter) {
@@ -1713,6 +1745,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     const manualReview: { question: Question; mismatch: ReturnType<typeof detectSamhitaMismatch> }[] = [];
 
     questions.forEach((q) => {
+      if (editedIds.has(String(q.id)) || isQuestionManuallyVerified(q)) return;
       const res = checkQuestionRemap(q);
       const currentTag = String(q.chapterName || q.ch || '').trim();
 
@@ -3810,10 +3843,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
           <View style={styles.questionsList}>
             {displayedQuestions.map((q) => {
               const globalIndex = questions.findIndex((item) => String(item.id) === String(q.id)) + 1;
-              const isEdited = editedIds.has(String(q.id));
-              const isBroken = isBrokenShiftedQuestion(q);
-              const mismatch = detectSamhitaMismatch(q);
-              const audit = getQuestionAuditStatus(q);
+              const isEdited = editedIds.has(String(q.id)) || isQuestionManuallyVerified(q);
+              const isBroken = !isEdited && isBrokenShiftedQuestion(q);
+              const mismatch = isEdited ? { hasMismatch: false, type: 'none' as const } : detectSamhitaMismatch(q);
+              const audit = isEdited ? { isValid: true } : getQuestionAuditStatus(q);
 
               const typeColor =
                 q.questionType === 'assertion_reason'
@@ -4002,11 +4035,21 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                                   await backend.updateQuestion(q.id, {
                                     chapterName: mismatch.suggestedTag!,
                                     ch: mismatch.suggestedTag!,
+                                    is_manually_verified: true,
+                                    isManuallyVerified: true,
+                                    manually_edited: true,
                                   });
                                   setQuestions((prev) =>
                                     prev.map((item) =>
                                       item.id === q.id
-                                        ? { ...item, chapterName: mismatch.suggestedTag!, ch: mismatch.suggestedTag! }
+                                        ? {
+                                            ...item,
+                                            chapterName: mismatch.suggestedTag!,
+                                            ch: mismatch.suggestedTag!,
+                                            is_manually_verified: true,
+                                            isManuallyVerified: true,
+                                            manually_edited: true,
+                                          }
                                         : item
                                     )
                                   );

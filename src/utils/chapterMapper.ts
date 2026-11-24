@@ -43,7 +43,7 @@ export function extractCitationPrefix(citation?: string, explanation?: string, s
   // 2. Check if stem starts with a classical citation or shloka header
   if (stem && stem.trim()) {
     const cleanStem = stem.trim();
-    if (/^(?:su|ca|ah|ss|cs|सु|च|अष्टाङ्ग|अष्टांग|सुश्रुत|चरक|sushrut|charak|ashtang)/i.test(cleanStem)) {
+    if (/^(?:su|ss|ca|cha|cs|ah|as|va|vr|सु|च|अष्टाङ्ग|अष्टांग|सुश्रुत|चरक|वाग्भट|sushrut|charak|ashtang|vagbhat)/i.test(cleanStem)) {
       const verseBreak = cleanStem.search(/[॥|\n]/);
       if (verseBreak > 0 && verseBreak <= 75) {
         return cleanStem.slice(0, verseBreak).trim();
@@ -56,7 +56,7 @@ export function extractCitationPrefix(citation?: string, explanation?: string, s
   if (explanation && explanation.trim()) {
     const cleanExp = explanation.trim();
     const mExplicit = cleanExp.match(
-      /(?:(?:su|ca|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*\d{1,3}\s*[\/:]\s*\d+)|(?:(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*\d{1,3})/i
+      /(?:(?:su|ca|cha|ah|as|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*\d{1,3}\s*[\/:]\s*\d+)|(?:(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*\d{1,3})/i
     );
     if (mExplicit && mExplicit[0]) {
       return mExplicit[0].trim();
@@ -111,40 +111,40 @@ export function detectChapterInfo(
 
   // Sushruta Samhita check
   if (
-    /sushrut|susruta|suśruta|सुश्रुत|su\s*\.\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
+    /(?:\b(?:su|ss)\s*[-–.]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\b)|\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(
       searchPrefix
     ) ||
-    /sushrut|susruta|suśruta|सुश्रुत/i.test(fullNormalizedRef)
+    /\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(fullNormalizedRef)
   ) {
     subject = 'Sushruta Samhita';
     subjectSource = 'citation';
-  } else if (/sushrut|susruta|suśruta|सुश्रुत/i.test(combinedContext)) {
+  } else if (/\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(combinedContext)) {
     subject = 'Sushruta Samhita';
     subjectSource = safeContext.fileName ? 'filename' : 'tabname';
   }
   // Charaka Samhita check
   else if (
-    /charak|caraka|चरक|ca\s*\.\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
+    /(?:\b(?:ca|cha|cs)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि)\b)|\b(?:charak\w*|caraka\w*|चरक)\b/i.test(
       searchPrefix
     ) ||
-    /charak|caraka|चरक/i.test(fullNormalizedRef)
+    /\b(?:charak\w*|caraka\w*|चरक)\b/i.test(fullNormalizedRef)
   ) {
     subject = 'Charaka Samhita';
     subjectSource = 'citation';
-  } else if (/charak|caraka|चरक/i.test(combinedContext)) {
+  } else if (/\b(?:charak\w*|caraka\w*|चरक)\b/i.test(combinedContext)) {
     subject = 'Charaka Samhita';
     subjectSource = safeContext.fileName ? 'filename' : 'tabname';
   }
   // Ashtanga Hridaya check
   else if (
-    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hrdaya|हृदय|vagbhat|vāgbhaṭa|वाग्भट|a\s*\.\s*h\s*\.?|a\s*\.\s*s\s*\.?/i.test(
+    /(?:\b(?:a\s*\.\s*h\.?|a\s*\.\s*s\.?|ah|as)\s*[-–.]?\s*(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)\b)|\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
       searchPrefix
     ) ||
-    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|vagbhat|वाग्भट/i.test(fullNormalizedRef)
+    /\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|vagbhat\w*|वाग्भट)\b/i.test(fullNormalizedRef)
   ) {
     subject = 'Ashtanga Hridaya';
     subjectSource = 'citation';
-  } else if (/ashtang|astanga|hridaya|vagbhat|अष्टाङ्ग|हृदय/i.test(combinedContext)) {
+  } else if (/\b(?:ashtang\w*|astanga\w*|hridaya|vagbhat\w*|अष्टाङ्ग|हृदय)\b/i.test(combinedContext)) {
     subject = 'Ashtanga Hridaya';
     subjectSource = 'filename';
   }
@@ -736,12 +736,39 @@ export function isValidClassicalTag(tag?: string): boolean {
 }
 
 /**
+ * Checks whether a question has been manually edited or verified by an administrator.
+ * Manually verified questions are authoritative and excluded from automated heuristic issue detectors.
+ */
+export function isQuestionManuallyVerified(q: Question | any): boolean {
+  if (!q) return false;
+  return (
+    q.is_manually_verified === true ||
+    q.isManuallyVerified === true ||
+    q.manually_edited === true ||
+    String(q.is_manually_verified) === 'true' ||
+    String(q.isManuallyVerified) === 'true' ||
+    String(q.manually_edited) === 'true' ||
+    q.is_manually_verified === 1 ||
+    q.isManuallyVerified === 1 ||
+    q.manually_edited === 1
+  );
+}
+
+/**
  * Detects whether a question has:
  * 1. A Samhita conflict (e.g. citation mentions Sushruta/su.su while Question Text or Chapter Tag mentions Charaka)
  * 2. An impossible Sthana for that Samhita (e.g. Charaka Samhita > Uttarasthana / Uttaratantra)
  * 3. An impossible chapter number for that Samhita/Sthana (e.g. Charaka Sutra > 30, Charaka Nidana > 8, Sushruta Sutra > 46).
  */
 export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
+  // If the question has been manually edited or verified by admin, permanently skip mismatch check
+  if (isQuestionManuallyVerified(q)) {
+    return {
+      hasMismatch: false,
+      type: 'none',
+    };
+  }
+
   const stem = String(q.stem || '');
   const ref = String(q.r || '');
   const exp = String(q.explanation || '');
@@ -759,21 +786,21 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
   const searchSamhita = `${normalizedPrefix} ${fullNormalized}`;
 
   if (
-    /su\s*\.\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सू|नि|शा|चि|क|उ)|sushrut|susruta|suśruta|सुश्रुत|ss\s*[-–.]?\s*(?:su|ni|sha|ci|ut)/i.test(
+    /(?:\b(?:su|ss)\s*[-–.]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\b)|\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(
       searchSamhita
     )
   ) {
     citationSamhita = 'Sushruta Samhita';
     citationEvidence = 'Sushruta (su.su)';
   } else if (
-    /ca\s*\.\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|सू|नि|वि|शा|इन्|चि|क|सि)|charak|caraka|चरक|cs\s*[-–.]?\s*(?:su|ni|vi|ci)/i.test(
+    /(?:\b(?:ca|cha|cs)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि)\b)|\b(?:charak\w*|caraka\w*|चरक)\b/i.test(
       searchSamhita
     )
   ) {
     citationSamhita = 'Charaka Samhita';
-    citationEvidence = 'Charaka (ca.su)';
+    citationEvidence = 'Charaka (ca.su / cha sutra)';
   } else if (
-    /ashtang|astanga|aṣṭāṅga|अष्टाङ्ग|अष्टांग|hridaya|hrdaya|हृदय|vagbhat|vāgbhaṭa|वाग्भट|a\s*\.\s*h\s*\.?|a\s*\.\s*s\s*\.?/i.test(
+    /(?:\b(?:a\s*\.\s*h\.?|a\s*\.\s*s\.?|ah|as)\s*[-–.]?\s*(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)\b)|\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
       searchSamhita
     )
   ) {
@@ -927,6 +954,16 @@ export function checkQuestionRemap(q: Question): {
     q.stem
   );
 
+  // If question is manually verified, never suggest automated remap
+  if (isQuestionManuallyVerified(q)) {
+    return {
+      needsRemap: false,
+      currentTag,
+      suggestedTag: currentTag,
+      detectedInfo: detected,
+    };
+  }
+
   // Check if Samhita mismatch exists
   const mismatch = detectSamhitaMismatch(q);
   if (
@@ -1025,6 +1062,11 @@ export interface QuestionAuditResult {
  * Validates format, stem integrity, 4 options present, valid answer key, and Samhita citation matching.
  */
 export function getQuestionAuditStatus(q: Question): QuestionAuditResult {
+  // If explicitly verified or manually edited by admin, always treat as valid
+  if (isQuestionManuallyVerified(q)) {
+    return { isValid: true };
+  }
+
   const stem = String(q.stem || '').trim();
 
   // 1. Shifted column / numeric stem check
@@ -1081,6 +1123,7 @@ export function getQuestionAuditStatus(q: Question): QuestionAuditResult {
  * Helper to determine if a question is malformed / invalid for student tests
  */
 export function isQuestionMalformed(q: Question): boolean {
+  if (isQuestionManuallyVerified(q)) return false;
   return !getQuestionAuditStatus(q).isValid;
 }
 
@@ -1091,6 +1134,7 @@ export function isQuestionMalformed(q: Question): boolean {
  */
 export function isValidQuestion(q: Question | any): boolean {
   if (!q) return false;
+  if (isQuestionManuallyVerified(q)) return true;
   const stem = String(q.stem || q.question || q.question_text || '').trim();
   if (!stem || /^\d+\.?$/.test(stem) || stem.length < 3) return false;
 
@@ -1129,6 +1173,7 @@ export function isValidQuestion(q: Question | any): boolean {
 export function isQuestionChapterVerified(q: Question | any): boolean {
   if (!q) return false;
   return (
+    isQuestionManuallyVerified(q) ||
     q.is_chapter_verified === true ||
     q.isChapterVerified === true ||
     q.verified === true ||
