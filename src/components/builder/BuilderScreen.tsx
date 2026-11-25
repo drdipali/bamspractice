@@ -55,8 +55,8 @@ export const BuilderScreen: React.FC = () => {
   }, [selectedChapters, chapters, practiceMode]);
 
   const alloc = useMemo(() => {
-    return allocateQuestions(activeChapters, config);
-  }, [activeChapters, config]);
+    return allocateQuestions(activeChapters, config, practiceMode === 'chapter_verified');
+  }, [activeChapters, config, practiceMode]);
 
   return (
     <View style={styles.container}>

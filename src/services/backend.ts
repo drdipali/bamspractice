@@ -14,7 +14,13 @@ import {
   getStoredQuestions,
   setStoredQuestions,
   clearStoredQuestions,
+  ChapterCountsSummary,
+  getCachedChapterSummary,
+  setCachedChapterSummary,
+  getCachedChapterQuestions,
+  setCachedChapterQuestions,
 } from './indexedDbStorage';
+import { DEFAULT_CHAPTER_SUMMARY } from '../constants/defaultChapterSummary';
 import {
   SUPABASE_CONFIG,
   isRemoteSupabaseConfigured,
@@ -273,11 +279,20 @@ function normalizeSthanaKey(s: string): string {
  * Builds Chapter objects containing all classical BAMS syllabus chapters,
  * dynamically merging any questions created or imported into the cloud database.
  */
-export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[] {
+/**
+ * Builds Chapter objects containing all classical BAMS syllabus chapters
+ * from a lightweight ChapterCountsSummary map, without requiring full Question objects.
+ */
+export function buildChaptersFromSummary(
+  summary: ChapterCountsSummary,
+  cloudQuestions: Question[] = []
+): Chapter[] {
   // 1. Clone all base chapters from the accredited classical syllabus
   const baseChapters: Chapter[] = ALL_CHAPTERS.map((ch) => ({
     ...ch,
-    qs: [...ch.qs],
+    qs: [],
+    verifiedCount: 0,
+    totalCount: 0,
   }));
 
   const chapterMap: Record<string, Chapter> = {};
@@ -313,27 +328,16 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
     registerKey(`${ch.sam} > ${ch.sth} > ${ch.name}`, ch);
   });
 
-  // 2. Merge cloud-authored and CSV-imported questions into their target chapters
-  const extraChaptersMap: Record<string, Question[]> = {};
+  const extraChaptersMap: Record<string, { verifiedCount: number; totalCount: number }> = {};
 
-  cloudQuestions.forEach((q) => {
-    const rawTag = (
-      q.chapterName ||
-      (q as any).chapter_mapping ||
-      ((q as any).subject && (q as any).sthana
-        ? `${(q as any).subject} > ${(q as any).sthana} > ${(q as any).chapter || 'Chapter 1'}`
-        : '') ||
-      String(q.ch || '')
-    ).trim();
-    const chId = String(q.ch || '').trim();
+  // 2. Apply summary counts onto base chapters
+  Object.entries(summary).forEach(([rawTag, counts]) => {
     const normKey = normalizeChapterLookupKey(rawTag);
-
     let target: Chapter | undefined =
-      chapterMap[chId] ||
+      chapterMap[rawTag] ||
       chapterMap[normKey] ||
       chapterMap[normKey.replace(/>\s*chapter\s*(\d+)/i, '> $1')];
 
-    // Fallback: smart hierarchical resolution from path (handles "Chapter 1 · 90 real MCQs", "Adhyaya 1", etc.)
     if (!target && rawTag) {
       const parts = rawTag.split(/[>›→\/]/).map((s: string) => s.trim()).filter(Boolean);
       if (parts.length >= 2) {
@@ -349,13 +353,10 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
         target = baseChapters.find((c) => {
           if (normalizeSubjectAlias(c.sam) !== normSubj) return false;
           if (normalizeSthanaKey(c.sth) !== normSth) return false;
-          if (chNum !== null && chNum > 0) {
-            return c.n === chNum;
-          }
+          if (chNum !== null && chNum > 0) return c.n === chNum;
           return c.name.toLowerCase() === rawCh.toLowerCase();
         });
 
-        // If still not found, check if subject matches a known Samhita from RAW_TREE
         if (!target) {
           const matchedSam = RAW_TREE.find((s: SamhitaDef) => normalizeSubjectAlias(s.name) === normSubj);
           if (matchedSam) {
@@ -380,6 +381,8 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
                 n: chNum || chName,
                 key: `${matchedSam.name}-${canonicalSth}`,
                 qs: [],
+                verifiedCount: counts.verifiedCount,
+                totalCount: counts.totalCount,
               };
               baseChapters.push(target);
               chapterMap[newId] = target;
@@ -391,25 +394,15 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
     }
 
     if (target) {
-      // Add or replace question with latest updated question object
-      const existingIdx = target.qs.findIndex((existing) => String(existing.id) === String(q.id));
-      if (existingIdx !== -1) {
-        target.qs[existingIdx] = q;
-      } else {
-        target.qs.unshift(q);
-      }
+      target.verifiedCount = Math.max(target.verifiedCount || 0, counts.verifiedCount);
+      target.totalCount = Math.max(target.totalCount || 0, counts.totalCount);
     } else {
-      // Custom chapter added outside the standard classical Samhitas
-      const customKey = q.chapterName || String(q.ch || 'Custom Chapter');
-      if (!extraChaptersMap[customKey]) {
-        extraChaptersMap[customKey] = [];
-      }
-      extraChaptersMap[customKey].push(q);
+      extraChaptersMap[rawTag] = counts;
     }
   });
 
-  // 3. Append any custom admin chapters
-  Object.keys(extraChaptersMap).forEach((customKey, idx) => {
+  // 3. Append any custom admin chapters outside standard syllabus
+  Object.entries(extraChaptersMap).forEach(([customKey, counts], idx) => {
     const parts = customKey.split('>').map((p) => p.trim());
     let sam = 'Custom Subjects';
     let sth = 'General';
@@ -432,11 +425,58 @@ export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[
       sth,
       n,
       key: `custom_${idx}`,
-      qs: extraChaptersMap[customKey],
+      qs: [],
+      verifiedCount: counts.verifiedCount,
+      totalCount: counts.totalCount,
     });
   });
 
+  // 4. Attach any currently loaded questions in memory
+  if (cloudQuestions.length > 0) {
+    cloudQuestions.forEach((q) => {
+      const rawTag = (
+        q.chapterName ||
+        (q as any).chapter_mapping ||
+        String(q.ch || '')
+      ).trim();
+      const normKey = normalizeChapterLookupKey(rawTag);
+      const target = chapterMap[normKey] || chapterMap[rawTag];
+      if (target) {
+        const existingIdx = target.qs.findIndex((existing) => String(existing.id) === String(q.id));
+        if (existingIdx !== -1) {
+          target.qs[existingIdx] = q;
+        } else {
+          target.qs.unshift(q);
+        }
+      }
+    });
+  }
+
   return baseChapters;
+}
+
+/**
+ * Builds Chapter objects from an in-memory questions list (Admin / Legacy support).
+ */
+export function buildChaptersFromQuestions(cloudQuestions: Question[]): Chapter[] {
+  const summary: ChapterCountsSummary = {};
+  cloudQuestions.forEach((q) => {
+    const rawTag = (
+      q.chapterName ||
+      (q as any).chapter_mapping ||
+      String(q.ch || '')
+    ).trim();
+    if (!rawTag) return;
+    if (!summary[rawTag]) {
+      summary[rawTag] = { verifiedCount: 0, totalCount: 0 };
+    }
+    summary[rawTag].totalCount++;
+    if (isQuestionChapterVerified(q) && isValidQuestion(q)) {
+      summary[rawTag].verifiedCount++;
+    }
+  });
+
+  return buildChaptersFromSummary(summary, cloudQuestions);
 }
 
 class BackendService {
@@ -664,14 +704,8 @@ class BackendService {
 
       this.questions = [...activeCustom, ...baseQuestions];
 
-      // If question bank is empty (e.g. on fresh mobile browser), auto-sync from Cloud DB!
-      if (this.questions.length === 0) {
-        try {
-          await this.syncFromCloud(false);
-        } catch (syncErr: any) {
-          console.warn('[Backend] Initial auto cloud-sync notice:', syncErr);
-        }
-      }
+      // Pre-warm lightweight chapter counts summary without downloading full 30,000+ question bank
+      await this.getChapterCountsSummary().catch(() => {});
 
       // 5. Mock Blueprint
       const storedBlueprint = await AsyncStorage.getItem(MOCK_BLUEPRINT_STORAGE_KEY).catch(() => null);
@@ -902,14 +936,154 @@ class BackendService {
     return [...this.questions];
   }
 
+  /**
+   * Retrieves the lightweight summary of question counts per chapter.
+   * Never downloads full question stems or explanations.
+   */
+  async getChapterCountsSummary(force = false): Promise<ChapterCountsSummary> {
+    if (!force) {
+      const cached = await getCachedChapterSummary();
+      if (cached && Object.keys(cached).length > 0) {
+        return cached;
+      }
+    }
+
+    // 1. If Supabase is configured, fetch lightweight chapter summary:
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        const { data, error } = await client
+          .from('questions')
+          .select('chapter_mapping, chapterName, ch, is_chapter_verified, is_manually_verified');
+        if (!error && data && data.length > 0) {
+          const summary: ChapterCountsSummary = {};
+          data.forEach((row: any) => {
+            const rawTag = (row.chapter_mapping || row.chapterName || row.ch || '').trim();
+            if (!rawTag) return;
+            if (!summary[rawTag]) summary[rawTag] = { verifiedCount: 0, totalCount: 0 };
+            summary[rawTag].totalCount++;
+            if (row.is_chapter_verified || row.is_manually_verified) {
+              summary[rawTag].verifiedCount++;
+            }
+          });
+          await setCachedChapterSummary(summary);
+          return summary;
+        }
+      } catch (err) {
+        console.warn('[Backend] Error fetching remote chapter summary:', err);
+      }
+    }
+
+    // 2. If memory questions exist (e.g. admin or synced):
+    if (this.questions.length > 0) {
+      const summary: ChapterCountsSummary = {};
+      this.questions.forEach((q) => {
+        const rawTag = (q.chapterName || (q as any).chapter_mapping || String(q.ch || '')).trim();
+        if (!rawTag) return;
+        if (!summary[rawTag]) summary[rawTag] = { verifiedCount: 0, totalCount: 0 };
+        summary[rawTag].totalCount++;
+        if (isQuestionChapterVerified(q) && isValidQuestion(q)) {
+          summary[rawTag].verifiedCount++;
+        }
+      });
+      await setCachedChapterSummary(summary);
+      return summary;
+    }
+
+    // 3. Default pre-computed static syllabus summary:
+    await setCachedChapterSummary(DEFAULT_CHAPTER_SUMMARY);
+    return DEFAULT_CHAPTER_SUMMARY;
+  }
+
+  /**
+   * Fetches full question details for a single selected chapter on-demand,
+   * caching the questions in IndexedDB for 24 hours.
+   */
+  async getQuestionsForChapter(
+    chapterIdentifier: string,
+    verifiedOnly = false
+  ): Promise<Question[]> {
+    await this.initialize();
+    const cleanId = chapterIdentifier.trim().toLowerCase();
+
+    // 1. Check 24-hour IndexedDB / Memory cache
+    const cached = await getCachedChapterQuestions(cleanId);
+    if (cached && cached.length > 0) {
+      return verifiedOnly
+        ? cached.filter((q) => isValidQuestion(q) && isQuestionChapterVerified(q))
+        : cached.filter(isValidQuestion);
+    }
+
+    // 2. Check if questions are already present in memory
+    const normClean = normalizeChapterLookupKey(cleanId);
+    const inMemoryMatches = this.questions.filter((q) => {
+      const tag = (q.chapterName || (q as any).chapter_mapping || String(q.ch || '')).trim();
+      const normTag = normalizeChapterLookupKey(tag);
+      return (
+        normTag === normClean ||
+        tag.toLowerCase() === cleanId ||
+        String(q.ch || '').toLowerCase() === cleanId
+      );
+    });
+
+    if (inMemoryMatches.length > 0) {
+      await setCachedChapterQuestions(cleanId, inMemoryMatches);
+      return verifiedOnly
+        ? inMemoryMatches.filter((q) => isValidQuestion(q) && isQuestionChapterVerified(q))
+        : inMemoryMatches.filter(isValidQuestion);
+    }
+
+    // 3. If remote Supabase is configured, fetch single chapter on-demand
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        const { data, error } = await client
+          .from('questions')
+          .select('*')
+          .or(`chapter_mapping.ilike.%${chapterIdentifier}%,chapterName.ilike.%${chapterIdentifier}%`);
+        if (!error && data && data.length > 0) {
+          await setCachedChapterQuestions(cleanId, data);
+          return verifiedOnly
+            ? data.filter((q) => isValidQuestion(q) && isQuestionChapterVerified(q))
+            : data.filter(isValidQuestion);
+        }
+      } catch (err) {
+        console.warn('[Backend] On-demand chapter fetch failed:', err);
+      }
+    }
+
+    // 4. Lazy fallback sync if question bank is unpopulated
+    if (this.questions.length === 0) {
+      try {
+        await this.syncFromCloud(false);
+        const newlyMatched = this.questions.filter((q) => {
+          const tag = (q.chapterName || (q as any).chapter_mapping || String(q.ch || '')).trim();
+          const normTag = normalizeChapterLookupKey(tag);
+          return (
+            normTag === normClean ||
+            tag.toLowerCase() === cleanId ||
+            String(q.ch || '').toLowerCase() === cleanId
+          );
+        });
+        if (newlyMatched.length > 0) {
+          await setCachedChapterQuestions(cleanId, newlyMatched);
+          return verifiedOnly
+            ? newlyMatched.filter((q) => isValidQuestion(q) && isQuestionChapterVerified(q))
+            : newlyMatched.filter(isValidQuestion);
+        }
+      } catch (e) {
+        console.warn('[Backend] Lazy fallback sync failed:', e);
+      }
+    }
+
+    return [];
+  }
+
   async getQuestionsByChapters(
     chapterIdsOrNames: (string | number)[],
     verifiedOnly = false
   ): Promise<Question[]> {
     await this.initialize();
-    const allChapters = await this.getChapters();
-    const set = new Set(chapterIdsOrNames.map((c) => c.toString().trim().toLowerCase()));
-
     const result: Question[] = [];
     const seen = new Set<string | number>();
 
@@ -919,39 +1093,91 @@ class BackendService {
       return true;
     };
 
-    // 1. Cloud-authored questions matching selected chapters
-    this.questions.forEach((q) => {
-      const chName = (q.chapterName || q.ch?.toString() || '').trim().toLowerCase();
-      const chId = q.ch?.toString().trim().toLowerCase();
-      if (set.has(chName) || set.has(chId)) {
+    for (const chIdOrName of chapterIdsOrNames) {
+      const qs = await this.getQuestionsForChapter(String(chIdOrName), verifiedOnly);
+      qs.forEach((q) => {
         if (!seen.has(q.id) && checkCandidate(q)) {
           seen.add(q.id);
           result.push(q);
         }
-      }
-    });
+      });
+    }
 
-    // 2. Base syllabus questions matching selected chapters
-    allChapters.forEach((ch) => {
-      const chId = ch.id.toString().trim().toLowerCase();
-      const chPath = `${ch.sam} > ${ch.sth} > Chapter ${ch.n}`.toLowerCase();
-      const chPathAlt = `${ch.sam} > ${ch.sth} > ${ch.name}`.toLowerCase();
-      if (set.has(chId) || set.has(chPath) || set.has(chPathAlt)) {
-        ch.qs.forEach((q) => {
+    // Fallback: search in-memory questions if result is empty
+    if (result.length === 0 && this.questions.length > 0) {
+      const set = new Set(chapterIdsOrNames.map((c) => c.toString().trim().toLowerCase()));
+      this.questions.forEach((q) => {
+        const chName = (q.chapterName || q.ch?.toString() || '').trim().toLowerCase();
+        const chId = q.ch?.toString().trim().toLowerCase();
+        if (set.has(chName) || set.has(chId)) {
           if (!seen.has(q.id) && checkCandidate(q)) {
             seen.add(q.id);
             result.push(q);
           }
-        });
-      }
-    });
+        }
+      });
+    }
 
     return result;
   }
 
+  /**
+   * Fetches questions in paginated chunks of 50 for the Admin Console.
+   */
+  async getQuestionsPaginated(start = 0, end = 49): Promise<{ questions: Question[]; total: number }> {
+    await this.initialize();
+
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        const { data, count, error } = await client
+          .from('questions')
+          .select('*', { count: 'exact' })
+          .range(start, end)
+          .order('id', { ascending: true });
+        if (!error && data) {
+          return { questions: data, total: count || data.length };
+        }
+      } catch (e) {
+        console.warn('[Backend] Paginated fetch from Supabase failed:', e);
+      }
+    }
+
+    const slice = this.questions.slice(start, end + 1);
+    return { questions: slice, total: this.questions.length };
+  }
+
+  /**
+   * Fetches only the required batch of mixed practice questions (e.g. 50 MCQs).
+   */
+  async getMixedPracticeQuestions(count = 50): Promise<Question[]> {
+    await this.initialize();
+
+    if (isRemoteSupabaseConfigured()) {
+      try {
+        const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+        const { data, error } = await client
+          .from('questions')
+          .select('*')
+          .limit(count);
+        if (!error && data && data.length > 0) {
+          return data.filter(isValidQuestion);
+        }
+      } catch (e) {
+        console.warn('[Backend] getMixedPracticeQuestions error:', e);
+      }
+    }
+
+    const verified = this.questions.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q));
+    const pool = verified.length >= count ? verified : this.questions.filter(isValidQuestion);
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, count);
+  }
+
   async getChapters(): Promise<Chapter[]> {
     await this.initialize();
-    return buildChaptersFromQuestions(this.questions);
+    const summary = await this.getChapterCountsSummary();
+    return buildChaptersFromSummary(summary, this.questions);
   }
 
   async getUniqueChapterNames(): Promise<string[]> {
@@ -1412,6 +1638,21 @@ class BackendService {
   async generateMockTestQuestions(customBlueprint?: MockBlueprintItem[]): Promise<Question[]> {
     await this.initialize();
     const activeBlueprint = customBlueprint && customBlueprint.length > 0 ? customBlueprint : this.mockBlueprint;
+
+    if (this.questions.length === 0) {
+      if (isRemoteSupabaseConfigured()) {
+        try {
+          const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+          const { data } = await client.from('questions').select('*').limit(150);
+          if (data && data.length > 0) {
+            this.questions = data;
+          }
+        } catch {}
+      }
+      if (this.questions.length === 0) {
+        await this.syncFromCloud(false).catch(() => {});
+      }
+    }
 
     // Filter all valid questions
     const allValid = this.questions.filter((q) => isValidQuestion(q));

@@ -210,3 +210,140 @@ export function safeLocalStorageRemove(key: string): void {
     console.warn(`[safeLocalStorage] Error removing key "${key}":`, e);
   }
 }
+
+// =========================================================================
+// LIGHTWEIGHT CHAPTER SUMMARY & 24-HOUR SINGLE CHAPTER CACHE
+// =========================================================================
+
+export interface ChapterCountsSummary {
+  [chapterKey: string]: {
+    verifiedCount: number;
+    totalCount: number;
+  };
+}
+
+export interface CachedChapterPayload {
+  chapterKey: string;
+  questions: Question[];
+  timestamp: number;
+}
+
+const CHAPTER_SUMMARY_KEY = 'bams_chapter_counts_summary_v1';
+const CHAPTER_CACHE_PREFIX = 'bams_ch_cache_';
+const CHAPTER_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+const _inMemoryChapterCache: Record<string, CachedChapterPayload> = {};
+let _inMemorySummary: ChapterCountsSummary | null = null;
+
+function normalizeChapterCacheKey(key: string): string {
+  return CHAPTER_CACHE_PREFIX + key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+}
+
+/**
+ * Retrieves the lightweight chapter counts summary from cache.
+ */
+export async function getCachedChapterSummary(): Promise<ChapterCountsSummary | null> {
+  if (_inMemorySummary) return _inMemorySummary;
+  const raw = safeLocalStorageGet(CHAPTER_SUMMARY_KEY);
+  if (raw) {
+    try {
+      _inMemorySummary = JSON.parse(raw);
+      return _inMemorySummary;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Persists the lightweight chapter counts summary in cache.
+ */
+export async function setCachedChapterSummary(summary: ChapterCountsSummary): Promise<boolean> {
+  _inMemorySummary = summary;
+  try {
+    return safeLocalStorageSet(CHAPTER_SUMMARY_KEY, JSON.stringify(summary));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Retrieves a single chapter's questions from the 24-hour cache.
+ * Returns null if not cached or if cache is older than 24 hours.
+ */
+export async function getCachedChapterQuestions(chapterKey: string): Promise<Question[] | null> {
+  const normKey = normalizeChapterCacheKey(chapterKey);
+
+  // Check in-memory first
+  const mem = _inMemoryChapterCache[normKey];
+  if (mem && Date.now() - mem.timestamp < CHAPTER_CACHE_TTL_MS) {
+    return mem.questions;
+  }
+
+  if (!isIndexedDBAvailable()) {
+    return null;
+  }
+
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get(normKey);
+
+        request.onsuccess = () => {
+          const entry = request.result as CachedChapterPayload | undefined;
+          if (entry && entry.questions && Date.now() - entry.timestamp < CHAPTER_CACHE_TTL_MS) {
+            _inMemoryChapterCache[normKey] = entry;
+            resolve(entry.questions);
+          } else {
+            resolve(null);
+          }
+        };
+
+        request.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persists a single chapter's questions in IndexedDB with a 24-hour timestamp.
+ */
+export async function setCachedChapterQuestions(chapterKey: string, questions: Question[]): Promise<boolean> {
+  const normKey = normalizeChapterCacheKey(chapterKey);
+  const payload: CachedChapterPayload = {
+    chapterKey,
+    questions,
+    timestamp: Date.now(),
+  };
+
+  _inMemoryChapterCache[normKey] = payload;
+
+  if (!isIndexedDBAvailable()) {
+    return true;
+  }
+
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.put(payload, normKey);
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  } catch {
+    return false;
+  }
+}

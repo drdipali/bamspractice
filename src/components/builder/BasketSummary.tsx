@@ -60,8 +60,8 @@ export const BasketSummary: React.FC = () => {
 
   // Allocation metrics
   const alloc = useMemo(() => {
-    return allocateQuestions(activeChapters, config);
-  }, [activeChapters, config]);
+    return allocateQuestions(activeChapters, config, practiceMode === 'chapter_verified');
+  }, [activeChapters, config, practiceMode]);
 
   // Distribution options
   const distOptions: { value: DistributionType; label: string }[] = [

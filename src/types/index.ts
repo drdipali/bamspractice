@@ -55,7 +55,9 @@ export interface Chapter {
   n: number | string; // Chapter number
   si?: number;        // Samhita index
   key: string;        // Unique section key e.g. "0-0"
-  qs: Question[];     // Questions for this chapter
+  qs: Question[];     // Questions for this chapter (loaded on demand)
+  verifiedCount?: number; // Lightweight verified question count
+  totalCount?: number;    // Lightweight total question count
 }
 
 export interface SthanaDef {

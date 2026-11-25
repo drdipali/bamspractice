@@ -15,6 +15,16 @@ export function getEligibleQuestions(chapter: Chapter, diffs: Difficulty[]): Que
   return chapter.qs.filter((q) => diffs.includes(q.d));
 }
 
+export function getEligibleQuestionCount(chapter: Chapter, diffs: Difficulty[], isVerifiedOnly = false): number {
+  if (chapter.qs && chapter.qs.length > 0) {
+    return chapter.qs.filter((q) => diffs.includes(q.d)).length;
+  }
+  if (isVerifiedOnly) {
+    return chapter.verifiedCount ?? (chapter.qs ? chapter.qs.length : 0);
+  }
+  return chapter.totalCount ?? chapter.verifiedCount ?? (chapter.qs ? chapter.qs.length : 0);
+}
+
 export interface AllocationResult {
   available: number[];
   allocated: number[] | null;
@@ -24,10 +34,11 @@ export interface AllocationResult {
 
 export function allocateQuestions(
   selectedChapters: Chapter[],
-  config: PracticeConfig
+  config: PracticeConfig,
+  isVerifiedOnly = false
 ): AllocationResult {
   const available = selectedChapters.map(
-    (c) => getEligibleQuestions(c, config.diffs).length
+    (c) => getEligibleQuestionCount(c, config.diffs, isVerifiedOnly)
   );
   const totalEligible = available.reduce((acc, count) => acc + count, 0);
   const N = Math.min(config.total, totalEligible);

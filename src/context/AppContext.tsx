@@ -134,15 +134,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCloudSyncError(err);
       }
 
-      const qList = await backend.getQuestions();
-      const qMap: Record<string | number, Question> = {};
-      qList.forEach((q) => {
-        qMap[q.id] = q;
-      });
-      setAllQuestions(qMap);
-
+      // 1. Load lightweight chapter counts summary without downloading full 30,000 question bank
       const chList = await backend.getChapters();
       setChapters(chList);
+
+      // 2. Only build full in-memory questions map if forceCloudSync was requested or questions are already in memory
+      const qList = await backend.getQuestions();
+      if (qList.length > 0) {
+        const qMap: Record<string | number, Question> = {};
+        qList.forEach((q) => {
+          qMap[q.id] = q;
+        });
+        setAllQuestions((prev) => ({ ...prev, ...qMap }));
+      }
     } catch (e: any) {
       console.warn('Error refreshing cloud questions:', e);
       setCloudSyncError(e?.message || 'Failed to sync cloud questions.');
@@ -330,6 +334,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Query database dynamically for questions matching selected chapters
       // In chapter_verified mode, strictly fetch verified + valid questions only
       const matchingQuestions = await backend.getQuestionsByChapters(selectedChapters, verifiedOnly);
+
+      // Merge on-demand fetched questions into allQuestions state
+      setAllQuestions((prev) => {
+        const next = { ...prev };
+        matchingQuestions.forEach((q) => {
+          next[q.id] = q;
+        });
+        return next;
+      });
 
       // Filter by selected difficulties
       let filtered = matchingQuestions.filter((q) => config.diffs.includes(q.d));

@@ -178,15 +178,21 @@ export const ChapterTree: React.FC = () => {
                     const availableSamhitaChapterIds = samhitaChapters
                       .filter((c) =>
                         isChapterVerifiedOnly
-                          ? c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q))
-                          : c.qs.some(isValidQuestion)
+                          ? (c.verifiedCount !== undefined
+                              ? c.verifiedCount > 0
+                              : c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q)))
+                          : (c.totalCount !== undefined
+                              ? c.totalCount > 0
+                              : (c.verifiedCount !== undefined ? c.verifiedCount > 0 : c.qs.some(isValidQuestion)))
                       )
                       .map((c) => c.id);
 
                     const samhitaVerifiedTotal = samhitaChapters.reduce(
                       (acc, c) =>
                         acc +
-                        c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length,
+                        (c.verifiedCount !== undefined
+                          ? c.verifiedCount
+                          : c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length),
                       0
                     );
 
@@ -280,15 +286,21 @@ export const ChapterTree: React.FC = () => {
                             const availableSthanaChapterIds = sthanaChapters
                               .filter((c) =>
                                 isChapterVerifiedOnly
-                                  ? c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q))
-                                  : c.qs.some(isValidQuestion)
+                                  ? (c.verifiedCount !== undefined
+                                      ? c.verifiedCount > 0
+                                      : c.qs.some((q) => isQuestionChapterVerified(q) && isValidQuestion(q)))
+                                  : (c.totalCount !== undefined
+                                      ? c.totalCount > 0
+                                      : (c.verifiedCount !== undefined ? c.verifiedCount > 0 : c.qs.some(isValidQuestion)))
                               )
                               .map((c) => c.id);
 
                             const sthanaVerifiedTotal = sthanaChapters.reduce(
                               (acc, c) =>
                                 acc +
-                                c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length,
+                                (c.verifiedCount !== undefined
+                                  ? c.verifiedCount
+                                  : c.qs.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q)).length),
                               0
                             );
 
@@ -387,10 +399,15 @@ export const ChapterTree: React.FC = () => {
                                       (q) => isQuestionChapterVerified(q) && isValidQuestion(q)
                                     );
                                     const allValidQs = chapter.qs.filter(isValidQuestion);
-                                    const verifiedCount = verifiedQs.length;
+                                    const verifiedCount =
+                                      chapter.verifiedCount !== undefined ? chapter.verifiedCount : verifiedQs.length;
+                                    const totalCount =
+                                      chapter.totalCount !== undefined
+                                        ? chapter.totalCount
+                                        : (chapter.verifiedCount !== undefined ? chapter.verifiedCount : allValidQs.length);
                                     const hasVerified = verifiedCount > 0;
                                     const isChapterSelectable =
-                                      !isChapterVerifiedOnly || hasVerified;
+                                      isChapterVerifiedOnly ? hasVerified : totalCount > 0;
 
                                     return (
                                       <TouchableOpacity
@@ -466,7 +483,7 @@ export const ChapterTree: React.FC = () => {
                                           ) : (
                                             <View style={styles.mcqPill}>
                                               <Text style={styles.mcqPillText}>
-                                                {allValidQs.length} MCQs
+                                                {totalCount} MCQs
                                               </Text>
                                             </View>
                                           )}
@@ -506,7 +523,7 @@ export const ChapterTree: React.FC = () => {
                         {c.sam} › {c.sth} › {c.name}
                       </Text>
                       <View style={styles.mcqPill}>
-                        <Text style={styles.mcqPillText}>{c.qs.length} MCQs</Text>
+                        <Text style={styles.mcqPillText}>{c.totalCount ?? c.qs.length} MCQs</Text>
                       </View>
                     </TouchableOpacity>
                   );
