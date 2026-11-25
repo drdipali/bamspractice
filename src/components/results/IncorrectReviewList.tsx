@@ -17,6 +17,7 @@ import { THEME, OPTION_LABELS } from '../../constants/theme';
 import { Language, Question, QuizSession } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { isPlaceholderCitation } from '../../utils/chapterMapper';
+import { parseBilingualParts } from '../../utils/spreadsheetHelper';
 import { QuestionStem } from '../quiz/QuestionStem';
 
 interface IncorrectReviewListProps {
@@ -459,13 +460,17 @@ export const IncorrectReviewList: React.FC<IncorrectReviewListProps> = ({
                     const isRightAnswer = optIdx === q.c;
 
                     const hiOptText = q.hi?.o?.[optIdx];
-                    let primaryText = optText;
+                    const parsedOpt = parseBilingualParts(optText, hiOptText);
+                    let primaryText = parsedOpt.en;
                     let subText: string | null = null;
 
-                    if (language === 'hi' && hiOptText) {
-                      primaryText = hiOptText;
-                    } else if (language === 'both' && hiOptText && hiOptText !== optText) {
-                      subText = hiOptText;
+                    if (language === 'hi') {
+                      primaryText = parsedOpt.hi || parsedOpt.en;
+                    } else if (language === 'both') {
+                      primaryText = parsedOpt.en;
+                      if (parsedOpt.hi && parsedOpt.hi !== parsedOpt.en) {
+                        subText = parsedOpt.hi;
+                      }
                     }
 
                     // Determine row style and badge

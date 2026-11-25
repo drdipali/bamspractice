@@ -16,14 +16,16 @@ import {
   AlertTriangle,
   ArrowRight,
   BookOpen,
+  RotateCcw,
+  AlertCircle,
 } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { useApp } from '../../context/AppContext';
 
 export const FullMockTestPanel: React.FC = () => {
-  const { mockBlueprint, startMockTest, statusMessage, allQuestions } = useApp();
+  const { mockBlueprint, startMockTest, statusMessage } = useApp();
   const [isStarting, setIsStarting] = useState(false);
-  const totalAvailableQuestions = Object.keys(allQuestions || {}).length;
+  const [mockError, setMockError] = useState<string | null>(null);
 
   const totalQuestions = mockBlueprint.reduce(
     (sum, item) => sum + (item.weightage_questions || 0),
@@ -32,9 +34,16 @@ export const FullMockTestPanel: React.FC = () => {
   const maxMarks = totalQuestions * 4;
 
   const handleStart = async () => {
+    setMockError(null);
     setIsStarting(true);
     try {
       await startMockTest();
+    } catch (err: any) {
+      console.warn('Mock test generation error:', err);
+      setMockError(
+        err?.message ||
+          'Failed to load live 120 questions from Cloud DB. Please check your internet connection and try again.'
+      );
     } finally {
       setIsStarting(false);
     }
@@ -87,34 +96,58 @@ export const FullMockTestPanel: React.FC = () => {
           </View>
         </View>
 
-        {/* Big Start Exam CTA Button */}
-        {totalAvailableQuestions === 0 ? (
-          <View style={styles.emptyBankBanner}>
-            <AlertTriangle size={18} color="#D97706" />
-            <Text style={styles.emptyBankBannerText}>
-              Question bank is currently empty (0 questions). Upload questions via Admin Console to generate and start mock tests.
-            </Text>
+        {/* Visible Error Banner with Retry */}
+        {mockError ? (
+          <View style={styles.errorBanner}>
+            <View style={styles.errorHeaderRow}>
+              <AlertCircle size={18} color="#DC2626" />
+              <Text style={styles.errorTitle}>Mock Exam Generation Failed</Text>
+            </View>
+            <Text style={styles.errorMsgText}>{mockError}</Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={handleStart}
+              disabled={isStarting}
+              activeOpacity={0.8}
+            >
+              {isStarting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <RotateCcw size={15} color="#FFFFFF" />
+                  <Text style={styles.retryBtnText}>Retry Fetching Exam</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.startBtn, isStarting && styles.startBtnDisabled]}
-            onPress={handleStart}
-            disabled={isStarting}
-            activeOpacity={0.85}
-          >
-            {isStarting ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
-                <Text style={styles.startBtnText}>Start Full Mock Test</Text>
-                <ArrowRight size={18} color="#FFFFFF" />
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+        ) : null}
 
-        {statusMessage ? (
+        {/* Big Start Exam CTA Button */}
+        <TouchableOpacity
+          style={[styles.startBtn, isStarting && styles.startBtnDisabled]}
+          onPress={handleStart}
+          disabled={isStarting}
+          activeOpacity={0.85}
+        >
+          {isStarting ? (
+            <View style={styles.startBtnLoadingRow}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+              <Text style={styles.startBtnText}>Fetching Live 120 Qs from Cloud DB...</Text>
+            </View>
+          ) : (
+            <>
+              <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
+              <Text style={styles.startBtnText}>Start Full Mock Test</Text>
+              <ArrowRight size={18} color="#FFFFFF" />
+            </>
+          )}
+        </TouchableOpacity>
+
+        {isStarting ? (
+          <Text style={styles.loadingTipText}>
+            ⚡ Fetching live 120-question AIAPGET paper from Cloud Question Bank...
+          </Text>
+        ) : statusMessage && !mockError ? (
           <Text style={styles.statusMsgText}>{statusMessage}</Text>
         ) : null}
       </View>
@@ -326,11 +359,64 @@ const styles = StyleSheet.create({
   startBtnDisabled: {
     opacity: 0.7,
   },
+  startBtnLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   startBtnText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+  errorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 12,
+    gap: 8,
+  },
+  errorHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  errorMsgText: {
+    fontSize: 12,
+    color: '#B91C1C',
+    lineHeight: 17,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  loadingTipText: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#166534',
+    textAlign: 'center',
   },
   emptyBankBanner: {
     flexDirection: 'row',

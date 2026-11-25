@@ -21,7 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   const { language, setLanguage, currentUser, logOut, navigateToAdmin, view } = useApp();
 
   const langOptions: { value: Language; label: string }[] = [
-    { value: 'en', label: 'English' },
+    { value: 'en', label: 'En' },
     { value: 'hi', label: 'हिन्दी' },
     { value: 'both', label: 'Both' },
   ];
@@ -70,9 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
             </View>
           )}
 
-          {rightAction ? (
-            <View style={styles.rightActionArea}>{rightAction}</View>
-          ) : (
+          <View style={styles.actionAndLangRow}>
             <View style={styles.langArea}>
               <SegmentedControl
                 options={langOptions}
@@ -81,7 +79,11 @@ export const Header: React.FC<HeaderProps> = ({
                 style={styles.langSegment}
               />
             </View>
-          )}
+
+            {rightAction ? (
+              <View style={styles.rightActionArea}>{rightAction}</View>
+            ) : null}
+          </View>
         </View>
       </View>
     </View>
@@ -165,8 +167,14 @@ const styles = StyleSheet.create({
   logoutBtn: {
     padding: 4,
   },
+  actionAndLangRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   langArea: {
-    minWidth: 160,
+    minWidth: 140,
   },
   langSegment: {
     width: '100%',

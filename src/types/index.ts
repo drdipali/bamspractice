@@ -44,6 +44,10 @@ export interface Question {
     stem: string;
     o: string[];
     explanation?: string;
+    assertionText?: string;
+    reasonText?: string;
+    statement1?: string;
+    statement2?: string;
   };
 }
 

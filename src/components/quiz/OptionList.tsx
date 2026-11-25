@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { CheckCircle2, XCircle } from 'lucide-react-native';
 import { THEME, OPTION_LABELS } from '../../constants/theme';
 import { Language, Question } from '../../types';
+import { parseBilingualParts } from '../../utils/spreadsheetHelper';
 
 interface OptionListProps {
   question: Question;
@@ -37,14 +38,18 @@ export const OptionList: React.FC<OptionListProps> = ({
         }
 
         // Bilingual option text
-        const hiText = question.hi?.o?.[idx];
-        let primaryText = optText;
+        const explicitHi = question.hi?.o?.[idx];
+        const parsedOpt = parseBilingualParts(optText, explicitHi);
+        let primaryText = parsedOpt.en;
         let subText: string | null = null;
 
-        if (language === 'hi' && hiText) {
-          primaryText = hiText;
-        } else if (language === 'both' && hiText && hiText !== optText) {
-          subText = hiText;
+        if (language === 'hi') {
+          primaryText = parsedOpt.hi || parsedOpt.en;
+        } else if (language === 'both') {
+          primaryText = parsedOpt.en;
+          if (parsedOpt.hi && parsedOpt.hi !== parsedOpt.en) {
+            subText = parsedOpt.hi;
+          }
         }
 
         return (

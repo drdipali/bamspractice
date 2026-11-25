@@ -8,10 +8,13 @@ const STORAGE_KEYS = {
   BOOKMARKS: 'bams_bookmarks',
 };
 
-export async function loadLanguage(defaultValue: Language = 'en'): Promise<Language> {
+export async function loadLanguage(defaultValue: Language = 'both'): Promise<Language> {
   try {
     const val = await AsyncStorage.getItem(STORAGE_KEYS.LANG);
-    return (val as Language) || defaultValue;
+    if (val === 'en' || val === 'hi' || val === 'both') {
+      return val;
+    }
+    return defaultValue;
   } catch {
     return defaultValue;
   }

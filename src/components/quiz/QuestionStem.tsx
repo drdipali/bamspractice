@@ -3,7 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { ArrowRight, Layers, HelpCircle, Columns } from 'lucide-react-native';
 import { THEME } from '../../constants/theme';
 import { Language, Question } from '../../types';
-import { extractStatementsFromStem, extractARFromStem } from '../../utils/spreadsheetHelper';
+import {
+  extractStatementsFromStem,
+  extractARFromStem,
+  parseBilingualParts,
+} from '../../utils/spreadsheetHelper';
 
 interface QuestionStemProps {
   question: Question;
@@ -36,23 +40,42 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
       }
     }
 
+    const parsedStem = parseBilingualParts(effectiveStem, hiStem);
+    const parsedA = parseBilingualParts(aText || '', question.hi?.assertionText);
+    const parsedR = parseBilingualParts(rText || '', question.hi?.reasonText);
+
     return (
       <View style={styles.container}>
         {renderBadge('Assertion & Reason', '#FEF9C3', '#854D0E')}
 
         {/* Stem Prompt */}
-        <Text style={styles.promptText}>
-          {language === 'hi' && hiStem ? hiStem : effectiveStem}
-        </Text>
+        {language === 'both' && parsedStem.hi ? (
+          <View style={styles.bilingualContainer}>
+            <Text style={styles.enStemText}>{parsedStem.en}</Text>
+            <View style={styles.divider} />
+            <Text style={styles.hiSubStemText}>{parsedStem.hi}</Text>
+          </View>
+        ) : (
+          <Text style={styles.promptText}>
+            {language === 'hi' ? parsedStem.hi || parsedStem.en : parsedStem.en}
+          </Text>
+        )}
 
         {/* Assertion Box */}
         <View style={styles.assertionCard}>
           <View style={styles.statementBadgeA}>
             <Text style={styles.statementBadgeTextA}>Assertion (A)</Text>
           </View>
-          <Text style={styles.statementContent}>
-            {aText || 'Assertion statement not specified.'}
-          </Text>
+          {language === 'both' && parsedA.hi ? (
+            <View>
+              <Text style={styles.statementContent}>{parsedA.en}</Text>
+              <Text style={[styles.statementContent, styles.statementContentHi]}>{parsedA.hi}</Text>
+            </View>
+          ) : (
+            <Text style={styles.statementContent}>
+              {(language === 'hi' ? parsedA.hi || parsedA.en : parsedA.en) || 'Assertion statement not specified.'}
+            </Text>
+          )}
         </View>
 
         {/* Reason Box */}
@@ -60,13 +83,24 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
           <View style={styles.statementBadgeR}>
             <Text style={styles.statementBadgeTextR}>Reason (R)</Text>
           </View>
-          <Text style={styles.statementContent}>
-            {rText || 'Reason statement not specified.'}
-          </Text>
+          {language === 'both' && parsedR.hi ? (
+            <View>
+              <Text style={styles.statementContent}>{parsedR.en}</Text>
+              <Text style={[styles.statementContent, styles.statementContentHi]}>{parsedR.hi}</Text>
+            </View>
+          ) : (
+            <Text style={styles.statementContent}>
+              {(language === 'hi' ? parsedR.hi || parsedR.en : parsedR.en) || 'Reason statement not specified.'}
+            </Text>
+          )}
         </View>
 
         <Text style={styles.subPromptText}>
-          In light of the above statements, choose the most appropriate answer from the options below:
+          {language === 'hi'
+            ? 'उपर्युक्त कथनों के आलोक में, नीचे दिए गए विकल्पों में से सबसे उपयुक्त उत्तर चुनें:'
+            : language === 'both'
+            ? 'In light of the above statements, choose the most appropriate answer from the options below: / उपर्युक्त कथनों के आलोक में, नीचे दिए गए विकल्पों में से सबसे उपयुक्त उत्तर चुनें:'
+            : 'In light of the above statements, choose the most appropriate answer from the options below:'}
         </Text>
       </View>
     );
@@ -75,13 +109,22 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
   // Match the Pair Rendering
   if (qType === 'match_the_pair') {
     const pairs = question.matchPairs || [];
+    const parsedStem = parseBilingualParts(enStem, hiStem);
     return (
       <View style={styles.container}>
         {renderBadge('Match the Pair', '#DBEAFE', '#1E40AF')}
 
-        <Text style={styles.promptText}>
-          {language === 'hi' && hiStem ? hiStem : enStem}
-        </Text>
+        {language === 'both' && parsedStem.hi ? (
+          <View style={styles.bilingualContainer}>
+            <Text style={styles.enStemText}>{parsedStem.en}</Text>
+            <View style={styles.divider} />
+            <Text style={styles.hiSubStemText}>{parsedStem.hi}</Text>
+          </View>
+        ) : (
+          <Text style={styles.promptText}>
+            {language === 'hi' ? parsedStem.hi || parsedStem.en : parsedStem.en}
+          </Text>
+        )}
 
         {/* 2-Column Matching Table */}
         <View style={styles.matchTable}>
@@ -109,7 +152,11 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
         </View>
 
         <Text style={styles.subPromptText}>
-          Choose the correct matching code from the options given below:
+          {language === 'hi'
+            ? 'नीचे दिए गए विकल्पों में से सही सुमेलन कोड का चयन करें:'
+            : language === 'both'
+            ? 'Choose the correct matching code from the options given below: / नीचे दिए गए विकल्पों में से सही सुमेलन कोड का चयन करें:'
+            : 'Choose the correct matching code from the options given below:'}
         </Text>
       </View>
     );
@@ -129,53 +176,95 @@ export const QuestionStem: React.FC<QuestionStemProps> = ({ question, language }
       }
     }
 
+    const parsedStem = parseBilingualParts(effectiveStem, hiStem);
+    const parsedS1 = parseBilingualParts(s1 || '', question.hi?.statement1);
+    const parsedS2 = parseBilingualParts(s2 || '', question.hi?.statement2);
+
     return (
       <View style={styles.container}>
         {renderBadge('Statement Type', '#E0E7FF', '#4338CA')}
 
-        <Text style={styles.promptText}>
-          {language === 'hi' && hiStem ? hiStem : effectiveStem}
-        </Text>
+        {language === 'both' && parsedStem.hi ? (
+          <View style={styles.bilingualContainer}>
+            <Text style={styles.enStemText}>{parsedStem.en}</Text>
+            <View style={styles.divider} />
+            <Text style={styles.hiSubStemText}>{parsedStem.hi}</Text>
+          </View>
+        ) : (
+          <Text style={styles.promptText}>
+            {language === 'hi' ? parsedStem.hi || parsedStem.en : parsedStem.en}
+          </Text>
+        )}
 
         <View style={styles.assertionCard}>
           <View style={[styles.statementBadgeA, { backgroundColor: '#E0E7FF' }]}>
             <Text style={[styles.statementBadgeTextA, { color: '#3730A3' }]}>Statement I</Text>
           </View>
-          <Text style={styles.statementContent}>
-            {s1 || 'Statement I not specified.'}
-          </Text>
+          {language === 'both' && parsedS1.hi ? (
+            <View>
+              <Text style={styles.statementContent}>{parsedS1.en}</Text>
+              <Text style={[styles.statementContent, styles.statementContentHi]}>{parsedS1.hi}</Text>
+            </View>
+          ) : (
+            <Text style={styles.statementContent}>
+              {(language === 'hi' ? parsedS1.hi || parsedS1.en : parsedS1.en) || 'Statement I not specified.'}
+            </Text>
+          )}
         </View>
 
         <View style={[styles.reasonCard, { borderLeftColor: '#4338CA' }]}>
           <View style={[styles.statementBadgeR, { backgroundColor: '#EEF2FF' }]}>
             <Text style={[styles.statementBadgeTextR, { color: '#4338CA' }]}>Statement II</Text>
           </View>
-          <Text style={styles.statementContent}>
-            {s2 || 'Statement II not specified.'}
-          </Text>
+          {language === 'both' && parsedS2.hi ? (
+            <View>
+              <Text style={styles.statementContent}>{parsedS2.en}</Text>
+              <Text style={[styles.statementContent, styles.statementContentHi]}>{parsedS2.hi}</Text>
+            </View>
+          ) : (
+            <Text style={styles.statementContent}>
+              {(language === 'hi' ? parsedS2.hi || parsedS2.en : parsedS2.en) || 'Statement II not specified.'}
+            </Text>
+          )}
         </View>
 
         <Text style={styles.subPromptText}>
-          In light of the above statements, choose the most appropriate answer:
+          {language === 'hi'
+            ? 'उपर्युक्त कथनों के आलोक में, सबसे उपयुक्त उत्तर चुनें:'
+            : language === 'both'
+            ? 'In light of the above statements, choose the most appropriate answer: / उपर्युक्त कथनों के आलोक में, सबसे उपयुक्त उत्तर चुनें:'
+            : 'In light of the above statements, choose the most appropriate answer:'}
         </Text>
       </View>
     );
   }
 
   // Standard MCQ
+  const parsed = parseBilingualParts(question.stem, question.hi?.stem);
+
+  if (language === 'hi') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.hiStemText}>{parsed.hi || parsed.en}</Text>
+      </View>
+    );
+  }
+
+  if (language === 'both' && parsed.hi) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.bilingualContainer}>
+          <Text style={styles.enStemText}>{parsed.en}</Text>
+          <View style={styles.divider} />
+          <Text style={styles.hiSubStemText}>{parsed.hi}</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {language === 'hi' && hiStem ? (
-        <Text style={styles.hiStemText}>{hiStem}</Text>
-      ) : language === 'both' && hiStem ? (
-        <View style={styles.bilingualContainer}>
-          <Text style={styles.enStemText}>{enStem}</Text>
-          <View style={styles.divider} />
-          <Text style={styles.hiSubStemText}>{hiStem}</Text>
-        </View>
-      ) : (
-        <Text style={styles.enStemText}>{enStem}</Text>
-      )}
+      <Text style={styles.enStemText}>{parsed.en}</Text>
     </View>
   );
 };
@@ -262,6 +351,13 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: THEME.colors.ink,
     fontWeight: '500',
+  },
+  statementContentHi: {
+    color: '#334155',
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 4,
   },
   matchTable: {
     backgroundColor: '#F8FAFC',

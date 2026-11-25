@@ -477,6 +477,66 @@ export function parseStatementType(rawText: string): ExtractedStatements {
 
 export const extractStatementsFromStem = parseStatementType;
 
+/**
+ * Parses a potentially bilingual string (e.g. "English text / हिन्दी पाठ")
+ * into separated English and Hindi parts, with support for explicit Hindi overrides.
+ */
+export function parseBilingualParts(
+  text: string,
+  explicitHi?: string
+): { en: string; hi: string | null; isBilingual: boolean } {
+  const cleanExplicitHi = (explicitHi || '').trim();
+  if (cleanExplicitHi) {
+    return {
+      en: (text || '').trim(),
+      hi: cleanExplicitHi,
+      isBilingual: true,
+    };
+  }
+
+  if (!text) {
+    return { en: '', hi: null, isBilingual: false };
+  }
+
+  const trimmed = text.trim();
+
+  // Pattern 1: Explicit slash delimiter with spaces or newlines: "English / Hindi"
+  const slashMatch = trimmed.match(/\s+[\/\u2044]\s+/);
+  if (slashMatch && slashMatch.index !== undefined) {
+    const part1 = trimmed.slice(0, slashMatch.index).trim();
+    const part2 = trimmed.slice(slashMatch.index + slashMatch[0].length).trim();
+    if (part1 && part2) {
+      // Determine which part has Devanagari Hindi
+      const dev1 = /[\u0900-\u097F]/.test(part1);
+      const dev2 = /[\u0900-\u097F]/.test(part2);
+      if (!dev1 && dev2) {
+        return { en: part1, hi: part2, isBilingual: true };
+      } else if (dev1 && !dev2) {
+        return { en: part2, hi: part1, isBilingual: true };
+      }
+      return { en: part1, hi: part2, isBilingual: true };
+    }
+  }
+
+  // Pattern 2: Multiline bilingual text (English line followed by Devanagari Hindi line)
+  const lines = trimmed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 2) {
+    const dev0 = /[\u0900-\u097F]/.test(lines[0]);
+    const dev1 = /[\u0900-\u097F]/.test(lines[1]);
+    if (!dev0 && dev1) {
+      return { en: lines[0], hi: lines[1], isBilingual: true };
+    } else if (dev0 && !dev1) {
+      return { en: lines[1], hi: lines[0], isBilingual: true };
+    }
+  }
+
+  return {
+    en: trimmed,
+    hi: null,
+    isBilingual: false,
+  };
+}
+
 export interface ExtractedAssertionReason {
   assertion: string;
   reason: string;

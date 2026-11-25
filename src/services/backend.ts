@@ -606,8 +606,26 @@ class BackendService {
       const storedFromIdb = await getStoredQuestions();
       let customQuestions: Question[] = [];
 
+      const isSeedId = (id: any): boolean => {
+        if (id === undefined || id === null) return false;
+        const s = String(id).toLowerCase();
+        return (
+          s.startsWith('q_seed_') ||
+          s.startsWith('sample_') ||
+          s.startsWith('demo_') ||
+          s.startsWith('seed_') ||
+          /^q_00[1-9]/.test(s)
+        );
+      };
+
       if (storedFromIdb && storedFromIdb.length > 0) {
-        customQuestions = storedFromIdb;
+        const withoutSeeds = storedFromIdb.filter((q) => !isSeedId(q.id));
+        if (withoutSeeds.length !== storedFromIdb.length) {
+          customQuestions = withoutSeeds;
+          await setStoredQuestions(withoutSeeds).catch(() => {});
+        } else {
+          customQuestions = storedFromIdb;
+        }
       } else {
         // Fallback: check legacy AsyncStorage keys once to migrate existing desktop questions
         try {
@@ -618,8 +636,9 @@ class BackendService {
           if (legacyStored) {
             const parsed = JSON.parse(legacyStored);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              customQuestions = parsed;
-              await setStoredQuestions(parsed);
+              const withoutSeeds = parsed.filter((q) => !isSeedId(q.id));
+              customQuestions = withoutSeeds;
+              await setStoredQuestions(withoutSeeds).catch(() => {});
               // Clean up bulky legacy keys from localStorage to prevent QuotaExceededError
               await AsyncStorage.removeItem(CUSTOM_QUESTIONS_STORAGE_KEY).catch(() => {});
               await AsyncStorage.removeItem('bams_custom_questions_v1').catch(() => {});
@@ -670,7 +689,7 @@ class BackendService {
 
       // Apply overrides and deletions
       const baseQuestions = INITIAL_SEED_QUESTIONS
-        .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
+        .filter((q) => !this.deletedQuestionIds.has(String(q.id)) && !isSeedId(q.id))
         .map((q) => {
           const sId = String(q.id);
           const edited = this.editedQuestions[sId];
@@ -687,7 +706,7 @@ class BackendService {
         });
 
       const activeCustom = customQuestions
-        .filter((q) => !this.deletedQuestionIds.has(String(q.id)))
+        .filter((q) => !this.deletedQuestionIds.has(String(q.id)) && !isSeedId(q.id))
         .map((q) => {
           const sId = String(q.id);
           const edited = this.editedQuestions[sId];
@@ -703,7 +722,7 @@ class BackendService {
           };
         });
 
-      this.questions = [...activeCustom, ...baseQuestions];
+      this.questions = [...activeCustom, ...baseQuestions].filter((q) => !isSeedId(q.id));
 
       // Pre-warm lightweight chapter counts summary without downloading full 30,000+ question bank
       await this.getChapterCountsSummary().catch(() => {});
@@ -1150,28 +1169,54 @@ class BackendService {
 
   /**
    * Fetches only the required batch of mixed practice questions (e.g. 50 MCQs).
+   * Strictly purges any seed or demo questions and fetches live questions from Cloud DB if needed.
    */
   async getMixedPracticeQuestions(count = 50): Promise<Question[]> {
     await this.initialize();
 
-    if (isRemoteSupabaseConfigured()) {
-      try {
-        const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
-        const { data, error } = await client
-          .from('questions')
-          .select('*')
-          .limit(count);
-        if (!error && data && data.length > 0) {
-          return data.filter(isValidQuestion);
+    const isSeed = (q: Question) => {
+      const s = String(q.id || '').toLowerCase();
+      return (
+        s.startsWith('q_seed_') ||
+        s.startsWith('sample_') ||
+        s.startsWith('demo_') ||
+        s.startsWith('seed_') ||
+        /^q_00[1-9]/.test(s)
+      );
+    };
+
+    let pool = this.questions.filter((q) => isValidQuestion(q) && !isSeed(q));
+
+    if (pool.length < count) {
+      if (isRemoteSupabaseConfigured()) {
+        try {
+          const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+          const { data, error } = await client
+            .from('questions')
+            .select('*')
+            .limit(count * 2);
+          if (!error && data && data.length > 0) {
+            const valid = data.filter((q: Question) => isValidQuestion(q) && !isSeed(q));
+            if (valid.length >= count) {
+              return valid.sort(() => Math.random() - 0.5).slice(0, count);
+            }
+          }
+        } catch (e) {
+          console.warn('[Backend] getMixedPracticeQuestions Supabase error:', e);
         }
-      } catch (e) {
-        console.warn('[Backend] getMixedPracticeQuestions error:', e);
       }
+
+      await this.syncFromCloud(true).catch(() => {});
+      pool = this.questions.filter((q) => isValidQuestion(q) && !isSeed(q));
     }
 
-    const verified = this.questions.filter((q) => isQuestionChapterVerified(q) && isValidQuestion(q));
-    const pool = verified.length >= count ? verified : this.questions.filter(isValidQuestion);
-    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    if (pool.length === 0) {
+      throw new Error('Unable to fetch live practice questions from Cloud DB. Please check your internet connection.');
+    }
+
+    const verified = pool.filter(isQuestionChapterVerified);
+    const candidatePool = verified.length >= count ? verified : pool;
+    const shuffled = [...candidatePool].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, count);
   }
 
@@ -1660,30 +1705,65 @@ class BackendService {
 
   /**
    * Generates a 120-question Mock Exam strictly adhering to the blueprint weightage.
-   * If a subject doesn't have enough questions, it backfills from the overall valid pool
-   * to guarantee exactly 120 questions.
+   * Fetches directly from Cloud DB, strictly purges any 14 demo/seed questions,
+   * and backfills from the overall valid pool to guarantee exactly 120 questions.
    */
   async generateMockTestQuestions(customBlueprint?: MockBlueprintItem[]): Promise<Question[]> {
     await this.initialize();
     const activeBlueprint = customBlueprint && customBlueprint.length > 0 ? customBlueprint : this.mockBlueprint;
 
-    if (this.questions.length === 0) {
+    const isSeed = (q: Question) => {
+      const s = String(q.id || '').toLowerCase();
+      return (
+        s.startsWith('q_seed_') ||
+        s.startsWith('sample_') ||
+        s.startsWith('demo_') ||
+        s.startsWith('seed_') ||
+        /^q_00[1-9]/.test(s)
+      );
+    };
+
+    let allValid = this.questions.filter((q) => isValidQuestion(q) && !isSeed(q));
+
+    // If local memory has fewer than 120 live questions, fetch directly from Cloud DB
+    if (allValid.length < 120) {
       if (isRemoteSupabaseConfigured()) {
         try {
+          console.log('[MockTest] Querying Supabase Cloud DB for live questions...');
           const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
-          const { data } = await client.from('questions').select('*').limit(150);
-          if (data && data.length > 0) {
-            this.questions = data;
+          const { data, error } = await client
+            .from('questions')
+            .select('*')
+            .limit(500);
+          if (!error && data && data.length > 0) {
+            const validRemote = data.filter((q: Question) => isValidQuestion(q) && !isSeed(q));
+            if (validRemote.length > 0) {
+              const seen = new Set(this.questions.map((q) => String(q.id)));
+              const newToAdd = validRemote.filter((q) => !seen.has(String(q.id)));
+              this.questions = [...this.questions, ...newToAdd];
+              allValid = this.questions.filter((q) => isValidQuestion(q) && !isSeed(q));
+            }
           }
-        } catch {}
+        } catch (e) {
+          console.warn('[MockTest] Supabase fetch error:', e);
+        }
       }
-      if (this.questions.length === 0) {
-        await this.syncFromCloud(false).catch(() => {});
+
+      if (allValid.length < 120) {
+        console.log('[MockTest] Fetching live 6,952+ question bank from Google Cloud Sheet...');
+        const syncRes = await this.syncFromCloud(true);
+        if (syncRes.error && allValid.length === 0) {
+          throw new Error(syncRes.error);
+        }
+        allValid = this.questions.filter((q) => isValidQuestion(q) && !isSeed(q));
       }
     }
 
-    // Filter all valid questions
-    const allValid = this.questions.filter((q) => isValidQuestion(q));
+    if (allValid.length === 0) {
+      throw new Error(
+        'Unable to fetch live mock exam questions from Cloud DB. Please check your internet connection and try again.'
+      );
+    }
 
     // Group valid questions into blueprint subject buckets
     const subjectBuckets: Record<string, Question[]> = {};

@@ -103,7 +103,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
-  const [language, setLangState] = useState<Language>('en');
+  const [language, setLangState] = useState<Language>('both');
   const [practiceMode, setPracticeMode] = useState<StudentPracticeMode>('chapter_verified');
   const [view, setView] = useState<ActiveView>('auth');
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -158,7 +158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Initial load from storage & backend authentication & cloud questions
   useEffect(() => {
     (async () => {
-      const storedLang = await loadLanguage('en');
+      const storedLang = await loadLanguage('both');
       setLangState(storedLang);
 
       // Check existing auth session
@@ -391,11 +391,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const startMockTest = async () => {
+    setStatusMessage('Connecting to Cloud DB to assemble live 120-question AIAPGET paper...');
     try {
       const mockQs = await backend.generateMockTestQuestions(mockBlueprint);
-      if (mockQs.length === 0) {
-        setStatusMessage('No valid questions found to generate mock test.');
-        return;
+      if (!mockQs || mockQs.length === 0) {
+        throw new Error('No valid questions found in Cloud DB to assemble 120-question mock test.');
       }
 
       setSession({
@@ -412,9 +412,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       setView('quiz');
       setStatusMessage('');
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Failed to start mock test:', e);
-      setStatusMessage('Error generating mock test. Please try again.');
+      const msg = e?.message || 'Error generating mock test. Please check your internet connection.';
+      setStatusMessage(msg);
+      throw e;
     }
   };
 
