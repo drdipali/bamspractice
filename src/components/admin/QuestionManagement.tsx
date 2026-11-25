@@ -282,6 +282,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     if (schema && schema.sthanas.length > 0) {
       return schema.sthanas;
     }
+    const charakSchema = CLASSICAL_SAMHITA_SCHEMA['Charaka Samhita'];
+    if (charakSchema && charakSchema.sthanas.length > 0) {
+      return charakSchema.sthanas;
+    }
     return [{ name: 'General', maxChapters: 1 }];
   }, [editDropdownSamhita]);
 
@@ -316,7 +320,40 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
 
   // Handlers for Chapter Mapping Editor in Edit Modal
   const handleStartEditChapterMapping = () => {
-    const parsed = parseChapterMappingString(chapterName);
+    let effectiveTag = chapterName;
+    // If the question is currently Uncategorized, check if citation provides an accurate classical mapping
+    if (
+      (!effectiveTag ||
+        effectiveTag.toLowerCase().includes('uncategorized') ||
+        effectiveTag.toLowerCase().includes('needs review')) &&
+      refSource
+    ) {
+      const detected = detectChapterInfo(refSource, explanation, {}, stem);
+      if (detected.subject && !detected.subject.toLowerCase().includes('uncategorized')) {
+        effectiveTag = detected.fullChapterName;
+      }
+    }
+
+    let parsed = parseChapterMappingString(effectiveTag);
+
+    // If still uncategorized or not in schema, strictly auto-default to Charaka Samhita > Sutrasthana > Chapter 1
+    if (
+      !EDIT_MODAL_SAMHITA_OPTIONS.includes(parsed.samhita) ||
+      parsed.samhita.toLowerCase().includes('uncategorized') ||
+      parsed.samhita.toLowerCase().includes('needs review') ||
+      !CLASSICAL_SAMHITA_SCHEMA[parsed.samhita]
+    ) {
+      parsed.samhita = 'Charaka Samhita';
+      const schema = CLASSICAL_SAMHITA_SCHEMA['Charaka Samhita'];
+      const sthMatch = schema.sthanas.find(
+        (s) => s.name.toLowerCase() === parsed.sthana.toLowerCase()
+      );
+      parsed.sthana = sthMatch ? sthMatch.name : schema.sthanas[0].name;
+      if (!parsed.chapter || parsed.chapter.toLowerCase().includes('general')) {
+        parsed.chapter = 'Chapter 1';
+      }
+    }
+
     setEditDropdownSamhita(parsed.samhita);
     setEditDropdownSthana(parsed.sthana);
     setEditDropdownChapter(parsed.chapter);

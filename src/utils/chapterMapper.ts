@@ -32,8 +32,8 @@ export function extractCitationPrefix(citation?: string, explanation?: string, s
   // 1. If explicit citation / reference column exists:
   if (citation && citation.trim()) {
     const clean = citation.trim();
-    // Stop at verse delimiters like ॥, |, or newline if they appear early
-    const verseBreak = clean.search(/[॥|\n]/);
+    // Stop at verse delimiters like ॥, |, ।, comma, semicolon or newline if they appear early
+    const verseBreak = clean.search(/[॥|।\n,;]/);
     if (verseBreak > 0 && verseBreak <= 75) {
       return clean.slice(0, verseBreak).trim();
     }
@@ -43,8 +43,8 @@ export function extractCitationPrefix(citation?: string, explanation?: string, s
   // 2. Check if stem starts with a classical citation or shloka header
   if (stem && stem.trim()) {
     const cleanStem = stem.trim();
-    if (/^(?:su|ss|ca|cha|cs|ah|as|va|vr|सु|च|अष्टाङ्ग|अष्टांग|सुश्रुत|चरक|वाग्भट|sushrut|charak|ashtang|vagbhat)/i.test(cleanStem)) {
-      const verseBreak = cleanStem.search(/[॥|\n]/);
+    if (/^(?:su|ss|ca|cha|cs|ah|as|va|vr|सु|च|अ\s*[-–.0०\u0970]?\s*हृ|अ\s*[-–.0०\u0970]?\s*सं|अष्टाङ्ग|अष्टांग|सुश्रुत|चरक|वाग्भट|sushrut|charak|ashtang|vagbhat)/i.test(cleanStem)) {
+      const verseBreak = cleanStem.search(/[॥|।\n,;]/);
       if (verseBreak > 0 && verseBreak <= 75) {
         return cleanStem.slice(0, verseBreak).trim();
       }
@@ -56,7 +56,7 @@ export function extractCitationPrefix(citation?: string, explanation?: string, s
   if (explanation && explanation.trim()) {
     const cleanExp = explanation.trim();
     const mExplicit = cleanExp.match(
-      /(?:(?:su|ca|cha|ah|as|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*\d{1,3}\s*[\/:]\s*\d+)|(?:(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*\d{1,3})/i
+      /(?:(?:su|ca|cha|ah|as|cs|ss|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?\s*(?:su|ni|vi|sha|in|ci|chi|ka|si|ut|sutra|सूत्र|सू|नि|वि|शा|इन्|इ|चि|क|सि|उ)?\s*[-–.0०\u0970]?\s*\d{1,3}\s*[\/:]\s*\d+)|(?:(?:sūtrasthānam|sutrasthanam|सूत्रस्थानम्|सूत्रस्थान|chikitsasthanam|चिकित्सास्थानम्|uttaratantra|उत्तरतन्त्र|nidana|निदान|sharira|शारीर|adhyaya|अध्याय)\s*[:\-–]?\s*\d{1,3})/i
     );
     if (mExplicit && mExplicit[0]) {
       return mExplicit[0].trim();
@@ -111,9 +111,10 @@ export function detectChapterInfo(
 
   // Sushruta Samhita check
   if (
-    /(?:\b(?:su|ss)\s*[-–.]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\b)|\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:su|ss|सु)\s*[-–.0०\u0970]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
       searchPrefix
     ) ||
+    /\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(searchPrefix) ||
     /\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(fullNormalizedRef)
   ) {
     subject = 'Sushruta Samhita';
@@ -124,9 +125,10 @@ export function detectChapterInfo(
   }
   // Charaka Samhita check
   else if (
-    /(?:\b(?:ca|cha|cs)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि)\b)|\b(?:charak\w*|caraka\w*|चरक)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:ca|cha|cs|च)\s*[-–.0०\u0970]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|इ|चि|क|सि)\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
       searchPrefix
     ) ||
+    /\b(?:charak\w*|caraka\w*|चरक)\b/i.test(searchPrefix) ||
     /\b(?:charak\w*|caraka\w*|चरक)\b/i.test(fullNormalizedRef)
   ) {
     subject = 'Charaka Samhita';
@@ -137,7 +139,10 @@ export function detectChapterInfo(
   }
   // Ashtanga Hridaya check
   else if (
-    /(?:\b(?:a\s*\.\s*h\.?|a\s*\.\s*s\.?|ah|as)\s*[-–.]?\s*(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)\b)|\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:अ\s*[-–.0०\u0970]?\s*हृ|अ\s*[-–.0०\u0970]?\s*सं|a\s*\.?\s*h\.?|a\s*\.?\s*s\.?|ah|as)\s*[-–.0०\u0970]?(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)?\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
+      searchPrefix
+    ) ||
+    /\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
       searchPrefix
     ) ||
     /\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|vagbhat\w*|वाग्भट)\b/i.test(fullNormalizedRef)
@@ -149,18 +154,35 @@ export function detectChapterInfo(
     subjectSource = 'filename';
   }
   // Sharangadhara Samhita check
-  else if (/sharang|śārṅga|शार्ङ्गधर|शारंगधर/i.test(searchPrefix) || /sharang|शार्ङ्गधर/i.test(combinedContext)) {
+  else if (
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:शा\s*[-–.0०\u0970]?\s*सं|sharang|śārṅga|शार्ङ्गधर|शारंगधर)/i.test(searchPrefix) ||
+    /sharang|शार्ङ्गधर/i.test(combinedContext)
+  ) {
     subject = 'Sharangadhara Samhita';
     subjectSource = 'citation';
   }
   // Madhava Nidana check
-  else if (/madhava|mādhava|माधव/i.test(searchPrefix) || /madhav|माधव/i.test(combinedContext)) {
+  else if (
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:मा\s*[-–.0०\u0970]?\s*नि|madhava|mādhava|माधव)/i.test(searchPrefix) ||
+    /madhav|माधव/i.test(combinedContext)
+  ) {
     subject = 'Madhava Nidana';
     subjectSource = 'citation';
   }
   // Kashyapa Samhita check
-  else if (/kashyap|kāśyapa|काश्यप/i.test(searchPrefix) || /kashyap|काश्यप/i.test(combinedContext)) {
+  else if (
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:का\s*[-–.0०\u0970]?\s*सं|kashyap|kāśyapa|काश्यप)/i.test(searchPrefix) ||
+    /kashyap|काश्यप/i.test(combinedContext)
+  ) {
     subject = 'Kashyapa Samhita';
+    subjectSource = 'citation';
+  }
+  // Bhavaprakasha check
+  else if (
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:भा\s*[-–.0०\u0970]?\s*प्र|bhavaprakash|भावप्रकाश)/i.test(searchPrefix) ||
+    /bhavaprakash|भावप्रकाश/i.test(combinedContext)
+  ) {
+    subject = 'Bhavaprakasha';
     subjectSource = 'citation';
   }
   // Dravyaguna
@@ -190,7 +212,7 @@ export function detectChapterInfo(
   let sthana = '';
 
   if (
-    /uttaratantra|uttaratantram|uttarasthana|uttarasthanam|uttara|uttar|\but\b|उत्तरتन्त्र|उत्तरतन्त्र|उत्तरस्थान|उत्तर|su\.?\s*ut|ah\.?\s*ut|ss\s*[-–.]?\s*ut|सु\.?\s*उ/i.test(
+    /uttaratantra|uttaratantram|uttarasthana|uttarasthanam|uttara|uttar|\but\b|उत्तरتन्त्र|उत्तरतन्त्र|उत्तरस्थान|उत्तर|(?:su|ss|ah|as|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:ut|उत्तर|उ)/i.test(
       searchPrefix
     )
   ) {
@@ -212,31 +234,31 @@ export function detectChapterInfo(
       sthana = 'Uttaratantra';
     }
   } else if (
-    /nidanasthana|nidanasthanam|nidana|\bni\b|निदानस्थानम्|निदानस्थान|निदान|ca\.?\s*ni|su\.?\s*ni|ah\.?\s*ni|च\.?\s*नि|सु\.?\s*नि/i.test(
+    /nidanasthana|nidanasthanam|nidana|\bni\b|निदानस्थानम्|निदानस्थान|निदान|(?:ca|cs|su|ss|ah|as|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:ni|निदान|नि)/i.test(
       searchPrefix
     )
   ) {
     sthana = 'Nidanasthana';
   } else if (
-    /vimanasthana|vimanasthanam|vimana|\bvi\b|विमानस्थानम्|विमानस्थान|विमान|ca\.?\s*vi|च\.?\s*वि/i.test(
+    /vimanasthana|vimanasthanam|vimana|\bvi\b|विमानस्थानम्|विमानस्थान|विमान|(?:ca|cs|च)\s*[-–.0०\u0970]?(?:vi|विमान|वि)/i.test(
       searchPrefix
     )
   ) {
     sthana = 'Vimanasthana';
   } else if (
-    /sharirasthana|sarirasthana|sharirasthanam|sarirasthanam|sharira|sarira|\bsha\b|शारीरस्थानम्|शारीरस्थान|शारीर|ca\.?\s*sha|su\.?\s*sha|ah\.?\s*sha|च\.?\s*शा|सु\.?\s*शा/i.test(
+    /sharirasthana|sarirasthana|sharirasthanam|sarirasthanam|sharira|sarira|\bsha\b|शारीरस्थानम्|शारीरस्थान|शारीर|(?:ca|cs|su|ss|ah|as|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:sha|sar|शारीर|शा)/i.test(
       searchPrefix
     )
   ) {
     sthana = 'Sharirasthana';
   } else if (
-    /indriyasthana|indriyasthanam|indriya|\bin\b|इन्द्रियस्थानम्|इन्द्रियस्थान|इन्द्रिय|ca\.?\s*in|च\.?\s*इन्/i.test(
+    /indriyasthana|indriyasthanam|indriya|\bin\b|इन्द्रियस्थानम्|इन्द्रियस्थान|इन्द्रिय|(?:ca|cs|च)\s*[-–.0०\u0970]?(?:in|इन्द्रिय|इन्|इ)/i.test(
       searchPrefix
     )
   ) {
     sthana = 'Indriyasthana';
   } else if (
-    /chikitsasthana|cikitsasthana|chikitsasthanam|cikitsasthanam|chikitsa|cikitsa|\bci\b|\bchi\b|चिकित्सास्थानम्|चिकित्सास्थान|चिकित्सा|ca\.?\s*ci|ca\.?\s*chi|su\.?\s*ci|su\.?\s*chi|च\.?\s*चि|सु\.?\s*चि/i.test(
+    /chikitsasthana|cikitsasthana|chikitsasthanam|cikitsasthanam|chikitsa|cikitsa|\bci\b|\bchi\b|चिकित्सास्थानम्|चिकित्सास्थान|चिकित्सा|(?:ca|cs|su|ss|ah|as|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:ci|chi|चिकित्सा|चि)/i.test(
       searchPrefix
     )
   ) {
@@ -248,13 +270,13 @@ export function detectChapterInfo(
   ) {
     sthana = 'Kalpasiddhisthana';
   } else if (
-    /kalpasthana|kalpasthanam|kalpa|\bka\b|कल्पस्थानम्|कल्पस्थान|कल्प|ca\.?\s*ka|ca\.?\s*kal|su\.?\s*ka|su\.?\s*kal|च\.?\s*क|सु\.?\s*क/i.test(
+    /kalpasthana|kalpasthanam|kalpa|\bka\b|कल्पस्थानम्|कल्पस्थान|कल्प|(?:ca|cs|su|ss|ah|as|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:ka|kal|कल्प|क)/i.test(
       searchPrefix
     )
   ) {
     sthana = 'Kalpasthana';
   } else if (
-    /siddhisthana|siddhisthanam|siddhi|\bsi\b|सिद्धिस्थानम्|सिद्धिस्थान|सिद्धि|ca\.?\s*si|च\.?\s*सि/i.test(
+    /siddhisthana|siddhisthanam|siddhi|\bsi\b|सिद्धिस्थानम्|सिद्धिस्थान|सिद्धि|(?:ca|cs|च)\s*[-–.0०\u0970]?(?:si|सिद्धि|सि)/i.test(
       searchPrefix
     )
   ) {
@@ -264,7 +286,7 @@ export function detectChapterInfo(
   } else if (/madhyama|मध्यम/i.test(searchPrefix) && subject.includes('Sharangadhara')) {
     sthana = 'Madhyama Khanda';
   } else if (
-    /sutrasthana|sutrasthanam|sutra|\bsu\b|सूत्रस्थानम्|सूत्रस्थान|सूत्र|ca\.?\s*su|su\.?\s*su|ah\.?\s*su|च\.?\s*सू|सु\.?\s*सू/i.test(
+    /sutrasthana|sutrasthanam|sutra|\bsu\b|सूत्रस्थानम्|सूत्रस्थान|सूत्र|(?:ca|cs|su|ss|ah|as|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?(?:su|सूत्र|सू)/i.test(
       searchPrefix
     )
   ) {
@@ -297,7 +319,7 @@ export function detectChapterInfo(
   // Pattern B: Classical fraction citation e.g. "ca.su 1/115", "su.su 45/12", "च.सू - 1/115", "45/12", "26 / 8" in searchPrefix
   if (!chNum) {
     const mFraction = searchPrefix.match(
-      /(?:ca|su|ah|cs|ss|च|सु)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|चि|क|सि|उ)?\s*[-–.]?\s*(\d{1,3})\s*[\/:]\s*\d+/i
+      /(?:ca|su|ah|cs|ss|च|सु|अ\s*[-–.0०\u0970]?\s*हृ)\s*[-–.0०\u0970]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|ut|सू|नि|वि|शा|इन्|इ|चि|क|सि|उ)?\s*[-–.0०\u0970]?\s*(\d{1,3})\s*[\/:]\s*\d+/i
     );
     if (mFraction && mFraction[1]) {
       chNum = mFraction[1];
@@ -659,6 +681,29 @@ export function parseChapterMappingString(mappingStr: string): {
   );
   if (canonicalSamhita) {
     samhita = canonicalSamhita;
+  } else if (
+    samhita.toLowerCase().includes('uncategorized') ||
+    samhita.toLowerCase().includes('needs review') ||
+    !CLASSICAL_SAMHITA_SCHEMA[samhita]
+  ) {
+    // If uncategorized or not in classical schema, check if Sthana can tell us which Samhita it belongs to
+    // e.g. "Uncategorized / Needs Review > Sutrasthana > Chapter 1"
+    let inferredSamhita = 'Charaka Samhita';
+    for (const opt of EDIT_MODAL_SAMHITA_OPTIONS) {
+      const sch = CLASSICAL_SAMHITA_SCHEMA[opt];
+      if (
+        sch &&
+        sch.sthanas.some(
+          (sth) =>
+            sth.name.toLowerCase() === sthana.toLowerCase() ||
+            sth.aliases?.some((a) => a.toLowerCase() === sthana.toLowerCase())
+        )
+      ) {
+        inferredSamhita = opt;
+        break;
+      }
+    }
+    samhita = inferredSamhita;
   }
 
   // Canonical match for Sthana
@@ -786,26 +831,31 @@ export function detectSamhitaMismatch(q: Question): SamhitaMismatchResult {
   const searchSamhita = `${normalizedPrefix} ${fullNormalized}`;
 
   if (
-    /(?:\b(?:su|ss)\s*[-–.]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\b)|\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:su|ss|सु)\s*[-–.0०\u0970]?\s*(?:su|ni|sha|sar|ci|chi|ka|ut|सूत्र|सू|नि|शा|चि|क|उ)\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
       searchSamhita
-    )
+    ) ||
+    /\b(?:sushrut\w*|susruta\w*|suśruta\w*|सुश्रुत)\b/i.test(searchSamhita)
   ) {
     citationSamhita = 'Sushruta Samhita';
-    citationEvidence = 'Sushruta (su.su)';
+    citationEvidence = 'Sushruta (su.su / सु.सू)';
   } else if (
-    /(?:\b(?:ca|cha|cs)\s*[-–.]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|चि|क|सि)\b)|\b(?:charak\w*|caraka\w*|चरक)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:ca|cha|cs|च)\s*[-–.0०\u0970]?\s*(?:su|ni|vi|sha|sar|in|ci|chi|ka|si|sutra|सूत्र|सू|नि|वि|शा|इन्|इ|चि|क|सि)\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
       searchSamhita
-    )
+    ) ||
+    /\b(?:charak\w*|caraka\w*|चरक)\b/i.test(searchSamhita)
   ) {
     citationSamhita = 'Charaka Samhita';
-    citationEvidence = 'Charaka (ca.su / cha sutra)';
+    citationEvidence = 'Charaka (ca.su / च.सू / cha sutra)';
   } else if (
-    /(?:\b(?:a\s*\.\s*h\.?|a\s*\.\s*s\.?|ah|as)\s*[-–.]?\s*(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)\b)|\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
+    /(?:^|[^a-zA-Z0-9\u0900-\u097F])(?:अ\s*[-–.0०\u0970]?\s*हृ|अ\s*[-–.0०\u0970]?\s*सं|a\s*\.?\s*h\.?|a\s*\.?\s*s\.?|ah|as)\s*[-–.0०\u0970]?(?:su|ni|sha|ci|ka|ut|सू|नि|शा|चि|क|उ)?\s*[-–.0०\u0970]?(?:[^a-zA-Z0-9\u0900-\u097F]|$)/i.test(
+      searchSamhita
+    ) ||
+    /\b(?:ashtang\w*|astanga\w*|aṣṭāṅga\w*|अष्टाङ्ग|अष्टांग|vagbhat\w*|vāgbhaṭa\w*|वाग्भट)\b|\b(?:hridaya|hrdaya)\b/i.test(
       searchSamhita
     )
   ) {
     citationSamhita = 'Ashtanga Hridaya';
-    citationEvidence = 'Ashtanga (A.H.)';
+    citationEvidence = 'Ashtanga (A.H. / अ.हृ)';
   }
 
   // 2. Detect which Samhita is claimed by Chapter Tag and Question Text
