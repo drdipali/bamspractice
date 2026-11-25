@@ -135,7 +135,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       // 1. Load lightweight chapter counts summary without downloading full 30,000 question bank
-      const chList = await backend.getChapters();
+      const chList = await backend.getChapters(forceCloudSync);
       setChapters(chList);
 
       // 2. Only build full in-memory questions map if forceCloudSync was requested or questions are already in memory

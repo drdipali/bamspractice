@@ -19,6 +19,7 @@ import {
   setCachedChapterSummary,
   getCachedChapterQuestions,
   setCachedChapterQuestions,
+  clearAllChapterCaches,
 } from './indexedDbStorage';
 import { DEFAULT_CHAPTER_SUMMARY } from '../constants/defaultChapterSummary';
 import {
@@ -1174,9 +1175,9 @@ class BackendService {
     return shuffled.slice(0, count);
   }
 
-  async getChapters(): Promise<Chapter[]> {
+  async getChapters(force = false): Promise<Chapter[]> {
     await this.initialize();
-    const summary = await this.getChapterCountsSummary();
+    const summary = await this.getChapterCountsSummary(force);
     return buildChaptersFromSummary(summary, this.questions);
   }
 
@@ -1604,9 +1605,36 @@ class BackendService {
       await AsyncStorage.setItem('bams_edited_questions_v1', JSON.stringify(this.editedQuestions));
       await AsyncStorage.setItem(MANUALLY_VERIFIED_KEY, JSON.stringify(Array.from(this.manuallyVerifiedIds))).catch(() => {});
       await this.persistCustomQuestions();
+
+      // Remote Supabase sync in safe batches of 50
+      if (isRemoteSupabaseConfigured()) {
+        try {
+          const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+          for (let i = 0; i < updates.length; i += 50) {
+            const chunk = updates.slice(i, i + 50);
+            await Promise.all(
+              chunk.map((item) =>
+                supabase
+                  .from('questions')
+                  .update({
+                    ...item.patch,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', String(item.id))
+              )
+            );
+          }
+        } catch (supaErr) {
+          console.warn('[Backend] Supabase remote batch update warning:', supaErr);
+        }
+      }
     }
 
     return updatedCount;
+  }
+
+  async clearAllChapterCaches(): Promise<void> {
+    await clearAllChapterCaches();
   }
 
   async getEditedQuestionIds(): Promise<string[]> {

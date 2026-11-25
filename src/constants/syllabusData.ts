@@ -3,7 +3,7 @@ import { Chapter, Question, SamhitaDef } from '../types';
 export const GROUPS = ['Major Samhitas', 'Minor Samhitas', 'BAMS subjects'];
 
 export const RAW_TREE: SamhitaDef[] = [
-  { name: 'Charaka Samhita', sthanas: [['Sutrasthana', 30], ['Nidanasthana', 8], ['Vimanasthana', 8], ['Sharirasthana', 8], ['Indriyasthana', 12], ['Chikitsasthana', 30]], groupIndex: 0 },
+  { name: 'Charaka Samhita', sthanas: [['Sutrasthana', 30], ['Nidanasthana', 8], ['Vimanasthana', 8], ['Sharirasthana', 8], ['Indriyasthana', 12], ['Chikitsasthana', 30], ['Kalpasthana', 12], ['Siddhisthana', 12]], groupIndex: 0 },
   { name: 'Sushruta Samhita', sthanas: [['Sutrasthana', 46], ['Nidanasthana', 16], ['Sharirasthana', 10], ['Chikitsasthana', 40]], groupIndex: 0 },
   { name: 'Ashtanga Hridaya', sthanas: [['Sutrasthana', 30], ['Sharirasthana', 6], ['Nidanasthana', 16], ['Chikitsasthana', 22]], groupIndex: 0 },
   { name: 'Ashtanga Sangraha', sthanas: [['Sutrasthana', 40], ['Sharirasthana', 12], ['Nidanasthana', 16], ['Chikitsasthana', 24], ['Kalpasthana', 8], ['Uttaratantra', 50]], groupIndex: 0 },

@@ -228,7 +228,7 @@ export interface CachedChapterPayload {
   timestamp: number;
 }
 
-const CHAPTER_SUMMARY_KEY = 'bams_chapter_counts_summary_v1';
+const CHAPTER_SUMMARY_KEY = 'bams_chapter_counts_summary_v4';
 const CHAPTER_CACHE_PREFIX = 'bams_ch_cache_';
 const CHAPTER_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -241,16 +241,33 @@ function normalizeChapterCacheKey(key: string): string {
 
 /**
  * Retrieves the lightweight chapter counts summary from cache.
+ * Guarded against empty or 0-verified caches.
  */
 export async function getCachedChapterSummary(): Promise<ChapterCountsSummary | null> {
-  if (_inMemorySummary) return _inMemorySummary;
+  const validateSummary = (sum: ChapterCountsSummary | null): ChapterCountsSummary | null => {
+    if (!sum || typeof sum !== 'object' || Object.keys(sum).length === 0) return null;
+    const totalVerified = Object.values(sum).reduce((acc, c) => acc + (c?.verifiedCount || 0), 0);
+    if (totalVerified === 0) return null;
+    return sum;
+  };
+
+  if (_inMemorySummary) {
+    const valid = validateSummary(_inMemorySummary);
+    if (valid) return valid;
+    _inMemorySummary = null;
+  }
   const raw = safeLocalStorageGet(CHAPTER_SUMMARY_KEY);
   if (raw) {
     try {
-      _inMemorySummary = JSON.parse(raw);
-      return _inMemorySummary;
+      const parsed = JSON.parse(raw);
+      const valid = validateSummary(parsed);
+      if (valid) {
+        _inMemorySummary = valid;
+        return valid;
+      }
+      safeLocalStorageRemove(CHAPTER_SUMMARY_KEY);
     } catch {
-      return null;
+      safeLocalStorageRemove(CHAPTER_SUMMARY_KEY);
     }
   }
   return null;
@@ -345,5 +362,43 @@ export async function setCachedChapterQuestions(chapterKey: string, questions: Q
     });
   } catch {
     return false;
+  }
+}
+
+/**
+ * Clears all cached chapter questions and summary from memory and IndexedDB.
+ */
+export async function clearAllChapterCaches(): Promise<void> {
+  Object.keys(_inMemoryChapterCache).forEach((k) => delete _inMemoryChapterCache[k]);
+  _inMemorySummary = null;
+  safeLocalStorageRemove(CHAPTER_SUMMARY_KEY);
+
+  if (!isIndexedDBAvailable()) return;
+
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.openCursor();
+        req.onsuccess = (e) => {
+          const cursor = (e.target as any).result;
+          if (cursor) {
+            if (typeof cursor.key === 'string' && cursor.key.startsWith(CHAPTER_CACHE_PREFIX)) {
+              cursor.delete();
+            }
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+        req.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  } catch {
+    // Ignore error
   }
 }

@@ -34,6 +34,7 @@ import {
 } from '../../utils/spreadsheetHelper';
 import { backend } from '../../services/backend';
 import { CLASSICAL_SAMHITA_SCHEMA } from '../../utils/chapterMapper';
+import { PreImportProcessorPanel } from './PreImportProcessorPanel';
 
 const DEFAULT_SHEET_URL_KEY = 'bams_default_google_sheet_url_v1';
 const FALLBACK_DEFAULT_URL =
@@ -69,6 +70,9 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
   const [sheetTargetSthana, setSheetTargetSthana] = useState<string>('Sutrasthana');
   const [sheetTargetChapter, setSheetTargetChapter] = useState<string>('Chapter 1');
   const [sheetMarkVerified, setSheetMarkVerified] = useState<boolean>(true);
+  const [processedQuestions, setProcessedQuestions] = useState<Omit<Question, 'id'>[] | null>(null);
+  const [processSummary, setProcessSummary] = useState<any | null>(null);
+  const [isProcessingQueue, setIsProcessingQueue] = useState<boolean>(false);
 
   // Load saved default Google Sheet URL on open
   useEffect(() => {
@@ -76,6 +80,9 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
       setErrorMessage(null);
       setPreviewStats(null);
       setShowErrorDetails(false);
+      setProcessedQuestions(null);
+      setProcessSummary(null);
+      setIsProcessingQueue(false);
 
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         const saved = window.localStorage.getItem(DEFAULT_SHEET_URL_KEY);
@@ -171,7 +178,8 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
     setIsImporting(true);
     try {
       const targetTag = `${sheetTargetSamhita} > ${sheetTargetSthana} > ${sheetTargetChapter}`;
-      const questionsToImport = previewStats.validQuestions.map((q) => ({
+      const baseSource = processedQuestions || previewStats.validQuestions;
+      const questionsToImport = baseSource.map((q) => ({
         ...q,
         ch: targetTag,
         chapterName: targetTag,
@@ -599,37 +607,79 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
                   </View>
                 )}
 
+                {/* Pre-Import Processing & AI Refinement Panel */}
+                <PreImportProcessorPanel
+                  questions={previewStats.validQuestions}
+                  onProcessedChange={(processed, summary) => {
+                    setProcessedQuestions(processed);
+                    setProcessSummary(summary);
+                  }}
+                  onProcessingStateChange={setIsProcessingQueue}
+                />
+
                 {/* Sample Questions Preview */}
                 <View style={styles.samplePreviewContainer}>
-                  <Text style={styles.samplePreviewHeading}>
-                    Sample Parsed Questions (First 2 Rows):
-                  </Text>
-                  {previewStats.validQuestions.slice(0, 2).map((q, idx) => (
-                    <View key={idx} style={styles.sampleCard}>
-                      <View style={styles.sampleBadgesRow}>
-                        <Text style={styles.sampleTypeBadge}>{q.questionType.toUpperCase()}</Text>
-                        <Text style={styles.sampleChapterBadge}>{q.ch}</Text>
-                        {q.r && <Text style={styles.sampleRefBadge}>{q.r}</Text>}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <Text style={styles.samplePreviewHeading}>
+                      Sample Parsed Questions (First 2 Rows):
+                    </Text>
+                    {processSummary && (
+                      <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>Processed Preview</Text>
                       </View>
-                      <Text style={styles.sampleStem} numberOfLines={2}>
-                        {q.stem}
-                      </Text>
-                      <View style={styles.sampleOptionsRow}>
-                        {q.o.map((opt, oIdx) => (
-                          <Text
-                            key={oIdx}
-                            style={[
-                              styles.sampleOptText,
-                              oIdx === q.c && styles.sampleOptCorrect,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {String.fromCharCode(65 + oIdx)}. {opt}
-                          </Text>
-                        ))}
+                    )}
+                  </View>
+                  {(processedQuestions || previewStats.validQuestions).slice(0, 2).map((q, idx) => {
+                    const aiInfo = processSummary?.aiDetails?.[idx];
+                    const shuffleInfo = processSummary?.shuffleDetails?.[idx];
+                    return (
+                      <View key={idx} style={styles.sampleCard}>
+                        <View style={styles.sampleBadgesRow}>
+                          <Text style={styles.sampleTypeBadge}>{q.questionType.toUpperCase()}</Text>
+                          <Text style={styles.sampleChapterBadge}>{q.ch}</Text>
+                          {q.r && <Text style={styles.sampleRefBadge}>{q.r}</Text>}
+                          {shuffleInfo?.wasShuffled && (
+                            <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857' }}>🔀 Shuffled</Text>
+                            </View>
+                          )}
+                          {aiInfo?.wasDistractorSwapped && (
+                            <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309' }}>🔄 Distractor Swapped</Text>
+                            </View>
+                          )}
+                          {aiInfo?.wasStemRephrased && (
+                            <View style={{ backgroundColor: '#EDE9FE', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#7C3AED' }}>✨ Rephrased</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.sampleStem} numberOfLines={2}>
+                          {q.stem}
+                        </Text>
+                        <View style={styles.sampleOptionsRow}>
+                          {q.o.map((opt, oIdx) => {
+                            const isCorrect = oIdx === q.c;
+                            const isSwapped = aiInfo?.swappedOptionIndex === oIdx;
+                            return (
+                              <Text
+                                key={oIdx}
+                                style={[
+                                  styles.sampleOptText,
+                                  isCorrect && styles.sampleOptCorrect,
+                                  isSwapped && { color: '#B45309', fontWeight: '700' },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {String.fromCharCode(65 + oIdx)}. {opt}
+                                {isSwapped ? ' (Refreshed Distractor)' : ''}
+                              </Text>
+                            );
+                          })}
+                        </View>
                       </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               </View>
             )}
@@ -637,23 +687,29 @@ export const GoogleSheetSyncModal: React.FC<GoogleSheetSyncModalProps> = ({
 
           {/* Modal Footer */}
           <View style={styles.modalFooter}>
-            <TouchableOpacity style={styles.btnCancel} onPress={onClose} disabled={isImporting}>
+            <TouchableOpacity style={styles.btnCancel} onPress={onClose} disabled={isImporting || isProcessingQueue}>
               <Text style={styles.btnCancelText}>Cancel</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.btnConfirm,
-                (!previewStats || previewStats.validCount === 0 || isImporting) && styles.btnConfirmDisabled,
+                (!previewStats || previewStats.validCount === 0 || isImporting || isProcessingQueue) &&
+                  styles.btnConfirmDisabled,
               ]}
               onPress={handleConfirmImport}
-              disabled={!previewStats || previewStats.validCount === 0 || isImporting}
+              disabled={!previewStats || previewStats.validCount === 0 || isImporting || isProcessingQueue}
               activeOpacity={0.8}
             >
               {isImporting ? (
                 <>
                   <ActivityIndicator size="small" color="#FFF" />
                   <Text style={styles.btnConfirmText}>Importing to Cloud DB...</Text>
+                </>
+              ) : isProcessingQueue ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFF" />
+                  <Text style={styles.btnConfirmText}>Processing AI Queue...</Text>
                 </>
               ) : (
                 <>

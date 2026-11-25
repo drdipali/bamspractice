@@ -39,6 +39,7 @@ import {
   Edit3,
   CheckSquare,
   Link2,
+  Shuffle,
 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { THEME } from '../../constants/theme';
@@ -81,6 +82,8 @@ import { AISettingsModal } from './AISettingsModal';
 import { GoogleSheetSyncModal } from './GoogleSheetSyncModal';
 import { GoogleDriveSyncModal } from './GoogleDriveSyncModal';
 import { Portal } from '../common/Portal';
+import { PreImportProcessorPanel } from './PreImportProcessorPanel';
+import { batchRandomizeOptions } from '../../utils/questionProcessor';
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   standard: 'Standard MCQ',
@@ -259,6 +262,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState<boolean>(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
+  const [uploadProcessedQuestions, setUploadProcessedQuestions] = useState<Omit<Question, 'id'>[] | null>(null);
+  const [uploadProcessSummary, setUploadProcessSummary] = useState<any | null>(null);
+  const [isUploadProcessingQueue, setIsUploadProcessingQueue] = useState<boolean>(false);
+  const [isBatchRandomizing, setIsBatchRandomizing] = useState<boolean>(false);
 
   // Edit / Form state for chapter verified toggle
   const [isChapterVerifiedField, setIsChapterVerifiedField] = useState<boolean>(false);
@@ -1107,7 +1114,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
     setIsUploading(true);
     try {
       const targetTag = `${uploadTargetSamhita} > ${uploadTargetSthana} > ${uploadTargetChapter}`;
-      const questionsToUpload = uploadParseResult.validQuestions.map((q) => ({
+      const baseSource = uploadProcessedQuestions || uploadParseResult.validQuestions;
+      const questionsToUpload = baseSource.map((q) => ({
         ...q,
         ch: targetTag,
         chapterName: targetTag,
@@ -1125,6 +1133,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
         }!`
       );
       setUploadParseResult(null);
+      setUploadProcessedQuestions(null);
+      setUploadProcessSummary(null);
       setUploadFileName('');
       setUploadLinkUrl('');
       setUploadLinkError(null);
@@ -1276,6 +1286,58 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
       alert('Failed to update questions: ' + err.message);
     } finally {
       setIsBatchUpdatingVerification(false);
+    }
+  };
+
+  // 1-Click Option Randomizer for Multi-Selected Questions (Preserves right answer, skips "All of the above" & fixed types)
+  const handleBulkRandomizeOptions = async () => {
+    if (selectedQuestionIds.size === 0) return;
+    setIsBatchRandomizing(true);
+    try {
+      const selectedList = questions.filter((q) => selectedQuestionIds.has(String(q.id)));
+      const res = batchRandomizeOptions(selectedList);
+
+      const updates = res.processed
+        .filter((_, idx) => res.shuffleDetails[idx].wasShuffled)
+        .map((q) => ({
+          id: q.id,
+          patch: {
+            o: q.o,
+            c: q.c,
+            hi: q.hi,
+          },
+        }));
+
+      if (updates.length > 0) {
+        await backend.updateQuestionsBatch(updates);
+        setQuestions((prev) =>
+          prev.map((item) => {
+            const updated = updates.find((u) => String(u.id) === String(item.id));
+            if (updated) {
+              return {
+                ...item,
+                ...updated.patch,
+              };
+            }
+            return item;
+          })
+        );
+        updates.forEach((u) => {
+          setEditedIds((prev) => new Set([...prev, String(u.id)]));
+        });
+        await backend.clearAllChapterCaches();
+        if (refreshQuestions) refreshQuestions();
+      }
+
+      showToast(
+        `Shuffled options for ${res.shuffledCount} question(s)${
+          res.skippedCount > 0 ? ` (skipped ${res.skippedCount} with "All of the above" / fixed types)` : ''
+        }!`
+      );
+    } catch (err: any) {
+      alert(err.message || 'Failed to randomize options.');
+    } finally {
+      setIsBatchRandomizing(false);
     }
   };
 
@@ -2342,40 +2404,84 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                     </View>
                   )}
 
+                  {/* Pre-Import Processing & AI Refinement Panel */}
+                  {uploadParseResult.validQuestions.length > 0 && (
+                    <PreImportProcessorPanel
+                      questions={uploadParseResult.validQuestions}
+                      onProcessedChange={(processed, summary) => {
+                        setUploadProcessedQuestions(processed);
+                        setUploadProcessSummary(summary);
+                      }}
+                      onProcessingStateChange={setIsUploadProcessingQueue}
+                    />
+                  )}
+
                   {/* Sample Preview */}
                   {uploadParseResult.validQuestions.length > 0 && (
                     <View style={styles.previewContainer}>
-                      <Text style={styles.previewHeading}>
-                        Preview Sample ({Math.min(3, uploadParseResult.validQuestions.length)} of{' '}
-                        {uploadParseResult.validQuestions.length} questions):
-                      </Text>
-                      {uploadParseResult.validQuestions.slice(0, 3).map((q, qIdx) => (
-                        <View key={qIdx} style={styles.sampleCard}>
-                          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                            <Text style={styles.sampleBadge}>
-                              {uploadTargetSamhita} › {uploadTargetSthana} › {uploadTargetChapter}
-                            </Text>
-                            {uploadMarkVerified && (
-                              <Text style={styles.sampleVerifiedBadge}>✓ Chapter-Verified</Text>
-                            )}
-                            {q.r ? <Text style={styles.sampleRefBadge}>{q.r}</Text> : null}
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text style={styles.previewHeading}>
+                          Preview Sample ({Math.min(3, uploadParseResult.validQuestions.length)} of{' '}
+                          {uploadParseResult.validQuestions.length} questions):
+                        </Text>
+                        {uploadProcessSummary && (
+                          <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>Processed Preview</Text>
                           </View>
-                          <Text style={styles.sampleStem}>{q.stem}</Text>
-                          <View style={styles.sampleOptionsRow}>
-                            {q.o.map((opt, oIdx) => (
-                              <Text
-                                key={oIdx}
-                                style={[
-                                  styles.sampleOption,
-                                  q.c === oIdx && styles.sampleOptionCorrect,
-                                ]}
-                              >
-                                {String.fromCharCode(65 + oIdx)}. {opt}
+                        )}
+                      </View>
+                      {(uploadProcessedQuestions || uploadParseResult.validQuestions).slice(0, 3).map((q, qIdx) => {
+                        const aiInfo = uploadProcessSummary?.aiDetails?.[qIdx];
+                        const shuffleInfo = uploadProcessSummary?.shuffleDetails?.[qIdx];
+                        return (
+                          <View key={qIdx} style={styles.sampleCard}>
+                            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <Text style={styles.sampleBadge}>
+                                {uploadTargetSamhita} › {uploadTargetSthana} › {uploadTargetChapter}
                               </Text>
-                            ))}
+                              {uploadMarkVerified && (
+                                <Text style={styles.sampleVerifiedBadge}>✓ Chapter-Verified</Text>
+                              )}
+                              {q.r ? <Text style={styles.sampleRefBadge}>{q.r}</Text> : null}
+                              {shuffleInfo?.wasShuffled && (
+                                <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857' }}>🔀 Shuffled</Text>
+                                </View>
+                              )}
+                              {aiInfo?.wasDistractorSwapped && (
+                                <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309' }}>🔄 Distractor Swapped</Text>
+                                </View>
+                              )}
+                              {aiInfo?.wasStemRephrased && (
+                                <View style={{ backgroundColor: '#EDE9FE', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#7C3AED' }}>✨ Rephrased</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.sampleStem}>{q.stem}</Text>
+                            <View style={styles.sampleOptionsRow}>
+                              {q.o.map((opt, oIdx) => {
+                                const isCorrect = q.c === oIdx;
+                                const isSwapped = aiInfo?.swappedOptionIndex === oIdx;
+                                return (
+                                  <Text
+                                    key={oIdx}
+                                    style={[
+                                      styles.sampleOption,
+                                      isCorrect && styles.sampleOptionCorrect,
+                                      isSwapped && { color: '#B45309', fontWeight: '700' },
+                                    ]}
+                                  >
+                                    {String.fromCharCode(65 + oIdx)}. {opt}
+                                    {isSwapped ? ' (Refreshed Distractor)' : ''}
+                                  </Text>
+                                );
+                              })}
+                            </View>
                           </View>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   )}
                 </View>
@@ -2386,15 +2492,16 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               <TouchableOpacity
                 style={styles.btnCancel}
                 onPress={() => setIsUploadModalOpen(false)}
+                disabled={isUploading || isUploadProcessingQueue}
               >
                 <Text style={styles.btnCancelText}>Cancel</Text>
               </TouchableOpacity>
 
               {uploadParseResult && uploadParseResult.validQuestions.length > 0 && (
                 <TouchableOpacity
-                  style={[styles.btnConfirmUpload, isUploading && { opacity: 0.6 }]}
+                  style={[styles.btnConfirmUpload, (isUploading || isUploadProcessingQueue) && { opacity: 0.6 }]}
                   onPress={handleConfirmBatchUpload}
-                  disabled={isUploading}
+                  disabled={isUploading || isUploadProcessingQueue}
                 >
                   {isUploading ? (
                     <ActivityIndicator size="small" color="#FFF" />
@@ -2404,6 +2511,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
                   <Text style={styles.btnConfirmUploadText}>
                     {isUploading
                       ? 'Uploading...'
+                      : isUploadProcessingQueue
+                      ? 'Processing AI Queue...'
                       : `Confirm & Upload ${uploadParseResult.validQuestions.length} Questions`}
                   </Text>
                 </TouchableOpacity>
@@ -3728,6 +3837,25 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ onOpenAI
               >
                 <X size={12} color="#475569" strokeWidth={2} />
                 <Text style={styles.btnMultiSelectUnverifyText}>Unmark Verified</Text>
+              </TouchableOpacity>
+
+              {/* 🔀 Randomize Options */}
+              <TouchableOpacity
+                style={[styles.btnMultiSelectRandomize, isBatchRandomizing && { opacity: 0.7 }]}
+                onPress={handleBulkRandomizeOptions}
+                disabled={isBatchRandomizing}
+                activeOpacity={0.8}
+              >
+                {isBatchRandomizing ? (
+                  <ActivityIndicator size="small" color="#1E3A8A" />
+                ) : (
+                  <>
+                    <Shuffle size={12} color="#1E3A8A" />
+                    <Text style={styles.btnMultiSelectRandomizeText}>
+                      Randomize Options ({selectedQuestionIds.size})
+                    </Text>
+                  </>
+                )}
               </TouchableOpacity>
 
               {/* 🗑️ Delete Selected (X) Red Button */}
@@ -6695,6 +6823,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#475569',
+  },
+  btnMultiSelectRandomize: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DBEAFE',
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  btnMultiSelectRandomizeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E3A8A',
   },
   btnMultiSelectDelete: {
     flexDirection: 'row',
